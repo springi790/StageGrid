@@ -35,7 +35,12 @@ class LibraryRepository(private val db: StageGridDatabase) {
 
     suspend fun updateTrack(track: TrackEntity) = db.trackDao().update(track)
 
-    suspend fun addSection(section: SectionEntity) = db.sectionDao().insert(section)
+    /** Insert or replace a section. Section IDs are stable across manual edits. */
+    suspend fun saveSection(section: SectionEntity) = db.sectionDao().insert(section)
+
+    suspend fun getSections(songId: String): List<SectionEntity> = db.sectionDao().getForSong(songId)
+
+    suspend fun deleteSection(section: SectionEntity) = db.sectionDao().delete(section)
 
     suspend fun deleteSong(song: SongEntity) = db.songDao().delete(song)
 
