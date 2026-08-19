@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -34,7 +35,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import dev.stagegrid.R
@@ -44,7 +44,7 @@ import dev.stagegrid.music.MusicalPosition
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.SongEntity
 import java.util.UUID
-import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 @Composable
 fun SectionEditorDialog(
@@ -60,7 +60,7 @@ fun SectionEditorDialog(
     val grid = remember(song.bpm, song.timeSignature, song.gridOffsetMs) {
         MusicalGrid.from(song.bpm, song.timeSignature, song.gridOffsetMs)
     }
-    var selectedId by remember(sections) { mutableStateOf(sections.firstOrNull()?.id) }
+    var selectedId by remember { mutableStateOf(sections.firstOrNull()?.id) }
     var snap by remember { mutableStateOf(GridSnap.BEAT) }
     var name by remember { mutableStateOf("") }
     var startBar by remember { mutableStateOf("1") }
@@ -68,6 +68,14 @@ fun SectionEditorDialog(
     var endBar by remember { mutableStateOf("1") }
     var endBeat by remember { mutableStateOf("1") }
     var validationError by remember { mutableStateOf(false) }
+
+    LaunchedEffect(sections) {
+        if (selectedId != null && sections.none { it.id == selectedId }) {
+            selectedId = sections.firstOrNull()?.id
+        } else if (selectedId == null) {
+            selectedId = sections.firstOrNull()?.id
+        }
+    }
 
     val selected = sections.firstOrNull { it.id == selectedId }
 
@@ -98,7 +106,8 @@ fun SectionEditorDialog(
                         color = MaterialTheme.colorScheme.error,
                     )
                 } else {
-                    val playhead = grid.positionAt(positionMs)
+                    val safeDuration = durationMs.coerceAtLeast(0L)
+                    val playhead = grid.positionAt(positionMs.coerceAtLeast(0L))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(
                             stringResource(R.string.bar_beat_value, playhead.bar, playhead.beat),
@@ -120,7 +129,7 @@ fun SectionEditorDialog(
                     MusicalGridTimeline(
                         sections = sections,
                         grid = grid,
-                        durationMs = durationMs,
+                        durationMs = safeDuration,
                         selectedId = selectedId,
                         onSelect = { selectedId = it },
                     )
@@ -140,22 +149,23 @@ fun SectionEditorDialog(
                     }
 
                     Button(
-                        enabled = !isPlaying,
+                        enabled = !isPlaying && safeDuration > 1L,
                         onClick = {
-                            val startMs = grid.snap(positionMs.coerceIn(0L, durationMs.coerceAtLeast(0L)), snap)
-                                .coerceIn(0L, durationMs.coerceAtLeast(0L))
-                            val fourBarsMs = (grid.barDurationMs * 4.0).roundToInt().toLong().coerceAtLeast(1L)
-                            var endMs = (startMs + fourBarsMs).coerceAtMost(durationMs)
+                            val startMs = grid.snap(positionMs.coerceIn(0L, safeDuration), snap)
+                                .coerceIn(0L, safeDuration - 1L)
+                            val fourBarsMs = (grid.barDurationMs * 4.0).roundToLong().coerceAtLeast(1L)
+                            var endMs = (startMs + fourBarsMs).coerceAtMost(safeDuration)
                             if (endMs <= startMs) {
-                                endMs = (startMs + grid.beatDurationMs.roundToInt().toLong().coerceAtLeast(1L))
-                                    .coerceAtMost(durationMs)
+                                endMs = (startMs + grid.beatDurationMs.roundToLong().coerceAtLeast(1L))
+                                    .coerceAtMost(safeDuration)
                             }
+                            if (endMs <= startMs) endMs = safeDuration
                             val item = SectionEntity(
                                 id = UUID.randomUUID().toString(),
                                 songId = song.id,
                                 name = "Section ${sections.size + 1}",
                                 startMs = startMs,
-                                endMs = endMs.coerceAtLeast(startMs + 1L),
+                                endMs = endMs,
                                 sortOrder = (sections.maxOfOrNull { it.sortOrder } ?: -1) + 1,
                             )
                             onSave(item)
@@ -192,7 +202,7 @@ fun SectionEditorDialog(
                             onBar = { startBar = it },
                             onBeat = { startBeat = it },
                             onUsePlayhead = {
-                                val point = grid.positionAt(grid.snap(positionMs, snap).coerceIn(0L, durationMs))
+                                val point = grid.positionAt(grid.snap(positionMs, snap).coerceIn(0L, safeDuration))
                                 startBar = point.bar.toString()
                                 startBeat = point.beat.toString()
                             },
@@ -208,7 +218,7 @@ fun SectionEditorDialog(
                             onBar = { endBar = it },
                             onBeat = { endBeat = it },
                             onUsePlayhead = {
-                                val point = grid.positionAt(grid.snap(positionMs, snap).coerceIn(0L, durationMs))
+                                val point = grid.positionAt(grid.snap(positionMs, snap).coerceIn(0L, safeDuration))
                                 endBar = point.bar.toString()
                                 endBeat = point.beat.toString()
                             },
@@ -231,8 +241,8 @@ fun SectionEditorDialog(
                                         endBar.toIntOrNull()?.coerceAtLeast(1) ?: 1,
                                         endBeat.toIntOrNull()?.coerceIn(1, grid.signature.beatsPerBar) ?: 1,
                                     )
-                                    val newStart = grid.msAt(startPosition).coerceIn(0L, durationMs)
-                                    val newEnd = grid.msAt(endPosition).coerceIn(0L, durationMs)
+                                    val newStart = grid.msAt(startPosition).coerceIn(0L, safeDuration)
+                                    val newEnd = grid.msAt(endPosition).coerceIn(0L, safeDuration)
                                     validationError = newEnd <= newStart
                                     if (!validationError) {
                                         onSave(
@@ -344,14 +354,15 @@ private fun MusicalGridTimeline(
                 val gap = (section.startMs - cursorMs).coerceAtLeast(0L)
                 if (gap > 0L) {
                     val gapBars = gap / grid.barDurationMs
-                    Spacer(Modifier.width((gapBars * 68.0).coerceAtMost(272.0).dp))
+                    val gapWidth = (gapBars * 68.0).coerceAtMost(272.0).toFloat().dp
+                    Spacer(Modifier.width(gapWidth))
                 }
-                val sectionBars = ((section.endMs - section.startMs).coerceAtLeast(1L) / grid.barDurationMs)
-                val width = (sectionBars * 68.0).coerceIn(92.0, 408.0).dp
+                val sectionBars = (section.endMs - section.startMs).coerceAtLeast(1L) / grid.barDurationMs
+                val sectionWidth = (sectionBars * 68.0).coerceIn(92.0, 408.0).toFloat().dp
                 val selected = section.id == selectedId
                 Card(
                     modifier = Modifier
-                        .width(width)
+                        .width(sectionWidth)
                         .height(68.dp)
                         .clickable { onSelect(section.id) },
                 ) {
