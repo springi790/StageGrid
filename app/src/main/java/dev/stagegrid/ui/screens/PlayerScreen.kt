@@ -82,10 +82,9 @@ fun PlayerScreen(
             Column(Modifier.weight(1f)) {
                 Text(song.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(song.artist.ifBlank { stringResource(R.string.unknown_artist) }, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val simpleMeta = buildList {
-                    song.bpm?.let { add(stringResource(R.string.simple_bpm_value, "%.0f".format(it))) }
-                    musicalPosition?.let { add(stringResource(R.string.simple_bar_beat_value, it.bar, it.beat)) }
-                }.joinToString("  ·  ")
+                val bpmLabel = song.bpm?.let { stringResource(R.string.simple_bpm_value, "%.0f".format(it)) }
+                val positionLabel = musicalPosition?.let { stringResource(R.string.simple_bar_beat_value, it.bar, it.beat) }
+                val simpleMeta = listOfNotNull(bpmLabel, positionLabel).joinToString("  ·  ")
                 if (simpleMeta.isNotBlank()) {
                     Text(simpleMeta, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                 }
