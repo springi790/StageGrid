@@ -38,6 +38,8 @@ public:
     void setLoop(bool enabled, int64_t startMs, int64_t endMs);
     void scheduleJump(int64_t atMs, int64_t targetMs, bool disableLoopAfterJump);
     void clearScheduledJump();
+    bool prepareCountIn(int64_t targetMs, int bars);
+    int64_t countInRemainingMs() const;
     bool setOutputDevice(int32_t deviceId);
 
     int64_t positionMs() const;
@@ -58,7 +60,7 @@ private:
         explicit TrackState(std::unique_ptr<WavReader> readerIn, int typeIn)
             : reader(std::move(readerIn)), type(typeIn), ring(kRingCapacitySamples) {}
         ~TrackState();
-        static constexpr size_t kRingCapacitySamples = 192000; // Stereo: 2 s at 48 kHz, 0.5 s at 192 kHz.
+        static constexpr size_t kRingCapacitySamples = 192000;
         std::unique_ptr<WavReader> reader;
         int type{OTHER};
         SpscRingBuffer ring;
@@ -112,6 +114,7 @@ private:
     std::atomic<int64_t> jumpAtFrame_{-1};
     std::atomic<int64_t> jumpTargetFrame_{-1};
     std::atomic<bool> disableLoopAfterJump_{false};
+    std::atomic<int64_t> trackGateUntilFrame_{-1};
 
     std::atomic<uint64_t> pathGeneration_{1};
     std::atomic<int64_t> resetFrame_{0};
