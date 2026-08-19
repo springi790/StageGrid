@@ -1,0 +1,69 @@
+<resources>
+    <string name="simple_bpm_value">%1$s BPM</string>
+    <string name="simple_bar_beat_value">Compás %1$d · Tiempo %2$d</string>
+    <string name="now_section">Ahora</string>
+    <string name="next_section_simple">Después</string>
+    <string name="jump_to_section">Ir a una sección</string>
+    <string name="performance_tools">Herramientas para tocar</string>
+    <string name="click_simple">Click</string>
+    <string name="guide_simple">Guía</string>
+    <string name="click_rhythm">Ritmo del click</string>
+    <string name="click_quarters">Negras</string>
+    <string name="click_eighths">Corcheas</string>
+    <string name="click_triplets">Tresillos</string>
+    <string name="click_sixteenths">Semicorcheas</string>
+    <string name="show_advanced_options">Mostrar opciones avanzadas</string>
+    <string name="hide_advanced_options">Ocultar opciones avanzadas</string>
+    <string name="advanced_options">Opciones avanzadas</string>
+    <string name="edit_song_sections">Editar partes de la canción</string>
+
+    <string name="mixer_simple_explanation">Ajusta el volumen de cada pista. Si no necesitas configurar salidas especiales, puedes dejar lo demás como está.</string>
+    <string name="quick_output_setup">Configuración rápida de salidas</string>
+    <string name="quick_output_explanation">Elige una configuración común y StageGrid asignará las salidas por ti.</string>
+    <string name="preset_stage_split">Escenario: Click + Guía a izquierda · Pistas a derecha</string>
+    <string name="preset_all_stereo">Todo en estéreo</string>
+    <string name="preset_click_left_tracks_stereo">Click + Guía a izquierda · Pistas en estéreo</string>
+    <string name="show_manual_routing">Configurar salidas manualmente</string>
+    <string name="hide_manual_routing">Ocultar configuración manual</string>
+    <string name="where_should_this_track_sound">¿Por dónde debe sonar esta pista?</string>
+    <string name="output_left_simple">Izquierda</string>
+    <string name="output_both_simple">Ambos</string>
+    <string name="output_right_simple">Derecha</string>
+    <string name="track_type_drums">Batería</string>
+    <string name="track_type_bass">Bajo</string>
+    <string name="track_type_guitar">Guitarra</string>
+    <string name="track_type_keys">Teclas / Piano</string>
+    <string name="track_type_synth">Sintetizador</string>
+    <string name="track_type_strings">Cuerdas</string>
+    <string name="track_type_vocals">Voces</string>
+    <string name="track_type_percussion">Percusión</string>
+    <string name="track_type_guide">Guía</string>
+    <string name="track_type_pad">Pad</string>
+    <string name="track_type_other">Otra pista</string>
+
+    <string name="section_editor_simple_title">Partes de la canción</string>
+    <string name="section_editor_simple_help">Marca dónde empieza y termina cada parte. Puedes hacerlo moviendo la canción a la posición deseada y usando los botones de inicio y final.</string>
+    <string name="current_song_position">Posición actual</string>
+    <string name="adjust_changes_to">Ajustar los cambios a</string>
+    <string name="whole_bar">Compás completo</string>
+    <string name="single_beat">Un tiempo</string>
+    <string name="add_section_here">Añadir una parte aquí</string>
+    <string name="no_sections_editor_simple">Todavía no hay partes. Coloca la canción donde empieza una sección y pulsa “Añadir una parte aquí”.</string>
+    <string name="selected_section">Parte seleccionada</string>
+    <string name="section_intro">Intro</string>
+    <string name="section_verse">Verso</string>
+    <string name="section_chorus">Coro</string>
+    <string name="section_bridge">Puente</string>
+    <string name="section_outro">Final</string>
+    <string name="section_starts_at">Empieza en %1$s</string>
+    <string name="section_ends_at">Termina en %1$s</string>
+    <string name="set_start_here">Inicio = aquí</string>
+    <string name="set_end_here">Final = aquí</string>
+    <string name="show_precise_editing">Edición precisa</string>
+    <string name="hide_precise_editing">Ocultar edición precisa</string>
+    <string name="precise_editing_help">Usa esta sección sólo si quieres escribir manualmente el número de compás y tiempo.</string>
+    <string name="save_changes">Guardar cambios</string>
+    <string name="song_structure">Estructura de la canción</string>
+    <string name="tap_section_to_edit">Toca una parte para editarla.</string>
+    <string name="simple_section_range">Compases %1$d–%2$d</string>
+</resources>

@@ -61,7 +61,8 @@ fun SectionEditorDialog(
         MusicalGrid.from(song.bpm, song.timeSignature, song.gridOffsetMs)
     }
     var selectedId by remember { mutableStateOf(sections.firstOrNull()?.id) }
-    var snap by remember { mutableStateOf(GridSnap.BEAT) }
+    var snap by remember { mutableStateOf(GridSnap.BAR) }
+    var showPrecise by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     var startBar by remember { mutableStateOf("1") }
     var startBeat by remember { mutableStateOf("1") }
@@ -94,36 +95,33 @@ fun SectionEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.section_editor)) },
+        title = { Text(stringResource(R.string.section_editor_simple_title)) },
         text = {
             Column(
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (grid == null) {
-                    Text(
-                        stringResource(R.string.section_editor_requires_bpm),
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                    Text(stringResource(R.string.section_editor_requires_bpm), color = MaterialTheme.colorScheme.error)
                 } else {
                     val safeDuration = durationMs.coerceAtLeast(0L)
                     val playhead = grid.positionAt(positionMs.coerceAtLeast(0L))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(
-                            stringResource(R.string.bar_beat_value, playhead.bar, playhead.beat),
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            stringResource(R.string.grid_offset_value, song.gridOffsetMs),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+
+                    Text(stringResource(R.string.section_editor_simple_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(stringResource(R.string.current_song_position), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                stringResource(R.string.simple_bar_beat_value, playhead.bar, playhead.beat),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                     }
 
                     if (isPlaying) {
-                        Text(
-                            stringResource(R.string.section_editor_playback_warning),
-                            color = MaterialTheme.colorScheme.tertiary,
-                        )
+                        Text(stringResource(R.string.section_editor_playback_warning), color = MaterialTheme.colorScheme.tertiary)
                     }
 
                     MusicalGridTimeline(
@@ -134,17 +132,19 @@ fun SectionEditorDialog(
                         onSelect = { selectedId = it },
                     )
 
+                    Text(stringResource(R.string.adjust_changes_to), fontWeight = FontWeight.SemiBold)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(stringResource(R.string.snap_to), modifier = Modifier.align(Alignment.CenterVertically))
-                        FilterChip(
-                            selected = snap == GridSnap.BEAT,
-                            onClick = { snap = GridSnap.BEAT },
-                            label = { Text(stringResource(R.string.snap_beat)) },
-                        )
                         FilterChip(
                             selected = snap == GridSnap.BAR,
                             onClick = { snap = GridSnap.BAR },
-                            label = { Text(stringResource(R.string.snap_bar)) },
+                            label = { Text(stringResource(R.string.whole_bar)) },
+                            modifier = Modifier.weight(1f),
+                        )
+                        FilterChip(
+                            selected = snap == GridSnap.BEAT,
+                            onClick = { snap = GridSnap.BEAT },
+                            label = { Text(stringResource(R.string.single_beat)) },
+                            modifier = Modifier.weight(1f),
                         )
                     }
 
@@ -156,14 +156,13 @@ fun SectionEditorDialog(
                             val fourBarsMs = (grid.barDurationMs * 4.0).roundToLong().coerceAtLeast(1L)
                             var endMs = (startMs + fourBarsMs).coerceAtMost(safeDuration)
                             if (endMs <= startMs) {
-                                endMs = (startMs + grid.beatDurationMs.roundToLong().coerceAtLeast(1L))
-                                    .coerceAtMost(safeDuration)
+                                endMs = (startMs + grid.beatDurationMs.roundToLong().coerceAtLeast(1L)).coerceAtMost(safeDuration)
                             }
                             if (endMs <= startMs) endMs = safeDuration
                             val item = SectionEntity(
                                 id = UUID.randomUUID().toString(),
                                 songId = song.id,
-                                name = "Section ${sections.size + 1}",
+                                name = defaultSectionName(sections.size),
                                 startMs = startMs,
                                 endMs = endMs,
                                 sortOrder = (sections.maxOfOrNull { it.sortOrder } ?: -1) + 1,
@@ -173,17 +172,15 @@ fun SectionEditorDialog(
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(stringResource(R.string.add_section))
+                        Text(stringResource(R.string.add_section_here))
                     }
 
                     if (sections.isEmpty()) {
-                        Text(
-                            stringResource(R.string.no_sections_editor),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Text(stringResource(R.string.no_sections_editor_simple), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
 
                     selected?.let { section ->
+                        Text(stringResource(R.string.selected_section), fontWeight = FontWeight.Bold)
                         OutlinedTextField(
                             value = name,
                             onValueChange = { name = it },
@@ -193,37 +190,85 @@ fun SectionEditorDialog(
                             enabled = !isPlaying,
                         )
 
-                        PositionFields(
-                            title = stringResource(R.string.start_position),
-                            bar = startBar,
-                            beat = startBeat,
-                            beatsPerBar = grid.signature.beatsPerBar,
-                            enabled = !isPlaying,
-                            onBar = { startBar = it },
-                            onBeat = { startBeat = it },
-                            onUsePlayhead = {
-                                val point = grid.positionAt(grid.snap(positionMs, snap).coerceIn(0L, safeDuration))
-                                startBar = point.bar.toString()
-                                startBeat = point.beat.toString()
-                            },
-                            playheadLabel = stringResource(R.string.use_playhead_start),
-                        )
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(
+                                stringResource(R.string.section_intro),
+                                stringResource(R.string.section_verse),
+                                stringResource(R.string.section_chorus),
+                                stringResource(R.string.section_bridge),
+                                stringResource(R.string.section_outro),
+                            ).forEach { preset ->
+                                FilterChip(
+                                    selected = name.equals(preset, ignoreCase = true),
+                                    onClick = { name = preset },
+                                    label = { Text(preset) },
+                                    enabled = !isPlaying,
+                                )
+                            }
+                        }
 
-                        PositionFields(
-                            title = stringResource(R.string.end_position),
-                            bar = endBar,
-                            beat = endBeat,
-                            beatsPerBar = grid.signature.beatsPerBar,
-                            enabled = !isPlaying,
-                            onBar = { endBar = it },
-                            onBeat = { endBeat = it },
-                            onUsePlayhead = {
-                                val point = grid.positionAt(grid.snap(positionMs, snap).coerceIn(0L, safeDuration))
-                                endBar = point.bar.toString()
-                                endBeat = point.beat.toString()
-                            },
-                            playheadLabel = stringResource(R.string.use_playhead_end),
-                        )
+                        val startText = "$startBar.$startBeat"
+                        val endText = "$endBar.$endBeat"
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(stringResource(R.string.section_starts_at, startText))
+                                Text(stringResource(R.string.section_ends_at, endText))
+                            }
+                        }
+
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                enabled = !isPlaying,
+                                onClick = {
+                                    val point = grid.positionAt(grid.snap(positionMs, snap).coerceIn(0L, safeDuration))
+                                    startBar = point.bar.toString()
+                                    startBeat = point.beat.toString()
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(stringResource(R.string.set_start_here))
+                            }
+                            OutlinedButton(
+                                enabled = !isPlaying,
+                                onClick = {
+                                    val point = grid.positionAt(grid.snap(positionMs, snap).coerceIn(0L, safeDuration))
+                                    endBar = point.bar.toString()
+                                    endBeat = point.beat.toString()
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(stringResource(R.string.set_end_here))
+                            }
+                        }
+
+                        OutlinedButton(onClick = { showPrecise = !showPrecise }, modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                if (showPrecise) stringResource(R.string.hide_precise_editing)
+                                else stringResource(R.string.show_precise_editing),
+                            )
+                        }
+
+                        if (showPrecise) {
+                            Text(stringResource(R.string.precise_editing_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            PositionFields(
+                                title = stringResource(R.string.start_position),
+                                bar = startBar,
+                                beat = startBeat,
+                                beatsPerBar = grid.signature.beatsPerBar,
+                                enabled = !isPlaying,
+                                onBar = { startBar = it },
+                                onBeat = { startBeat = it },
+                            )
+                            PositionFields(
+                                title = stringResource(R.string.end_position),
+                                bar = endBar,
+                                beat = endBeat,
+                                beatsPerBar = grid.signature.beatsPerBar,
+                                enabled = !isPlaying,
+                                onBar = { endBar = it },
+                                onBeat = { endBeat = it },
+                            )
+                        }
 
                         if (validationError) {
                             Text(stringResource(R.string.invalid_section_range), color = MaterialTheme.colorScheme.error)
@@ -245,18 +290,12 @@ fun SectionEditorDialog(
                                     val newEnd = grid.msAt(endPosition).coerceIn(0L, safeDuration)
                                     validationError = newEnd <= newStart
                                     if (!validationError) {
-                                        onSave(
-                                            section.copy(
-                                                name = name.trim().ifBlank { section.name },
-                                                startMs = newStart,
-                                                endMs = newEnd,
-                                            ),
-                                        )
+                                        onSave(section.copy(name = name.trim().ifBlank { section.name }, startMs = newStart, endMs = newEnd))
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text(stringResource(R.string.save))
+                                Text(stringResource(R.string.save_changes))
                             }
                             OutlinedButton(
                                 enabled = !isPlaying,
@@ -286,8 +325,6 @@ private fun PositionFields(
     enabled: Boolean,
     onBar: (String) -> Unit,
     onBeat: (String) -> Unit,
-    onUsePlayhead: () -> Unit,
-    playheadLabel: String,
 ) {
     Text(title, fontWeight = FontWeight.SemiBold)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -313,9 +350,6 @@ private fun PositionFields(
             modifier = Modifier.weight(1f),
         )
     }
-    OutlinedButton(onClick = onUsePlayhead, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-        Text(playheadLabel)
-    }
 }
 
 @Composable
@@ -330,15 +364,13 @@ private fun MusicalGridTimeline(
     val barWidth = 68.dp
     val totalBars = grid.totalBars(durationMs).coerceAtMost(256)
 
-    Text(stringResource(R.string.timeline), fontWeight = FontWeight.SemiBold)
+    Text(stringResource(R.string.song_structure), fontWeight = FontWeight.SemiBold)
+    Text(stringResource(R.string.tap_section_to_edit), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Column(Modifier.fillMaxWidth().horizontalScroll(scroll)) {
         Row {
             repeat(totalBars) { index ->
                 Box(
-                    modifier = Modifier
-                        .width(barWidth)
-                        .height(32.dp)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.width(barWidth).height(32.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text((index + 1).toString(), style = MaterialTheme.typography.labelSmall)
@@ -359,17 +391,14 @@ private fun MusicalGridTimeline(
                 }
                 val sectionBars = (section.endMs - section.startMs).coerceAtLeast(1L) / grid.barDurationMs
                 val sectionWidth = (sectionBars * 68.0).coerceIn(92.0, 408.0).toFloat().dp
-                val selected = section.id == selectedId
+                val isSelected = section.id == selectedId
                 Card(
-                    modifier = Modifier
-                        .width(sectionWidth)
-                        .height(68.dp)
-                        .clickable { onSelect(section.id) },
+                    modifier = Modifier.width(sectionWidth).height(72.dp).clickable { onSelect(section.id) },
                 ) {
                     Column(
                         Modifier
                             .background(
-                                if (selected) MaterialTheme.colorScheme.secondaryContainer
+                                if (isSelected) MaterialTheme.colorScheme.secondaryContainer
                                 else MaterialTheme.colorScheme.surfaceVariant,
                             )
                             .padding(8.dp)
@@ -378,9 +407,9 @@ private fun MusicalGridTimeline(
                         Text(section.name, fontWeight = FontWeight.Bold, maxLines = 1)
                         Text(
                             stringResource(
-                                R.string.section_range_value,
-                                grid.positionAt(section.startMs).toString(),
-                                grid.positionAt(section.endMs).toString(),
+                                R.string.simple_section_range,
+                                grid.positionAt(section.startMs).bar,
+                                grid.positionAt(section.endMs).bar,
                             ),
                             style = MaterialTheme.typography.labelSmall,
                         )
@@ -391,3 +420,5 @@ private fun MusicalGridTimeline(
         }
     }
 }
+
+private fun defaultSectionName(index: Int): String = "Section ${index + 1}"

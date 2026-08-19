@@ -13,8 +13,8 @@ android {
         applicationId = "dev.stagegrid"
         minSdk = 28
         targetSdk = 37
-        versionCode = 4
-        versionName = "0.2.0-alpha01"
+        versionCode = 5
+        versionName = "0.2.0-alpha02"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {

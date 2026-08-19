@@ -146,6 +146,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onSolo = viewModel::setTrackSolo,
                 onPan = viewModel::setTrackPan,
                 onOutputRoute = viewModel::setTrackOutputRoute,
+                onClickRoute = viewModel::setClickRoute,
                 modifier = contentModifier,
             )
             MainScreen.SETTINGS -> SettingsScreen(
@@ -285,4 +286,3 @@ private fun SongMetadataDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
-

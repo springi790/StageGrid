@@ -71,6 +71,8 @@ fun PlayerScreen(
 
     var dragging by remember { mutableStateOf(false) }
     var seekFraction by remember { mutableFloatStateOf(0f) }
+    var showAdvanced by remember { mutableStateOf(false) }
+
     LaunchedEffect(state.positionMs, state.durationMs, dragging) {
         if (!dragging) seekFraction = if (state.durationMs > 0) state.positionMs.toFloat() / state.durationMs else 0f
     }
@@ -80,32 +82,33 @@ fun PlayerScreen(
             Column(Modifier.weight(1f)) {
                 Text(song.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(song.artist.ifBlank { stringResource(R.string.unknown_artist) }, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    stringResource(
-                        R.string.grid_status,
-                        song.bpm?.let { "%.2f".format(it) } ?: "—",
-                        song.gridOffsetMs,
-                    ),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                musicalPosition?.let {
-                    Text(
-                        stringResource(R.string.bar_beat_value, it.bar, it.beat),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                val bpmLabel = song.bpm?.let { stringResource(R.string.simple_bpm_value, "%.0f".format(it)) }
+                val positionLabel = musicalPosition?.let { stringResource(R.string.simple_bar_beat_value, it.bar, it.beat) }
+                val simpleMeta = listOfNotNull(bpmLabel, positionLabel).joinToString("  ·  ")
+                if (simpleMeta.isNotBlank()) {
+                    Text(simpleMeta, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                 }
             }
-            if (state.engineState == EngineState.PLAYING) Text(stringResource(R.string.live), color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+            if (state.engineState == EngineState.PLAYING) {
+                Text(stringResource(R.string.live), color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+            }
         }
 
         Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text(stringResource(R.string.now_section), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(state.currentSection?.name ?: stringResource(R.string.none), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    }
+                    Column {
+                        Text(stringResource(R.string.next_section_simple), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(state.nextSection?.name ?: stringResource(R.string.none), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(formatPlayerDuration(if (dragging) (seekFraction * state.durationMs).toLong() else state.positionMs))
-                    Text(stringResource(R.string.remaining_value, formatPlayerDuration((state.durationMs - state.positionMs).coerceAtLeast(0))))
+                    Text(formatPlayerDuration(state.durationMs))
                 }
                 Slider(
                     value = seekFraction.coerceIn(0f, 1f),
@@ -115,39 +118,30 @@ fun PlayerScreen(
                         onSeek((seekFraction * state.durationMs).toLong())
                     },
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(stringResource(R.string.section_value, state.currentSection?.name ?: stringResource(R.string.none)))
-                    Text(stringResource(R.string.next_section_value, state.nextSection?.name ?: stringResource(R.string.none)))
+            }
+        }
+
+        if (state.sections.isNotEmpty()) {
+            Text(stringResource(R.string.jump_to_section), fontWeight = FontWeight.SemiBold)
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                state.sections.forEach { section ->
+                    val selected = state.currentSection?.id == section.id
+                    val queued = state.queuedSectionId == section.id
+                    FilterChip(
+                        selected = selected || queued,
+                        onClick = { onSection(section) },
+                        label = { Text(if (queued) stringResource(R.string.queued_section_label, section.name) else section.name) },
+                    )
                 }
             }
         }
 
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            state.sections.forEach { section ->
-                val selected = state.currentSection?.id == section.id
-                val queued = state.queuedSectionId == section.id
-                FilterChip(
-                    selected = selected || queued,
-                    onClick = { onSection(section) },
-                    label = { Text(if (queued) stringResource(R.string.queued_section_label, section.name) else section.name) },
-                )
-            }
-        }
-
-        OutlinedButton(
-            onClick = onEditSections,
-            enabled = !state.isPlaying && grid != null,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.edit_sections))
-        }
-
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = onPlayPause, modifier = Modifier.weight(1.5f)) {
-                Text(if (state.isPlaying) stringResource(R.string.pause) else stringResource(R.string.play))
+            Button(onClick = onPlayPause, modifier = Modifier.weight(1.6f)) {
+                Text(if (state.isPlaying) stringResource(R.string.pause) else stringResource(R.string.play), fontWeight = FontWeight.Bold)
             }
             OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.stop)) }
             OutlinedButton(onClick = if (state.loopSectionId == null) onLoop else onExitLoop, modifier = Modifier.weight(1f)) {
@@ -156,30 +150,30 @@ fun PlayerScreen(
         }
 
         Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(stringResource(R.string.performance_tools), fontWeight = FontWeight.Bold)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    FilterChip(selected = state.clickEnabled, onClick = { onClick(!state.clickEnabled) }, label = { Text(stringResource(R.string.native_click)) }, modifier = Modifier.weight(1f))
-                    FilterChip(selected = state.guideEnabled, onClick = { onGuide(!state.guideEnabled) }, label = { Text(stringResource(R.string.guide)) }, modifier = Modifier.weight(1f))
+                    FilterChip(
+                        selected = state.clickEnabled,
+                        onClick = { onClick(!state.clickEnabled) },
+                        label = { Text(stringResource(R.string.click_simple)) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    FilterChip(
+                        selected = state.guideEnabled,
+                        onClick = { onGuide(!state.guideEnabled) },
+                        label = { Text(stringResource(R.string.guide_simple)) },
+                        modifier = Modifier.weight(1f),
+                    )
                 }
 
-                Text(stringResource(R.string.click_subdivision), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.click_rhythm), fontWeight = FontWeight.SemiBold)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ClickSubdivision.entries.forEach { subdivision ->
                         FilterChip(
                             selected = state.clickSubdivision == subdivision,
                             onClick = { onClickSubdivision(subdivision) },
-                            label = { Text(subdivision.label) },
-                        )
-                    }
-                }
-
-                Text(stringResource(R.string.click_output), fontWeight = FontWeight.SemiBold)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StereoRoute.entries.forEach { route ->
-                        FilterChip(
-                            selected = state.clickRoute == route,
-                            onClick = { onClickRoute(route) },
-                            label = { Text(routeLabel(route)) },
+                            label = { Text(subdivisionLabel(subdivision)) },
                         )
                     }
                 }
@@ -188,10 +182,58 @@ fun PlayerScreen(
 
         Text(stringResource(R.string.master_value, (state.masterVolume * 100).toInt()))
         Slider(value = state.masterVolume.coerceIn(0f, 1f), onValueChange = onMaster)
-        Button(onClick = onStopAll, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.stop_all), fontWeight = FontWeight.ExtraBold) }
+
+        OutlinedButton(onClick = { showAdvanced = !showAdvanced }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (showAdvanced) stringResource(R.string.hide_advanced_options) else stringResource(R.string.show_advanced_options))
+        }
+
+        if (showAdvanced) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(stringResource(R.string.advanced_options), fontWeight = FontWeight.Bold)
+                    Text(
+                        stringResource(
+                            R.string.grid_status,
+                            song.bpm?.let { "%.2f".format(it) } ?: "—",
+                            song.gridOffsetMs,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(stringResource(R.string.click_output), fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StereoRoute.entries.forEach { route ->
+                            FilterChip(
+                                selected = state.clickRoute == route,
+                                onClick = { onClickRoute(route) },
+                                label = { Text(routeLabel(route)) },
+                            )
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = onEditSections,
+                        enabled = !state.isPlaying && grid != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.edit_song_sections))
+                    }
+                }
+            }
+        }
+
+        Button(onClick = onStopAll, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.stop_all), fontWeight = FontWeight.ExtraBold)
+        }
 
         state.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
+}
+
+@Composable
+private fun subdivisionLabel(subdivision: ClickSubdivision): String = when (subdivision) {
+    ClickSubdivision.QUARTER -> stringResource(R.string.click_quarters)
+    ClickSubdivision.EIGHTH -> stringResource(R.string.click_eighths)
+    ClickSubdivision.TRIPLET -> stringResource(R.string.click_triplets)
+    ClickSubdivision.SIXTEENTH -> stringResource(R.string.click_sixteenths)
 }
 
 @Composable
