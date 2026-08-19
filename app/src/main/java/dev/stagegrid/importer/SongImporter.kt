@@ -5,11 +5,16 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
 import dev.stagegrid.data.LibraryRepository
+import dev.stagegrid.guide.GuideCueAnalyzer
+import dev.stagegrid.guide.GuidePackManager
+import dev.stagegrid.guide.NativeGuideRenderer
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.model.TrackEntity
 import dev.stagegrid.model.TrackType
+import dev.stagegrid.settings.AppSettingsRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.File
@@ -22,6 +27,8 @@ import java.util.zip.ZipInputStream
 class SongImporter(
     private val context: Context,
     private val repository: LibraryRepository,
+    private val guidePacks: GuidePackManager,
+    private val settings: AppSettingsRepository,
 ) {
     data class ImportResult(
         val songId: String,
@@ -139,6 +146,7 @@ class SongImporter(
         val tracks = mutableListOf<TrackEntity>()
         var maxDuration = 0L
         var clickReferenceFile: File? = null
+        var guideReferenceFile: File? = null
         var totalEncoderDelayFrames = 0L
         var mp3WithGaplessMetadata = 0
 
@@ -168,6 +176,7 @@ class SongImporter(
             val manifestType = manifest.trackTypes[source.name.lowercase()]
             val type = manifestType ?: StemClassifier.classify(source.name)
             if (type == TrackType.CLICK && clickReferenceFile == null) clickReferenceFile = safeName
+            if (type == TrackType.GUIDE && guideReferenceFile == null) guideReferenceFile = safeName
             tracks += TrackEntity(
                 songId = songId,
                 name = source.nameWithoutExtension,
@@ -198,12 +207,84 @@ class SongImporter(
             warnings += "A click track was detected, but its first transient could not be identified reliably; native click starts at 0 ms until adjusted."
         }
 
-        val sectionStarts = manifest.sections.filter { it.startMs < maxDuration }.sortedBy { it.startMs }
-        val sections = if (sectionStarts.isEmpty()) {
-            listOf(SectionEntity(songId = songId, name = "Full Song", startMs = 0, endMs = maxDuration, sortOrder = 0))
-        } else {
-            sectionStarts.mapIndexed { i, section ->
-                val end = sectionStarts.getOrNull(i + 1)?.startMs ?: maxDuration
+        var guideAnalysis: GuideCueAnalyzer.Result? = null
+        var autoSectionProposals = emptyList<GuideCueAnalyzer.SectionProposal>()
+        var nativeGuideLanguage: String? = null
+        val installedGuideSamples = guidePacks.listSamples()
+        if (guideReferenceFile != null && installedGuideSamples.isNotEmpty()) {
+            guideAnalysis = runCatching { GuideCueAnalyzer.analyze(guideReferenceFile!!, installedGuideSamples) }
+                .onFailure { warnings += "Native Guide analysis failed: ${it.message ?: "unknown error"}. The imported Guide track was kept." }
+                .getOrNull()
+            val analysis = guideAnalysis
+            if (analysis != null && analysis.cues.isNotEmpty()) {
+                autoSectionProposals = GuideCueAnalyzer.inferSections(
+                    result = analysis,
+                    bpm = manifest.bpm,
+                    timeSignature = manifest.timeSignature ?: "4/4",
+                    gridOffsetMs = gridOffsetMs,
+                    durationMs = maxDuration,
+                )
+                val preferredLanguage = settings.settings.first().nativeGuideLanguage
+                nativeGuideLanguage = guidePacks.resolveOutputLanguage(preferredLanguage, analysis.dominantLanguage)
+                val outputLanguage = nativeGuideLanguage
+                if (outputLanguage != null && tracks.size < MAX_TRACKS) {
+                    val nativeGuideFile = uniqueFile(audioDir, "StageGrid Native Guide.wav")
+                    val rendered = runCatching {
+                        NativeGuideRenderer.render(
+                            outputFile = nativeGuideFile,
+                            durationMs = maxDuration,
+                            cues = analysis.cues,
+                            samples = installedGuideSamples,
+                            outputLanguage = outputLanguage,
+                        )
+                    }.getOrNull()
+                    if (rendered != null) {
+                        val metadata = WavMetadataReader.read(rendered.file)
+                        for (i in tracks.indices) {
+                            if (tracks[i].type == TrackType.GUIDE.name) tracks[i] = tracks[i].copy(muted = true)
+                        }
+                        tracks += TrackEntity(
+                            songId = songId,
+                            name = "StageGrid Native Guide",
+                            filePath = rendered.file.absolutePath,
+                            type = TrackType.GUIDE.name,
+                            channels = metadata.channels,
+                            sampleRate = metadata.sampleRate,
+                            bitDepth = metadata.bitDepth,
+                            durationMs = metadata.durationMs,
+                            sortOrder = tracks.size,
+                        )
+                        warnings += "StageGrid recognized ${analysis.cues.size} Guide cue(s) and generated a native Guide in '${rendered.outputLanguage}'. " +
+                            "The imported Guide track was muted but kept as a reference."
+                        if (rendered.missingEvents > 0) {
+                            warnings += "${rendered.missingEvents} recognized Guide cue(s) had no matching sample in the selected/fallback pack."
+                        }
+                    } else {
+                        nativeGuideFile.delete()
+                        warnings += "Guide cues were recognized, but a native Guide WAV could not be rendered; the imported Guide track remains active."
+                    }
+                } else if (tracks.size >= MAX_TRACKS) {
+                    warnings += "Guide cues were recognized, but the native Guide track was skipped because the song already uses the $MAX_TRACKS-track import limit."
+                }
+                runCatching {
+                    NativeGuideRenderer.writeEventSidecar(
+                        File(songRoot, "native-guide-events.json"),
+                        analysis,
+                        nativeGuideLanguage,
+                        autoSectionProposals,
+                    )
+                }
+            } else if (analysis != null) {
+                warnings += "A Guide track and Guide sample pack were found, but no cue matched the installed templates confidently."
+            }
+        } else if (guideReferenceFile != null && installedGuideSamples.isEmpty()) {
+            warnings += "A Guide track was detected. Install a Guide sample pack in Settings to enable native Guide recognition and automatic section detection on future imports."
+        }
+
+        val manifestSectionStarts = manifest.sections.filter { it.startMs < maxDuration }.sortedBy { it.startMs }
+        val sections = when {
+            manifestSectionStarts.isNotEmpty() -> manifestSectionStarts.mapIndexed { i, section ->
+                val end = manifestSectionStarts.getOrNull(i + 1)?.startMs ?: maxDuration
                 SectionEntity(
                     songId = songId,
                     name = section.name,
@@ -213,6 +294,23 @@ class SongImporter(
                     colorArgb = section.colorArgb ?: defaultSectionColor(i),
                 )
             }
+            autoSectionProposals.isNotEmpty() -> {
+                warnings += "${autoSectionProposals.size} song section(s) were created automatically from the recognized Guide cues. Review them in Edit sections before live use."
+                autoSectionProposals.mapIndexed { i, proposal ->
+                    val end = autoSectionProposals.getOrNull(i + 1)?.startMs ?: maxDuration
+                    SectionEntity(
+                        songId = songId,
+                        name = proposal.name,
+                        startMs = proposal.startMs,
+                        endMs = end.coerceAtLeast(proposal.startMs + 1),
+                        sortOrder = i,
+                        colorArgb = defaultSectionColor(i),
+                    )
+                }
+            }
+            else -> listOf(
+                SectionEntity(songId = songId, name = "Full Song", startMs = 0, endMs = maxDuration, sortOrder = 0),
+            )
         }
 
         val title = manifest.title ?: fallbackTitle.ifBlank { "Imported Song" }
