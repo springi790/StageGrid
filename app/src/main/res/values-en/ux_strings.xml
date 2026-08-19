@@ -17,7 +17,7 @@
     <string name="advanced_options">Advanced options</string>
     <string name="edit_song_sections">Edit song sections</string>
 
-    <string name="mixer_simple_explanation">Adjust each track's volume. If you do not need special outputs, you can leave everything else as it is.</string>
+    <string name="mixer_simple_explanation">Adjust each track\'s volume. If you do not need special outputs, you can leave everything else as it is.</string>
     <string name="quick_output_setup">Quick output setup</string>
     <string name="quick_output_explanation">Choose a common setup and StageGrid will assign the outputs for you.</string>
     <string name="preset_stage_split">Stage: Click + Guide left · Tracks right</string>
