@@ -1,0 +1,14 @@
+<resources>
+    <string name="cloud_folder_button">Google Drive / nube</string>
+    <string name="cloud_folder_title">Carpeta sincronizada</string>
+    <string name="cloud_folder_explanation">En el selector de Android abre Google Drive y elige una carpeta propia. StageGrid recordará solo esa carpeta y copiará a su biblioteca local únicamente los archivos que selecciones.</string>
+    <string name="cloud_choose_folder">Elegir carpeta</string>
+    <string name="cloud_back">Atrás</string>
+    <string name="cloud_refresh">Actualizar</string>
+    <string name="cloud_select_all">Seleccionar todo</string>
+    <string name="cloud_empty">No hay archivos compatibles en esta carpeta.</string>
+    <string name="cloud_change_folder">Cambiar carpeta</string>
+    <string name="cloud_unlink">Desvincular</string>
+    <string name="cloud_download_import">Descargar e importar (%1$d)</string>
+    <string name="cloud_archive_mix_error">Selecciona un solo ZIP/StagePack o selecciona stems sin mezclar un archivo comprimido.</string>
+</resources>
