@@ -1,0 +1,16 @@
+<resources>
+    <string name="native_guide_title">Native Guides</string>
+    <string name="native_guide_description">StageGrid can recognize calls in an imported Guide stem using an installed sample pack and rebuild them as a clean app-generated Guide.</string>
+    <string name="guide_pack_installing">Installing Guide pack…</string>
+    <string name="guide_pack_installed">%1$d samples installed · %2$s</string>
+    <string name="guide_pack_not_installed">No Guide sample pack is installed.</string>
+    <string name="guide_pack_install">Install Guide pack</string>
+    <string name="guide_pack_replace">Change Guide pack</string>
+    <string name="native_guide_language">Native Guide language</string>
+    <string name="guide_language_auto">Automatic</string>
+    <string name="guide_language_spanish">Spanish</string>
+    <string name="guide_language_english">English</string>
+    <string name="guide_language_french">French</string>
+    <string name="guide_language_portuguese">Portuguese</string>
+    <string name="native_guide_import_note">This is applied when importing new songs that contain a Guide stem. If section cues are recognized and the song has a valid BPM, StageGrid also proposes the song sections automatically.</string>
+</resources>
