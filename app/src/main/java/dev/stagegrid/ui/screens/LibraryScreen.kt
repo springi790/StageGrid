@@ -35,6 +35,7 @@ fun LibraryScreen(
     onImportZip: () -> Unit,
     onImportFolder: () -> Unit,
     onImportFiles: () -> Unit,
+    onOpenCloud: () -> Unit,
     onLoadSong: (String) -> Unit,
     onEditSong: (SongEntity) -> Unit,
     modifier: Modifier = Modifier,
@@ -57,6 +58,10 @@ fun LibraryScreen(
             Button(onClick = onImportZip, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.import_zip)) }
             OutlinedButton(onClick = onImportFolder, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.import_folder)) }
             OutlinedButton(onClick = onImportFiles, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.import_files)) }
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onOpenCloud, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.cloud_folder_button))
         }
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
