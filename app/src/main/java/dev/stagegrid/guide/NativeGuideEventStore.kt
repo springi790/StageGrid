@@ -8,9 +8,8 @@ import java.io.File
 /** Reads persisted native-Guide cue events without re-analyzing the source audio. */
 object NativeGuideEventStore {
     fun readAnalysis(file: File): GuideCueAnalyzer.Result? {
-        if (!file.isFile) return null
+        val root = readRoot(file) ?: return null
         return runCatching {
-            val root = JSONObject(file.readText())
             val cuesJson = root.optJSONArray("cues") ?: JSONArray()
             val cues = buildList {
                 for (i in 0 until cuesJson.length()) {
@@ -35,10 +34,23 @@ object NativeGuideEventStore {
             if (cues.isEmpty()) return@runCatching null
             GuideCueAnalyzer.Result(
                 cues = cues.sortedBy { it.cueMs },
-                dominantLanguage = root.optString("detectedLanguage").takeIf { it.isNotBlank() && it != "null" },
+                dominantLanguage = root.optNullableString("detectedLanguage"),
                 candidateCount = root.optInt("candidateCount", cues.size),
             )
         }.getOrNull()
+    }
+
+    fun readOutputLanguage(file: File): String? = readRoot(file)?.optNullableString("outputLanguage")
+
+    fun readDetectedLanguage(file: File): String? = readRoot(file)?.optNullableString("detectedLanguage")
+
+    fun writeOutputLanguage(file: File, language: String) {
+        if (!file.isFile || language.isBlank()) return
+        runCatching {
+            val root = JSONObject(file.readText())
+            root.put("outputLanguage", language)
+            file.writeText(root.toString(2))
+        }
     }
 
     fun writeSectionProposals(file: File, proposals: List<GuideCueAnalyzer.SectionProposal>) {
@@ -59,4 +71,12 @@ object NativeGuideEventStore {
             file.writeText(root.toString(2))
         }
     }
+
+    private fun readRoot(file: File): JSONObject? {
+        if (!file.isFile) return null
+        return runCatching { JSONObject(file.readText()) }.getOrNull()
+    }
+
+    private fun JSONObject.optNullableString(key: String): String? =
+        optString(key).trim().takeIf { it.isNotBlank() && it != "null" }
 }
