@@ -33,6 +33,7 @@ import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.settings.AppSettingsRepository
 import dev.stagegrid.ui.StageGridViewModel
 import kotlinx.coroutines.delay
+import java.util.Locale
 
 @Composable
 fun SettingsScreen(
@@ -87,11 +88,12 @@ fun SettingsScreen(
                             Text(stringResource(R.string.guide_pack_installing))
                         }
                     } else if (guidePackState.status.installed) {
+                        val languageSummary = guidePackState.status.languages.joinToString(", ") { it.uppercase(Locale.ROOT) }
                         Text(
                             stringResource(
                                 R.string.guide_pack_installed,
                                 guidePackState.status.sampleCount,
-                                guidePackState.status.languages.joinToString(", ") { guideLanguageLabel(it) },
+                                languageSummary,
                             ),
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -186,7 +188,7 @@ private fun guideLanguageLabel(language: String): String = when (language) {
     "en" -> stringResource(R.string.guide_language_english)
     "fr" -> stringResource(R.string.guide_language_french)
     "pt" -> stringResource(R.string.guide_language_portuguese)
-    else -> language.uppercase()
+    else -> language.uppercase(Locale.ROOT)
 }
 
 @Composable
