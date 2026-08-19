@@ -35,12 +35,18 @@ object NativeGuideRenderer {
         sampleRate: Int = 48_000,
     ): Result? {
         if (cues.isEmpty() || samples.isEmpty() || durationMs <= 0) return null
-        val index = samples.associateBy { "${it.language}:${it.key}" }
+        val exactIndex = samples.associateBy { "${it.language}:${it.kind.name}:${it.key}" }
+        val fallbackIndex = samples.associateBy { "${it.language}:${it.key}" }
         val rendered = mutableListOf<RenderEvent>()
         var missing = 0
 
         for (cue in cues) {
-            val selected = index["$outputLanguage:${cue.key}"] ?: index["${cue.language}:${cue.key}"]
+            val outputExact = "$outputLanguage:${cue.kind.name}:${cue.key}"
+            val detectedExact = "${cue.language}:${cue.kind.name}:${cue.key}"
+            val selected = exactIndex[outputExact]
+                ?: exactIndex[detectedExact]
+                ?: fallbackIndex["$outputLanguage:${cue.key}"]
+                ?: fallbackIndex["${cue.language}:${cue.key}"]
             if (selected == null) {
                 missing++
                 continue
@@ -132,8 +138,8 @@ object NativeGuideRenderer {
         out.write("WAVE".toByteArray(Charsets.US_ASCII))
         out.write("fmt ".toByteArray(Charsets.US_ASCII))
         writeU32(out, 16)
-        writeU16(out, 1) // PCM
-        writeU16(out, 1) // mono
+        writeU16(out, 1)
+        writeU16(out, 1)
         writeU32(out, sampleRate.toLong())
         writeU32(out, sampleRate.toLong() * 2L)
         writeU16(out, 2)
