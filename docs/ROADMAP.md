@@ -19,6 +19,7 @@ Delivered in source: local import/library, shared-clock Oboe stereo engine, WAV 
 ### 0.2.0-alpha02 — simplified live UX
 
 - plain-language Player focused on current section, next section and transport;
+- keep **Edit sections** visible as a first-class Player action;
 - hide grid offsets, manual routing and other technical controls behind advanced options;
 - human-readable click subdivisions;
 - quick routing presets for common stereo stage setups;
@@ -26,15 +27,25 @@ Delivered in source: local import/library, shared-clock Oboe stereo engine, WAV 
 - simplified section editing based on the playhead, with precise bar/beat editing kept optional;
 - clearer visual hierarchy and contextual explanations.
 
+### 0.2.0-alpha03 — quantized sections + count-in
+
+- live section jumps queue to the **next musical bar boundary** when a valid Musical Grid exists;
+- fallback to the current section boundary when a valid grid is unavailable;
+- selectable section count-in: off, 1 bar or 2 bars;
+- sample-clock count-in generated in the native engine rather than with UI timers/coroutines;
+- virtual negative-time pre-roll allows count-in even for a section beginning at the start of the song;
+- imported stems are gated during count-in and enter together at the target frame;
+- count-in choice is persisted in DataStore;
+- Player clearly shows the queued next-bar section and active count-in target.
+
 ### Remaining 0.2 work
 
-- section count-in/pre-roll;
-- quantized section jumps using the musical grid;
 - path-change double buffering so loop/reorder changes cannot starve the callback;
 - setlist live NEXT/PREV song transport and next-song preload;
 - persisted/restorable performance session without auto-emitting audio after a crash;
 - first-run onboarding for import, Click/Guide, routing and sections;
-- additional accessibility/large-touch-target pass for live use.
+- additional accessibility/large-touch-target pass for live use;
+- physical-device stress validation of quantized jumps/count-in under high track counts.
 
 ## 0.3 — expanded decoder/cache layer
 
