@@ -2,7 +2,7 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Every stem, the native Click and the musical timeline share one real-time audio clock instead of using independent Android media players.
 
-> **Current release: `0.2.0-alpha03` — Quantized sections + native count-in.**
+> **Current release: `0.2.0-alpha04` — Native Guide recognition + automatic section proposals.**
 >
 > StageGrid is under active development. Only functionality with a real implementation is presented as available; planned modules live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -12,35 +12,59 @@ StageGrid is a native Android, local-first multitrack player for live performanc
 
 StageGrid keeps common actions visible and moves technical controls such as grid offsets and manual routing behind optional advanced controls. Common stage configurations should use presets rather than forcing the user to understand buses, channel masks or engine internals.
 
-## New in 0.2.0-alpha03
+## New in 0.2.0-alpha04
 
-This alpha builds on the Musical Grid and simplified 0.2 UI.
+This alpha adds the first StageGrid-native Guide pipeline on top of the Musical Grid, section editor and quantized transport introduced earlier in 0.2.
 
-- **Edit sections** remains visible directly in the Player instead of being hidden in Advanced options.
-- Live section changes are now **quantized to the next musical bar** when the song has a valid BPM/grid.
-- The selected destination is shown as queued until the next bar begins.
-- Added section **count-in / pre-roll** options:
-  - No count-in
-  - 1 bar
-  - 2 bars
-- While stopped, move to/select a section and use **Play section with count-in**.
-- Count-in timing runs in the native sample-clock engine, not with Android UI timers.
-- Imported stems are gated during count-in and enter together at the exact target frame.
-- Virtual negative-time pre-roll allows a count-in even when the target section starts at the beginning of the song.
-- The generated Click continues to use the same master musical clock as playback.
-- Count-in preference is persisted with DataStore.
-- App version: `0.2.0-alpha03` (`versionCode 6`).
+- **Install a Guide sample pack locally** from Settings using Android's document picker.
+- StageGrid does **not** bundle or upload third-party Guide sample audio. The user supplies a sample pack they are licensed to use.
+- Recognizes supported installed Guide languages. The current pack parser supports:
+  - Spanish (`ES`)
+  - English (`EN`)
+  - French (`FR`)
+  - Portuguese (`PT`)
+- When a newly imported song contains a Guide stem, StageGrid analyzes it completely offline using **template/fingerprint matching** against the installed Guide samples.
+- Recognition covers section calls, count samples and dynamic/Guide cues that exist in the installed pack.
+- No cloud speech-recognition service is required and recognition never runs in the real-time Oboe callback.
+- Recognized calls are persisted in `native-guide-events.json` beside the imported song.
+- StageGrid can render a clean app-generated **`StageGrid Native Guide.wav`** in:
+  - Automatic language
+  - Spanish
+  - English
+  - French
+  - Portuguese
+  when that language exists in the installed pack.
+- When native Guide reconstruction succeeds, the original imported Guide is retained but muted as a reference.
+- If a song has a valid BPM/Musical Grid and no explicit section map from `song.json`, recognized section calls can create **automatic section proposals**.
+- Automatic section markers are snapped to the Musical Grid and remain fully editable through **Edit sections**.
+- The existing **Edit sections** button remains visible directly in the Player.
+- App version: `0.2.0-alpha04` (`versionCode 7`).
+
+### Important alpha04 limitation
+
+Native Guide events are recognized and stored as structured events, but the generated Guide WAV still follows the song's original timeline. Fully moving those Guide events when a future live ReOrder/arrangement changes the song structure belongs to the upcoming arrangement/path work.
+
+The recognition system is designed for sample-based Guide tracks built from cues matching the installed pack. It is **not a general-purpose speech-to-text engine** for arbitrary human recordings.
 
 ## Current live workflow
 
-A typical two-output setup can now be configured without manual routing knowledge:
+A typical StageGrid workflow now looks like:
 
 ```text
+Settings
+  ↓
+Install Guide sample pack (optional)
+  ↓
 Library
   ↓
-Import / Drive folder
+Import song / ZIP / Drive folder
   ↓
-Load song
+Click track → Musical Grid reference
+Guide track → native cue recognition
+  ↓
+Automatic section proposals when possible
+  ↓
+Review with Edit sections
   ↓
 Player
   ├─ Play / Pause / Stop
@@ -49,15 +73,65 @@ Player
   ├─ Click / Guide
   ├─ Section count-in
   └─ Quantized section changes
-
-Mixer preset
-  L → Click + Guide
-  R → Tracks
 ```
 
-When playing, tapping another section queues it for the next musical bar boundary instead of jumping immediately at an arbitrary point in the measure.
+For a common two-output stage setup:
 
-When stopped, you can select a section, choose a 1- or 2-bar count-in and start that section with Click-only pre-roll before all stems enter together.
+```text
+Left  → Click + Guide
+Right → Tracks
+```
+
+## Native Guide workflow
+
+Install the pack once:
+
+```text
+Settings
+  ↓
+Native Guides
+  ↓
+Install Guide pack
+  ↓
+Choose ZIP
+  ↓
+StageGrid indexes compatible samples locally
+```
+
+Then import a song containing a Guide stem:
+
+```text
+Imported Guide stem
+       ↓
+10 ms audio fingerprint analysis
+       ↓
+recognized cue events
+       ├─ Intro
+       ├─ Verse 1
+       ├─ Chorus
+       ├─ Bridge
+       └─ dynamic/count cues
+       ↓
+native-guide-events.json
+       ↓
+StageGrid Native Guide.wav
+```
+
+If BPM and the Musical Grid are valid and `song.json` did not already define sections, section calls can also produce:
+
+```text
+Guide call
+   ↓
+expected section marker
+   ↓
+snap to musical bar
+   ↓
+Intro / Verse / Chorus / Bridge...
+   ↓
+Edit sections for review
+```
+
+Automatic section detection is intentionally a proposal, not an irreversible edit. Review the section map before relying on it for a live performance.
 
 ## What is implemented
 
@@ -73,6 +147,7 @@ When stopped, you can select a section, choose a 1- or 2-bar count-in and start 
 - ZIP-slip protection, extraction limits and safe filenames.
 - Optional `song.json` for metadata, stem types and section markers.
 - Post-import metadata editing for title, artist, BPM, key, time signature, grid offset and notes.
+- Optional locally installed Guide sample pack with bounded extraction and WAV validation.
 
 ### Audio formats
 
@@ -93,7 +168,7 @@ Planned decoder/cache expansion includes FLAC, AAC/M4A and OGG.
 - One native Oboe output stream.
 - One master output-frame playhead shared by all stems.
 - Streaming decoder threads and preallocated SPSC buffers.
-- No filesystem, Room or Compose work inside the real-time callback.
+- No filesystem, Room, Guide recognition or Compose work inside the real-time callback.
 - Shared source-rate mapping for stems with different source sample rates.
 - Play, pause, stop and seek.
 - Master volume.
@@ -102,7 +177,7 @@ Planned decoder/cache expansion includes FLAC, AAC/M4A and OGG.
 - Basic Android/USB stereo output-device selection.
 - Native diagnostics for sample rate, burst size, underruns and callback load.
 
-### Native Click and Guide
+### Native Click
 
 - Imported Click files are retained as alignment references.
 - Automatic first-click transient detection can establish `gridOffsetMs`.
@@ -114,7 +189,19 @@ Planned decoder/cache expansion includes FLAC, AAC/M4A and OGG.
   - triplets / tresillos
   - sixteenth / semicorcheas
 - Click routing: `L`, `L+R`, `R`.
-- Guide enable/disable.
+
+### Native Guide
+
+- Imported Guide stem detection through the existing stem classifier/manifest metadata.
+- User-installed local Guide sample pack.
+- Offline sample-template recognition at import time.
+- Dominant Guide-language detection from matched samples.
+- Native Guide output-language selection: Auto / ES / EN / FR / PT when available.
+- Recognized cue event sidecar: `native-guide-events.json`.
+- App-generated PCM `StageGrid Native Guide.wav`.
+- Original Guide retained as a muted reference when reconstruction succeeds.
+- Guide enable/disable remains a normal Player control.
+- Native Guide playback uses the same shared multitrack clock as other PCM stems.
 
 ### Musical Grid
 
@@ -125,7 +212,7 @@ BPM + time signature + grid offset
                 ↓
          bar / beat position
                 ↓
- sections / snapping / queued jumps / count-in
+ sections / snapping / queued jumps / count-in / Guide section proposals
 ```
 
 Implemented:
@@ -135,11 +222,13 @@ Implemented:
 - bar snapping;
 - Player bar/beat readout;
 - section boundaries based on the musical grid;
-- next-bar live section quantization.
+- next-bar live section quantization;
+- section proposals from recognized Guide section calls.
 
 ### Sections
 
 - Import section starts from `song.json`.
+- Automatic section proposals from recognized native Guide cues when no explicit section map is present.
 - Visual/manual Section Editor.
 - Create, rename, resize and delete sections.
 - Set start/end from the current playhead.
@@ -179,7 +268,7 @@ This is a two-channel stereo matrix, not the future arbitrary 4/8/custom USB out
 - Audio-focus handling.
 - LIVE keep-screen-on mode.
 - Performance Lock.
-- Spanish and English resources.
+- Spanish and English UI resources.
 
 ## Count-in behavior
 
@@ -202,8 +291,6 @@ During count-in, imported stems are consumed/prepared but not mixed to the outpu
 ## Quantized live section changes
 
 With a valid Musical Grid, tapping a section while playback is active does not immediately seek.
-
-Example:
 
 ```text
 Current: Verse
@@ -281,7 +368,8 @@ Then build normally.
 - No analytics SDK.
 - No ads.
 - No broad storage permission.
-- StageGrid does not upload your audio.
+- StageGrid does not upload your audio or Guide samples.
+- Guide packs are installed into app-private local storage from a location explicitly selected by the user.
 - Cloud-folder access is limited to locations explicitly granted through Android's document provider.
 - Imported audio is copied locally for offline playback.
 
@@ -293,18 +381,22 @@ The repository includes tests for areas such as:
 - WAV parsing;
 - Musical Grid conversion/snapping;
 - next-bar quantization math;
+- native Guide template recognition and automatic section inference;
 - Room behavior;
 - JNI/native library loading;
 - host C++ shared-clock behavior.
 
 GitHub Actions runs unit tests and `assembleDebug` for development pull requests before changes are merged into `main`.
 
-## Known limitations of 0.2.0-alpha03
+## Known limitations of 0.2.0-alpha04
 
 Still pending:
 
+- native Guide recognition currently targets sample-based Guide stems matching the installed cue pack; arbitrary spoken Guide recordings are not generic speech-to-text;
+- songs imported before installing/changing a Guide pack need to be re-imported for recognition in this alpha; an in-place re-analysis action is planned;
+- native Guide events are stored structurally, but the generated Guide WAV does not yet relocate cues after arbitrary live ReOrder/arrangement changes;
 - double-buffered arrangement/path updates for stronger glitch resistance during live path changes;
-- high-track-count physical-device stress validation of count-in and quantized jumps;
+- high-track-count physical-device stress validation of count-in, quantized jumps and native Guide playback;
 - Setlist Live NEXT/PREV transport with next-song preload;
 - persisted/restorable performance session;
 - waveform peak cache/editor;
@@ -324,6 +416,19 @@ Still pending:
 See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Release history
+
+### 0.2.0-alpha04
+
+**Native Guide recognition + automatic section proposals**
+
+- local user-installed Guide sample packs;
+- offline Guide cue fingerprint/template recognition;
+- ES/EN/FR/PT installed-language handling;
+- app-generated native Guide PCM track;
+- original Guide retained as muted reference on successful reconstruction;
+- recognized event sidecar for future arrangement-aware Guide behavior;
+- automatic Musical Grid section proposals from recognized section cues;
+- Guide recognition JVM test coverage.
 
 ### 0.2.0-alpha03
 

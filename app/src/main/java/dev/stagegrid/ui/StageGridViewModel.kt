@@ -9,6 +9,7 @@ import dev.stagegrid.audio.AudioDeviceManager
 import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.audio.ClickSubdivision
 import dev.stagegrid.audio.PlayerState
+import dev.stagegrid.guide.GuidePackManager
 import dev.stagegrid.importer.SongImporter
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.SetlistBundle
@@ -45,8 +46,17 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         val error: String? = null,
     )
 
+    data class GuidePackUiState(
+        val installing: Boolean = false,
+        val status: GuidePackManager.Status = GuidePackManager.Status(false, 0, emptyList()),
+        val error: String? = null,
+    )
+
     private val _importState = MutableStateFlow(ImportUiState())
     val importState: StateFlow<ImportUiState> = _importState.asStateFlow()
+
+    private val _guidePackState = MutableStateFlow(GuidePackUiState(status = app.guidePacks.status()))
+    val guidePackState: StateFlow<GuidePackUiState> = _guidePackState.asStateFlow()
 
     private val _selectedSetlist = MutableStateFlow<SetlistBundle?>(null)
     val selectedSetlist: StateFlow<SetlistBundle?> = _selectedSetlist.asStateFlow()
@@ -77,6 +87,26 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun installGuidePack(uri: Uri) {
+        viewModelScope.launch {
+            _guidePackState.value = _guidePackState.value.copy(installing = true, error = null)
+            try {
+                val result = withContext(Dispatchers.IO) { app.guidePacks.installZip(uri) }
+                _guidePackState.value = GuidePackUiState(status = result.status)
+            } catch (t: Throwable) {
+                _guidePackState.value = _guidePackState.value.copy(
+                    installing = false,
+                    status = app.guidePacks.status(),
+                    error = t.message ?: "Guide pack installation failed",
+                )
+            }
+        }
+    }
+
+    fun refreshGuidePackStatus() {
+        _guidePackState.value = _guidePackState.value.copy(status = app.guidePacks.status(), error = null)
+    }
+
     fun dismissImportState() { _importState.value = ImportUiState() }
 
     fun loadSong(songId: String) = app.audio.loadSong(songId)
@@ -103,6 +133,9 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         val normalized = bars.coerceIn(0, 2)
         app.audio.setCountInBars(normalized)
         viewModelScope.launch { app.settings.setCountInBars(normalized) }
+    }
+    fun setNativeGuideLanguage(language: String) = viewModelScope.launch {
+        app.settings.setNativeGuideLanguage(language)
     }
     fun setTrackVolume(index: Int, value: Float) = app.audio.setTrackVolume(index, value)
     fun setTrackMute(index: Int, value: Boolean) = app.audio.setTrackMute(index, value)

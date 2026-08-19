@@ -1,0 +1,16 @@
+<resources>
+    <string name="native_guide_title">Guías nativas</string>
+    <string name="native_guide_description">StageGrid puede reconocer las llamadas de una pista Guide usando un paquete de muestras instalado y reconstruirlas como una guía limpia generada por la app.</string>
+    <string name="guide_pack_installing">Instalando paquete de guías…</string>
+    <string name="guide_pack_installed">%1$d muestras instaladas · %2$s</string>
+    <string name="guide_pack_not_installed">No hay un paquete de guías instalado.</string>
+    <string name="guide_pack_install">Instalar paquete de guías</string>
+    <string name="guide_pack_replace">Cambiar paquete de guías</string>
+    <string name="native_guide_language">Idioma de la guía nativa</string>
+    <string name="guide_language_auto">Automático</string>
+    <string name="guide_language_spanish">Español</string>
+    <string name="guide_language_english">Inglés</string>
+    <string name="guide_language_french">Francés</string>
+    <string name="guide_language_portuguese">Portugués</string>
+    <string name="native_guide_import_note">Se aplica al importar canciones nuevas que contengan una pista Guide. Si se reconocen cues de sección y hay BPM válido, StageGrid también propondrá automáticamente las secciones.</string>
+</resources>

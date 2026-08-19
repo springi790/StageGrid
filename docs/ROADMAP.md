@@ -38,14 +38,32 @@ Delivered in source: local import/library, shared-clock Oboe stereo engine, WAV 
 - count-in choice is persisted in DataStore;
 - Player clearly shows the queued next-bar section and active count-in target.
 
+### 0.2.0-alpha04 — native Guide recognition + automatic section proposals
+
+- install a user-supplied/licensed Guide sample ZIP through Android's document picker; sample audio is not bundled in the StageGrid repository or APK;
+- recognize supported Guide sample-pack languages (currently ES/EN/FR/PT when present in the installed pack);
+- import-time, fully offline template matching of a song's Guide stem against the installed cue samples;
+- recognize section, count and dynamic Guide calls without depending on cloud speech recognition;
+- persist recognized calls as `native-guide-events.json` beside the imported song;
+- render a clean app-generated `StageGrid Native Guide.wav` from recognized cue events and the selected output language;
+- retain the original imported Guide as a muted reference when native reconstruction succeeds;
+- allow Guide output language to follow recognition automatically or be forced to an installed language;
+- when no explicit `song.json` section map exists and BPM/grid data is valid, infer section starts from recognized section calls and snap them to the Musical Grid;
+- keep automatically generated sections editable in the existing Section Editor;
+- template matching and rendering run at import time, never in the Oboe real-time callback.
+
+The alpha04 event sidecar is intentionally a foundation for a later arrangement-aware Guide engine. In alpha04 the generated Guide follows the original song timeline; moving native Guide events along with arbitrary live ReOrder/path changes remains pending.
+
 ### Remaining 0.2 work
 
 - path-change double buffering so loop/reorder changes cannot starve the callback;
+- arrangement-aware relocation of native Guide events after live section reorder/path changes;
+- re-analyze an already imported song against a newly installed Guide pack without requiring a fresh song import;
 - setlist live NEXT/PREV song transport and next-song preload;
 - persisted/restorable performance session without auto-emitting audio after a crash;
 - first-run onboarding for import, Click/Guide, routing and sections;
 - additional accessibility/large-touch-target pass for live use;
-- physical-device stress validation of quantized jumps/count-in under high track counts.
+- physical-device stress validation of quantized jumps/count-in/native Guides under high track counts.
 
 ## 0.3 — expanded decoder/cache layer
 
@@ -68,6 +86,7 @@ Delivered in source: local import/library, shared-clock Oboe stereo engine, WAV 
 - virtual arrangement graph independent of WAV files;
 - bar-aware loops, finite/infinite loop state, exit-loop-at-boundary;
 - live reorder and pre-roll;
+- native Guide events attached to arrangement/section nodes rather than a fixed rendered timeline;
 - gapless next-song transition/crossfade architecture.
 
 ## 0.6 — DSP

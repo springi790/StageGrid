@@ -6,6 +6,7 @@ import dev.stagegrid.audio.AudioEngineController
 import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.data.LibraryRepository
 import dev.stagegrid.data.StageGridDatabase
+import dev.stagegrid.guide.GuidePackManager
 import dev.stagegrid.importer.SongImporter
 import dev.stagegrid.settings.AppSettingsRepository
 
@@ -22,14 +23,17 @@ class StageGridApplication : Application() {
         private set
     lateinit var settings: AppSettingsRepository
         private set
+    lateinit var guidePacks: GuidePackManager
+        private set
 
     override fun onCreate() {
         super.onCreate()
         database = StageGridDatabase.create(this)
         repository = LibraryRepository(database)
-        importer = SongImporter(this, repository)
+        settings = AppSettingsRepository(this)
+        guidePacks = GuidePackManager(this)
+        importer = SongImporter(this, repository, guidePacks, settings)
         audioDevices = AudioDeviceManager(this)
         audio = AudioEngineController(this, repository, NativeAudioEngine())
-        settings = AppSettingsRepository(this)
     }
 }
