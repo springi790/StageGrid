@@ -1,6 +1,7 @@
 package dev.stagegrid.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -74,12 +75,16 @@ fun PlayerScreen(
     var dragging by remember { mutableStateOf(false) }
     var seekFraction by remember { mutableFloatStateOf(0f) }
     var showAdvanced by remember { mutableStateOf(false) }
+    val verticalScroll = rememberScrollState()
 
     LaunchedEffect(state.positionMs, state.durationMs, dragging) {
         if (!dragging) seekFraction = if (state.durationMs > 0) state.positionMs.toFloat() / state.durationMs else 0f
     }
 
-    Column(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(
+        modifier.fillMaxSize().verticalScroll(verticalScroll).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text(song.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
