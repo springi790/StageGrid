@@ -1,0 +1,24 @@
+<resources>
+    <string name="musical_grid">Grid musical</string>
+    <string name="bar_beat_value">Compás %1$d · Tiempo %2$d</string>
+    <string name="edit_sections">Editar secciones</string>
+    <string name="section_editor">Editor de secciones</string>
+    <string name="section_editor_requires_bpm">Configura un BPM válido para usar el editor con snap musical.</string>
+    <string name="section_editor_playback_warning">Detén la reproducción para modificar las secciones de forma segura.</string>
+    <string name="add_section">Añadir sección</string>
+    <string name="section_name">Nombre de sección</string>
+    <string name="start_position">Inicio</string>
+    <string name="end_position">Final</string>
+    <string name="bar">Compás</string>
+    <string name="beat">Tiempo</string>
+    <string name="use_playhead_start">Playhead → inicio</string>
+    <string name="use_playhead_end">Playhead → final</string>
+    <string name="snap_to">Snap</string>
+    <string name="snap_beat">Tiempo</string>
+    <string name="snap_bar">Compás</string>
+    <string name="invalid_section_range">El final debe estar después del inicio.</string>
+    <string name="section_range_value">%1$s → %2$s</string>
+    <string name="no_sections_editor">Aún no hay secciones. Añade la primera desde el playhead.</string>
+    <string name="timeline">Timeline</string>
+    <string name="grid_offset_value">Offset: %1$d ms</string>
+</resources>

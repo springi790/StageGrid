@@ -34,6 +34,7 @@ import dev.stagegrid.audio.EngineState
 import dev.stagegrid.audio.PlayerState
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.StereoRoute
+import dev.stagegrid.music.MusicalGrid
 
 @Composable
 fun PlayerScreen(
@@ -45,6 +46,7 @@ fun PlayerScreen(
     onLoop: () -> Unit,
     onExitLoop: () -> Unit,
     onSection: (SectionEntity) -> Unit,
+    onEditSections: () -> Unit,
     onMaster: (Float) -> Unit,
     onClick: (Boolean) -> Unit,
     onGuide: (Boolean) -> Unit,
@@ -61,6 +63,11 @@ fun PlayerScreen(
         }
         return
     }
+
+    val grid = remember(song.bpm, song.timeSignature, song.gridOffsetMs) {
+        MusicalGrid.from(song.bpm, song.timeSignature, song.gridOffsetMs)
+    }
+    val musicalPosition = grid?.positionAt(state.positionMs)
 
     var dragging by remember { mutableStateOf(false) }
     var seekFraction by remember { mutableFloatStateOf(0f) }
@@ -82,6 +89,14 @@ fun PlayerScreen(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                musicalPosition?.let {
+                    Text(
+                        stringResource(R.string.bar_beat_value, it.bar, it.beat),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
             if (state.engineState == EngineState.PLAYING) Text(stringResource(R.string.live), color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
         }
@@ -120,6 +135,14 @@ fun PlayerScreen(
                     label = { Text(if (queued) stringResource(R.string.queued_section_label, section.name) else section.name) },
                 )
             }
+        }
+
+        OutlinedButton(
+            onClick = onEditSections,
+            enabled = !state.isPlaying && grid != null,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.edit_sections))
         }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
