@@ -58,6 +58,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     val outputs by viewModel.outputs.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val importState by viewModel.importState.collectAsStateWithLifecycle()
+    val guidePackState by viewModel.guidePackState.collectAsStateWithLifecycle()
     val selectedSetlist by viewModel.selectedSetlist.collectAsStateWithLifecycle()
 
     var screen by rememberSaveable { mutableStateOf(MainScreen.LIBRARY) }
@@ -73,6 +74,9 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     }
     val filesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) viewModel.importFiles(uris)
+    }
+    val guidePackLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri?.let(viewModel::installGuidePack)
     }
 
     val availableScreens = if (settings.performanceLock) {
@@ -153,12 +157,15 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             )
             MainScreen.SETTINGS -> SettingsScreen(
                 settings = settings,
+                guidePackState = guidePackState,
                 outputs = outputs,
                 selectedOutputId = player.selectedOutputDeviceId,
                 diagnosticsProvider = viewModel::diagnostics,
                 onLiveMode = viewModel::setLiveMode,
                 onPerformanceLock = viewModel::setPerformanceLock,
                 onOutput = viewModel::setOutputDevice,
+                onInstallGuidePack = { guidePackLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
+                onNativeGuideLanguage = viewModel::setNativeGuideLanguage,
                 modifier = contentModifier,
             )
         }
