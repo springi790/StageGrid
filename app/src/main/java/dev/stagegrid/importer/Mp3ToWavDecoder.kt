@@ -25,7 +25,7 @@ object Mp3ToWavDecoder {
     private const val MIME_MP3 = "audio/mpeg"
     private const val KEY_ENCODER_DELAY_COMPAT = "encoder-delay"
     private const val KEY_ENCODER_PADDING_COMPAT = "encoder-padding"
-    private const val COPY_BUFFER = 128 * 1024
+    private const val COPY_BUFFER = 256 * 1024
     private const val MAX_RIFF_DATA_BYTES = 0xFFFF_FFFFL - 36L
 
     data class DecodeResult(
@@ -34,15 +34,30 @@ object Mp3ToWavDecoder {
         val encoderPaddingFrames: Int,
     )
 
-    fun decode(source: File, destination: File): DecodeResult {
+    fun decode(
+        source: File,
+        destination: File,
+        onProgress: ((Float) -> Unit)? = null,
+    ): DecodeResult {
         require(source.isFile) { "MP3 source does not exist: ${source.name}" }
         destination.parentFile?.mkdirs()
 
         val pcmTemp = File(destination.parentFile, ".${destination.name}.decode-${System.nanoTime()}.pcm")
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
+        var lastReportedPercent = -1
+
+        fun report(value: Float, force: Boolean = false) {
+            val normalized = value.coerceIn(0f, 1f)
+            val percent = (normalized * 100f).roundToInt()
+            if (force || percent >= lastReportedPercent + 2) {
+                lastReportedPercent = percent
+                onProgress?.invoke(normalized)
+            }
+        }
 
         try {
+            report(0f, force = true)
             extractor.setDataSource(source.absolutePath)
             val trackIndex = findMp3Track(extractor)
             require(trackIndex >= 0) { "No MP3 audio track was found in ${source.name}" }
@@ -54,6 +69,7 @@ object Mp3ToWavDecoder {
             require(mime == MIME_MP3 || mime.startsWith("audio/")) {
                 "Unsupported MP3 MIME type: $mime"
             }
+            val durationUs = inputFormat.longOrNull(MediaFormat.KEY_DURATION)?.takeIf { it > 0L }
 
             var sampleRate = inputFormat.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: 0
             var channels = inputFormat.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: 0
@@ -119,6 +135,11 @@ object Mp3ToWavDecoder {
                                 outputBuffer.position(info.offset)
                                 outputBuffer.limit(info.offset + info.size)
                                 writeAsPcm16(outputBuffer.slice(), pcmEncoding, pcmOut)
+                                durationUs?.let { duration ->
+                                    if (info.presentationTimeUs >= 0L) {
+                                        report(info.presentationTimeUs.toFloat() / duration.toFloat())
+                                    }
+                                }
                             }
                             outputEnded = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
                             codec.releaseOutputBuffer(outputIndex, false)
@@ -152,6 +173,7 @@ object Mp3ToWavDecoder {
             )
 
             val metadata = WavMetadataReader.read(destination)
+            report(1f, force = true)
             return DecodeResult(
                 metadata = metadata,
                 encoderDelayFrames = startTrim.toInt(),
@@ -283,4 +305,7 @@ object Mp3ToWavDecoder {
 
     private fun MediaFormat.intOrNull(key: String): Int? =
         if (containsKey(key)) runCatching { getInteger(key) }.getOrNull() else null
+
+    private fun MediaFormat.longOrNull(key: String): Long? =
+        if (containsKey(key)) runCatching { getLong(key) }.getOrNull() else null
 }
