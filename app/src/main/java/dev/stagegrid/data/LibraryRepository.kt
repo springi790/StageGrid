@@ -40,6 +40,27 @@ class LibraryRepository(private val db: StageGridDatabase) {
 
     suspend fun getSections(songId: String): List<SectionEntity> = db.sectionDao().getForSong(songId)
 
+    /**
+     * Replaces only the untouched import fallback section. This prevents metadata edits from
+     * overwriting a section map the user already created or adjusted manually.
+     */
+    suspend fun replacePlaceholderSections(
+        songId: String,
+        durationMs: Long,
+        sections: List<SectionEntity>,
+    ): Boolean = db.withTransaction {
+        if (sections.isEmpty()) return@withTransaction false
+        val current = db.sectionDao().getForSong(songId)
+        val placeholder = current.size == 1 &&
+            current[0].name == "Full Song" &&
+            current[0].startMs == 0L &&
+            current[0].endMs == durationMs
+        if (!placeholder) return@withTransaction false
+        db.sectionDao().clearForSong(songId)
+        db.sectionDao().insertAll(sections)
+        true
+    }
+
     suspend fun deleteSection(section: SectionEntity) = db.sectionDao().delete(section)
 
     suspend fun deleteSong(song: SongEntity) = db.songDao().delete(song)
