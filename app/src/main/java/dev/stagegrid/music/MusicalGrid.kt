@@ -78,6 +78,25 @@ class MusicalGrid(
         return msAt(MusicalPosition(position.bar + 1, 1))
     }
 
+    /**
+     * Returns a bar boundary that leaves at least [minimumLeadMs] for the native engine to prepare
+     * the inactive decoder bank. If the user taps immediately before a bar line, StageGrid waits
+     * one more bar instead of asking the realtime callback to perform an unsafe last-millisecond
+     * path replacement.
+     */
+    fun nextBarBoundaryAtLeast(ms: Long, minimumLeadMs: Long): Long {
+        val minimum = minimumLeadMs.coerceAtLeast(0L)
+        var boundary = endOfBarContaining(ms)
+        if (boundary - ms >= minimum) return boundary
+
+        var position = positionAt(boundary)
+        do {
+            position = MusicalPosition(position.bar + 1, 1)
+            boundary = msAt(position)
+        } while (boundary - ms < minimum)
+        return boundary
+    }
+
     fun totalBars(durationMs: Long): Int {
         if (durationMs <= offsetMs) return 1
         val relative = durationMs - offsetMs
