@@ -1,0 +1,3 @@
+# Native Guide recognition design
+
+This document is a placeholder for the StageGrid native-guide recognition work. The implementation will install user-supplied Guide sample packs locally, fingerprint section/dynamic cue samples, analyze an imported Guide stem at import time, and convert recognized calls into StageGrid-native cue events. Section cues are interpreted as occurring one musical bar before their section marker, matching the common Click/Guide workflow. Audio sample assets are not committed to the repository; users install packs they are licensed to use through Android's document picker.
