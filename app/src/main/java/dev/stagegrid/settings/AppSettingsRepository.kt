@@ -20,6 +20,8 @@ class AppSettingsRepository(private val context: Context) {
         val clickSubdivision: ClickSubdivision = ClickSubdivision.QUARTER,
         val clickRoute: StereoRoute = StereoRoute.BOTH,
         val countInBars: Int = 0,
+        /** auto follows the detected Guide language; es/en/fr/pt force an installed language. */
+        val nativeGuideLanguage: String = "auto",
     )
 
     val settings: Flow<Settings> = context.stageGridDataStore.data.map { values ->
@@ -31,6 +33,8 @@ class AppSettingsRepository(private val context: Context) {
             } ?: ClickSubdivision.QUARTER,
             clickRoute = StereoRoute.fromStorage(values[CLICK_ROUTE] ?: StereoRoute.BOTH.name),
             countInBars = (values[COUNT_IN_BARS] ?: 0).coerceIn(0, 2),
+            nativeGuideLanguage = (values[NATIVE_GUIDE_LANGUAGE] ?: "auto")
+                .takeIf { it in setOf("auto", "es", "en", "fr", "pt") } ?: "auto",
         )
     }
 
@@ -54,11 +58,17 @@ class AppSettingsRepository(private val context: Context) {
         context.stageGridDataStore.edit { it[COUNT_IN_BARS] = bars.coerceIn(0, 2) }
     }
 
+    suspend fun setNativeGuideLanguage(language: String) {
+        val normalized = language.takeIf { it in setOf("auto", "es", "en", "fr", "pt") } ?: "auto"
+        context.stageGridDataStore.edit { it[NATIVE_GUIDE_LANGUAGE] = normalized }
+    }
+
     private companion object {
         val LIVE_MODE = booleanPreferencesKey("live_mode")
         val PERFORMANCE_LOCK = booleanPreferencesKey("performance_lock")
         val CLICK_SUBDIVISION = intPreferencesKey("click_subdivision")
         val CLICK_ROUTE = stringPreferencesKey("click_route")
         val COUNT_IN_BARS = intPreferencesKey("count_in_bars")
+        val NATIVE_GUIDE_LANGUAGE = stringPreferencesKey("native_guide_language")
     }
 }
