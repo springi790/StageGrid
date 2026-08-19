@@ -139,6 +139,14 @@ fun PlayerScreen(
             }
         }
 
+        OutlinedButton(
+            onClick = onEditSections,
+            enabled = !state.isPlaying && grid != null,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.edit_song_sections), fontWeight = FontWeight.SemiBold)
+        }
+
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = onPlayPause, modifier = Modifier.weight(1.6f)) {
                 Text(if (state.isPlaying) stringResource(R.string.pause) else stringResource(R.string.play), fontWeight = FontWeight.Bold)
@@ -208,13 +216,6 @@ fun PlayerScreen(
                                 label = { Text(routeLabel(route)) },
                             )
                         }
-                    }
-                    OutlinedButton(
-                        onClick = onEditSections,
-                        enabled = !state.isPlaying && grid != null,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.edit_song_sections))
                     }
                 }
             }
