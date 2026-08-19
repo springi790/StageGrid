@@ -1,39 +1,63 @@
 # StageGrid
 
-StageGrid is a native Android, local-first multitrack player for live performance. Every stem, the native click and the musical timeline share one real-time audio clock instead of using independent Android media players.
+StageGrid is a native Android, local-first multitrack player for live performance. Every stem, the native Click and the musical timeline share one real-time audio clock instead of using independent Android media players.
 
-> **Current release: `0.2.0-alpha02` — Simplified live UX.**
+> **Current release: `0.2.0-alpha03` — Quantized sections + native count-in.**
 >
-> StageGrid is under active development. Only features with a real implementation are presented as available; planned modules live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> StageGrid is under active development. Only functionality with a real implementation is presented as available; planned modules live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Product principle
 
 **A musician should be able to use the basic live workflow without understanding audio-engineering terminology.**
 
-StageGrid therefore keeps common actions visible and moves technical controls such as grid offsets and manual L/R routing behind optional advanced controls. Presets should be preferred over requiring the user to understand buses, channel masks or internal engine concepts.
+StageGrid keeps common actions visible and moves technical controls such as grid offsets and manual routing behind optional advanced controls. Common stage configurations should use presets rather than forcing the user to understand buses, channel masks or engine internals.
 
-## New in 0.2.0-alpha02
+## New in 0.2.0-alpha03
 
-This alpha is the first dedicated usability pass on top of the 0.2 Musical Grid foundation.
+This alpha builds on the Musical Grid and simplified 0.2 UI.
 
-- Player reorganized around **current section, next section, transport, Click and Guide**.
-- Technical grid information moved behind **Advanced options**.
-- Click subdivisions now use musician-friendly names such as **Negras / Corcheas / Tresillos / Semicorcheas** in Spanish.
-- Mixer now starts with volume, Mute and Solo instead of exposing every routing control at once.
-- Added common stereo routing presets:
-  - **Click + Guide → Left / Tracks → Right**
-  - **Everything in stereo**
-  - **Click + Guide → Left / Tracks → Stereo**
-- Manual per-track L/R routing remains available under an advanced control.
-- Internal track enum names are replaced in the UI with friendly instrument names.
-- Section Editor simplified around the playhead:
-  - **Add a section here**
-  - **Start = here**
-  - **End = here**
-  - common section-name presets: Intro, Verse, Chorus, Bridge and Outro.
-- Exact bar/beat fields remain available under **Precise editing** instead of dominating the default editor.
-- Roadmap now includes usability as an explicit StageGrid requirement.
-- App version: `0.2.0-alpha02` (`versionCode 5`).
+- **Edit sections** remains visible directly in the Player instead of being hidden in Advanced options.
+- Live section changes are now **quantized to the next musical bar** when the song has a valid BPM/grid.
+- The selected destination is shown as queued until the next bar begins.
+- Added section **count-in / pre-roll** options:
+  - No count-in
+  - 1 bar
+  - 2 bars
+- While stopped, move to/select a section and use **Play section with count-in**.
+- Count-in timing runs in the native sample-clock engine, not with Android UI timers.
+- Imported stems are gated during count-in and enter together at the exact target frame.
+- Virtual negative-time pre-roll allows a count-in even when the target section starts at the beginning of the song.
+- The generated Click continues to use the same master musical clock as playback.
+- Count-in preference is persisted with DataStore.
+- App version: `0.2.0-alpha03` (`versionCode 6`).
+
+## Current live workflow
+
+A typical two-output setup can now be configured without manual routing knowledge:
+
+```text
+Library
+  ↓
+Import / Drive folder
+  ↓
+Load song
+  ↓
+Player
+  ├─ Play / Pause / Stop
+  ├─ Current + next section
+  ├─ Edit sections
+  ├─ Click / Guide
+  ├─ Section count-in
+  └─ Quantized section changes
+
+Mixer preset
+  L → Click + Guide
+  R → Tracks
+```
+
+When playing, tapping another section queues it for the next musical bar boundary instead of jumping immediately at an arbitrary point in the measure.
+
+When stopped, you can select a section, choose a 1- or 2-bar count-in and start that section with Click-only pre-roll before all stems enter together.
 
 ## What is implemented
 
@@ -43,114 +67,158 @@ This alpha is the first dedicated usability pass on top of the 0.2 Musical Grid 
 - Room library with Song, Track, Section and Setlist entities.
 - Import from ZIP, folder or multiple WAV/MP3 files through Android Storage Access Framework.
 - Persistent linked cloud-folder access through Android document providers.
-- Google Drive folders can be selected from the system picker without storing Google credentials or API keys in StageGrid.
-- Browse linked folders, refresh them and import only selected archives/stems.
+- Google Drive folders can be selected through Android's system picker without storing Google credentials in StageGrid.
+- Browse linked folders/subfolders, refresh them and choose only the files to copy into StageGrid.
 - Imported songs are copied into app-private storage for deterministic offline playback.
-- Optional `song.json` metadata/track/section import.
+- ZIP-slip protection, extraction limits and safe filenames.
+- Optional `song.json` for metadata, stem types and section markers.
 - Post-import metadata editing for title, artist, BPM, key, time signature, grid offset and notes.
 
-### Audio engine
+### Audio formats
 
-- One native Oboe output stream and one shared master playhead.
-- WAV playback with deterministic shared-clock sample-rate mapping.
-- MP3 decoded once during import through Android `MediaExtractor` / `MediaCodec`, then cached as PCM WAV.
-- Encoder delay/padding is trimmed when Android exposes it; musical silence is never blindly trimmed per stem.
+Playable now:
+
+- WAV RIFF PCM: 8/16/24/32-bit where supported by the parser.
+- WAV RIFF IEEE float: 32-bit.
+- MP3 through one-time Android `MediaExtractor` / `MediaCodec` normalization to PCM WAV during import.
+
+MP3 decoding never runs in the Oboe real-time callback. Playback uses the same deterministic PCM path as WAV stems.
+
+StageGrid removes codec encoder delay/padding when Android exposes those values, but it does **not** independently trim musical silence from each stem because that would destroy intentional timeline alignment.
+
+Planned decoder/cache expansion includes FLAC, AAC/M4A and OGG.
+
+### Native audio engine
+
+- One native Oboe output stream.
+- One master output-frame playhead shared by all stems.
 - Streaming decoder threads and preallocated SPSC buffers.
-- Play, pause, stop, seek and master volume.
+- No filesystem, Room or Compose work inside the real-time callback.
+- Shared source-rate mapping for stems with different source sample rates.
+- Play, pause, stop and seek.
+- Master volume.
 - Per-track volume, mute, solo and pan.
-- Persisted stereo output assignment: `L`, `L+R`, `R`.
-- Audio output-device enumeration and compatible stereo USB endpoint selection.
-- Foreground playback service, MediaSession, media notification and audio-focus handling.
+- Per-track stereo routing: `L`, `L+R`, `R`.
+- Basic Android/USB stereo output-device selection.
+- Native diagnostics for sample rate, burst size, underruns and callback load.
 
 ### Native Click and Guide
 
-- Imported Click can be used as a timing reference instead of the live metronome source.
-- First-click transient analysis can establish the song grid offset.
-- Native click generated from the same master clock as the stems.
-- Click subdivisions: quarter, eighth, triplet and sixteenth.
-- Native click routing: left, both or right.
-- Guide enable/disable and normal per-track routing.
+- Imported Click files are retained as alignment references.
+- Automatic first-click transient detection can establish `gridOffsetMs`.
+- Grid offset can be corrected manually.
+- Live Click is generated natively from the master sample clock.
+- Click subdivisions:
+  - quarter / negras
+  - eighth / corcheas
+  - triplets / tresillos
+  - sixteenth / semicorcheas
+- Click routing: `L`, `L+R`, `R`.
+- Guide enable/disable.
 
-### Musical Grid and sections
+### Musical Grid
 
-- BPM + time signature + grid offset define the musical timeline.
-- Deterministic conversion between milliseconds and bar/beat positions.
-- Beat and bar snapping.
-- Current musical position displayed in Player using plain-language labels.
-- Visual/manual Section Editor.
-- Create, rename, resize and delete sections.
-- Start/end boundaries can be captured from the current playhead.
-- Section loop, loop exit and queued section jumps.
-- Manual section-structure editing remains disabled during active playback until double-buffered path updates land.
-
-### Setlists and live operation
-
-- Basic local setlists.
-- LIVE keep-screen-on mode.
-- Performance Lock.
-- Spanish and English resources.
-
-See [`docs/STATUS.md`](docs/STATUS.md) for the exact implemented/planned boundary.
-
-## Simplified routing
-
-For a typical two-output live setup, open **Mixer → Configuración rápida de salidas** and choose:
+The Musical Grid maps absolute playback time to musical position:
 
 ```text
+BPM + time signature + grid offset
+                ↓
+         bar / beat position
+                ↓
+ sections / snapping / queued jumps / count-in
+```
+
+Implemented:
+
+- milliseconds ↔ bar/beat conversion;
+- beat snapping;
+- bar snapping;
+- Player bar/beat readout;
+- section boundaries based on the musical grid;
+- next-bar live section quantization.
+
+### Sections
+
+- Import section starts from `song.json`.
+- Visual/manual Section Editor.
+- Create, rename, resize and delete sections.
+- Set start/end from the current playhead.
+- Friendly presets such as Intro, Verse, Chorus, Bridge and Outro.
+- Precise bar/beat editing remains optional.
+- Section Loop / Exit Loop.
+- Quantized queued section changes while playing.
+- 1- or 2-bar native count-in before starting a selected section.
+
+**Edit sections is intentionally a main Player action.** It is not hidden under Advanced options. Structural editing is still disabled while transport is actively playing until the safer double-buffered arrangement path is complete.
+
+### Mixer and routing
+
+The simple Mixer starts with volume, Mute and Solo. Common output setups are available as presets, including:
+
+```text
+Stage split
 Left  → Click + Guide
 Right → Tracks
 ```
 
-StageGrid applies the individual track routes automatically. If a custom setup is needed, enable **Configurar salidas manualmente** and choose Left / Both / Right for each stem.
-
-This remains a two-channel stereo matrix. True 4/8/custom USB routing is planned for the 0.4 multichannel milestone.
-
-## Section workflow
-
-With a song that has BPM and time-signature information:
-
-1. Load the song.
-2. Move the playhead to the desired position.
-3. Open **Advanced options → Edit song sections**.
-4. Choose whether changes align to a **whole bar** or **one beat**.
-5. Tap **Add a section here** or select an existing section.
-6. Use **Start = here** / **End = here**.
-7. Save changes.
-
-Exact bar/beat numbers are still available under **Precise editing**.
-
-## Architecture
+and:
 
 ```text
-Compose UI
-    │ state / commands
-    ▼
-StageGridViewModel
-    │
-    ├──────────────► Room / DataStore / Storage Access Framework
-    │
-    ▼
-AudioEngineController ── AudioFocus / Foreground Service / MediaSession
-    │ JNI
-    ▼
-NativeAudioEngine (C++)
-    │
-    ├─ master output-frame clock
-    ├─ stem decoder threads
-    ├─ preallocated SPSC buffers
-    └─ generated native click
-    ▼
-real-time mixer callback
-    ▼
-one Oboe output stream → Android audio device
-
-MusicalGrid
-    ├─ BPM + time signature + grid offset
-    ├─ ms ↔ bar/beat
-    └─ beat/bar snapping
+Everything → Stereo
 ```
 
-More detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Manual per-track `L / L+R / R` configuration remains available when needed.
+
+This is a two-channel stereo matrix, not the future arbitrary 4/8/custom USB output router.
+
+### Setlists and live operation
+
+- Basic local setlists.
+- Foreground playback service.
+- Android MediaSession and notification controls.
+- Audio-focus handling.
+- LIVE keep-screen-on mode.
+- Performance Lock.
+- Spanish and English resources.
+
+## Count-in behavior
+
+Count-in is implemented in the native engine so timing remains tied to audio frames.
+
+For a two-bar count-in:
+
+```text
+Click only
+| 1 2 3 4 | 1 2 3 4 |
+                      ↓ exact frame
+               selected section
+               all stems enter
+```
+
+The engine can use a virtual timeline before frame zero, so a section beginning at the very start of a song can still receive a full count-in.
+
+During count-in, imported stems are consumed/prepared but not mixed to the output. At the target frame the gate opens and the stems enter together. This avoids scheduling the entry with a coroutine, timer or UI callback.
+
+## Quantized live section changes
+
+With a valid Musical Grid, tapping a section while playback is active does not immediately seek.
+
+Example:
+
+```text
+Current: Verse
+Bar 12 Beat 2
+
+User taps: Chorus
+        ↓
+Queued: Chorus
+        ↓
+Bar 13 Beat 1
+        ↓
+Chorus starts
+```
+
+If a valid grid is unavailable, StageGrid falls back to the current section boundary instead of pretending musical quantization exists.
 
 ## Build requirements
 
@@ -166,25 +234,26 @@ The project currently pins:
 - Room
 - Oboe
 
-### Build
+### Android Studio
 
-After updates are merged to `main`:
+1. Clone/open the `StageGrid` repository.
+2. Use Android Studio's bundled JBR/JDK or another compatible JDK.
+3. Let Android Studio sync Gradle and install the requested SDK/NDK/CMake packages.
+4. Select the `app` configuration and a physical Android device.
+5. Run the app.
 
-```bash
-git switch main
-git pull
-```
-
-Windows:
-
-```bat
-gradlew.bat testDebugUnitTest assembleDebug
-```
+### Command line
 
 macOS/Linux:
 
 ```bash
 ./gradlew testDebugUnitTest assembleDebug
+```
+
+Windows PowerShell / CMD:
+
+```bat
+gradlew.bat testDebugUnitTest assembleDebug
 ```
 
 Debug APK:
@@ -193,94 +262,126 @@ Debug APK:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On Windows, StageGrid's Gradle bootstrap can fall back to Android Studio's bundled JBR when `JAVA_HOME` is absent or malformed.
+`gradlew` / `gradlew.bat` include StageGrid's checksum-verifying Gradle bootstrap fallback. On Windows, the bootstrap attempts to use Android Studio's bundled JBR if `JAVA_HOME` is absent or malformed.
 
-## Supported audio today
+## Keeping your local checkout current
 
-- WAV RIFF PCM: 8/16/24/32-bit where supported by the parser.
-- WAV RIFF IEEE float: 32-bit.
-- MP3: decoded during import and cached as PCM WAV.
+After changes are merged to `main`:
 
-WAV remains the recommended source format for live multitrack work.
+```bash
+git switch main
+git pull
+```
 
-Planned decoder/cache expansion includes FLAC, AAC/M4A and OGG after licensing/performance evaluation.
+Then build normally.
 
 ## Local data and privacy
 
 - No StageGrid account required.
 - No analytics SDK.
 - No ads.
-- No StageGrid audio upload.
 - No broad storage permission.
-- Files/folders are selected through Android Storage Access Framework.
-- Cloud-folder access is limited to locations explicitly granted by the user.
-- Imported songs are stored locally for offline playback.
+- StageGrid does not upload your audio.
+- Cloud-folder access is limited to locations explicitly granted through Android's document provider.
+- Imported audio is copied locally for offline playback.
 
-## Known limitations of 0.2.0-alpha02
+## Tests and CI
 
-Not yet complete:
+The repository includes tests for areas such as:
 
-- section count-in/pre-roll;
-- fully quantized section-jump workflow;
-- double-buffered arrangement/path updates;
-- setlist NEXT/PREV live transport and next-song preload;
-- restorable performance sessions;
-- first-run onboarding/help flow;
+- stem classification;
+- WAV parsing;
+- Musical Grid conversion/snapping;
+- next-bar quantization math;
+- Room behavior;
+- JNI/native library loading;
+- host C++ shared-clock behavior.
+
+GitHub Actions runs unit tests and `assembleDebug` for development pull requests before changes are merged into `main`.
+
+## Known limitations of 0.2.0-alpha03
+
+Still pending:
+
+- double-buffered arrangement/path updates for stronger glitch resistance during live path changes;
+- high-track-count physical-device stress validation of count-in and quantized jumps;
+- Setlist Live NEXT/PREV transport with next-song preload;
+- persisted/restorable performance session;
 - waveform peak cache/editor;
-- arbitrary USB multichannel output routing;
-- tempo/time stretching and pitch shifting;
-- MIDI, pads, automation and SMPTE/LTC;
-- complete `.stagepack` backup/export workflow;
+- compressed formats beyond the current WAV/MP3 path;
+- arbitrary multichannel USB routing;
+- tempo/time stretching;
+- pitch shifting/transposition;
+- MIDI input/output/clock/cues;
+- pads;
+- automation;
+- SMPTE/LTC;
+- complete `.stagepack` export/backup workflow;
 - LAN remote control;
-- final tablet layout and physical-device qualification matrix.
+- tablet split Player + Mixer layout;
+- first-run onboarding and final accessibility pass.
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Release history
 
-### 0.2.0-alpha02 — Simplified live UX
+### 0.2.0-alpha03
 
-- simplified Player hierarchy;
-- friendly Click terminology;
-- progressive disclosure of technical controls;
-- quick stereo routing presets;
-- friendly track labels;
-- simplified playhead-based Section Editor;
-- precise bar/beat editing kept optional;
-- formal usability requirements added to the roadmap.
+**Quantized sections + native count-in**
 
-### 0.2.0-alpha01 — Musical Grid + Section Editor
+- next-bar live section changes;
+- 1/2-bar section count-in;
+- native sample-clock pre-roll;
+- stem gate opening at the target frame;
+- persisted count-in preference;
+- clearer queued/count-in status in Player;
+- visible Edit sections action retained.
 
-- musical bar/beat timeline;
-- grid-offset support;
+### 0.2.0-alpha02
+
+**Simplified live UX**
+
+- Player hierarchy simplified;
+- common routing presets;
+- friendly musical terminology;
+- simplified Section Editor;
+- technical options progressively disclosed.
+
+### 0.2.0-alpha01
+
+**Musical Grid + Section Editor**
+
+- bar/beat timeline;
+- grid offset support;
 - beat/bar snapping;
-- visual/manual Section Editor;
-- playhead-based section boundaries;
-- musical-grid unit tests.
+- manual visual section editing.
 
-### 0.1.3 — Native Click + stereo routing
+### 0.1.3
 
-- native click generated from the master clock;
-- quarter/eighth/triplet/sixteenth subdivisions;
-- per-track and Click L / L+R / R routing;
-- imported Click used as timing reference.
+**Native Click + stereo routing**
 
-### 0.1.2 — WAV + MP3 shared-clock MVP
+- native generated Click;
+- subdivisions;
+- Click/stem `L / L+R / R` routing;
+- Click reference/grid detection.
 
-- local library/import;
-- Oboe shared-clock multitrack playback;
-- import-time MP3 normalization;
-- mixer, sections, setlists and foreground playback foundation.
+### 0.1.2
 
-## Release documentation rule
+**MP3 import path**
 
-Every StageGrid version/alpha/beta should update this README in the same development cycle with:
+- Android MediaCodec MP3 normalization to local PCM WAV.
+
+## Release documentation policy
+
+Every StageGrid alpha, beta or release should update this README in the same development cycle with:
 
 - current version;
 - new functionality;
-- important behavior changes;
-- current limitations;
-- release-history entry.
+- implemented behavior;
+- known limitations;
+- release history.
+
+`docs/ROADMAP.md` describes what comes next; `docs/STATUS.md` should remain the precise implementation boundary.
 
 ## License
 
