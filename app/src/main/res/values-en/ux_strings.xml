@@ -1,0 +1,69 @@
+<resources>
+    <string name="simple_bpm_value">%1$s BPM</string>
+    <string name="simple_bar_beat_value">Bar %1$d · Beat %2$d</string>
+    <string name="now_section">Now</string>
+    <string name="next_section_simple">Next</string>
+    <string name="jump_to_section">Go to a section</string>
+    <string name="performance_tools">Performance tools</string>
+    <string name="click_simple">Click</string>
+    <string name="guide_simple">Guide</string>
+    <string name="click_rhythm">Click rhythm</string>
+    <string name="click_quarters">Quarter notes</string>
+    <string name="click_eighths">Eighth notes</string>
+    <string name="click_triplets">Triplets</string>
+    <string name="click_sixteenths">Sixteenth notes</string>
+    <string name="show_advanced_options">Show advanced options</string>
+    <string name="hide_advanced_options">Hide advanced options</string>
+    <string name="advanced_options">Advanced options</string>
+    <string name="edit_song_sections">Edit song sections</string>
+
+    <string name="mixer_simple_explanation">Adjust each track's volume. If you do not need special outputs, you can leave everything else as it is.</string>
+    <string name="quick_output_setup">Quick output setup</string>
+    <string name="quick_output_explanation">Choose a common setup and StageGrid will assign the outputs for you.</string>
+    <string name="preset_stage_split">Stage: Click + Guide left · Tracks right</string>
+    <string name="preset_all_stereo">Everything in stereo</string>
+    <string name="preset_click_left_tracks_stereo">Click + Guide left · Tracks stereo</string>
+    <string name="show_manual_routing">Configure outputs manually</string>
+    <string name="hide_manual_routing">Hide manual output setup</string>
+    <string name="where_should_this_track_sound">Where should this track play?</string>
+    <string name="output_left_simple">Left</string>
+    <string name="output_both_simple">Both</string>
+    <string name="output_right_simple">Right</string>
+    <string name="track_type_drums">Drums</string>
+    <string name="track_type_bass">Bass</string>
+    <string name="track_type_guitar">Guitar</string>
+    <string name="track_type_keys">Keys / Piano</string>
+    <string name="track_type_synth">Synth</string>
+    <string name="track_type_strings">Strings</string>
+    <string name="track_type_vocals">Vocals</string>
+    <string name="track_type_percussion">Percussion</string>
+    <string name="track_type_guide">Guide</string>
+    <string name="track_type_pad">Pad</string>
+    <string name="track_type_other">Other track</string>
+
+    <string name="section_editor_simple_title">Song sections</string>
+    <string name="section_editor_simple_help">Mark where each part starts and ends. Move the song to the position you want, then use the start and end buttons.</string>
+    <string name="current_song_position">Current position</string>
+    <string name="adjust_changes_to">Align changes to</string>
+    <string name="whole_bar">Whole bar</string>
+    <string name="single_beat">One beat</string>
+    <string name="add_section_here">Add a section here</string>
+    <string name="no_sections_editor_simple">There are no sections yet. Move the song to where a section begins and tap “Add a section here”.</string>
+    <string name="selected_section">Selected section</string>
+    <string name="section_intro">Intro</string>
+    <string name="section_verse">Verse</string>
+    <string name="section_chorus">Chorus</string>
+    <string name="section_bridge">Bridge</string>
+    <string name="section_outro">Outro</string>
+    <string name="section_starts_at">Starts at %1$s</string>
+    <string name="section_ends_at">Ends at %1$s</string>
+    <string name="set_start_here">Start = here</string>
+    <string name="set_end_here">End = here</string>
+    <string name="show_precise_editing">Precise editing</string>
+    <string name="hide_precise_editing">Hide precise editing</string>
+    <string name="precise_editing_help">Use this only when you want to enter the exact bar and beat numbers manually.</string>
+    <string name="save_changes">Save changes</string>
+    <string name="song_structure">Song structure</string>
+    <string name="tap_section_to_edit">Tap a section to edit it.</string>
+    <string name="simple_section_range">Bars %1$d–%2$d</string>
+</resources>
