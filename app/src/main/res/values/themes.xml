@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.StageGrid" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">#5B8CFF</item>
+        <item name="android:windowBackground">#090B10</item>
+    </style>
+</resources>

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "title": "Stage Demo",
+  "artist": "Local Band",
+  "bpm": 72,
+  "key": "C",
+  "timeSignature": "4/4",
+  "tracks": [
+    { "name": "Click", "file": "01 Click.wav", "type": "click" },
+    { "name": "Guide", "file": "02 Guide.wav", "type": "guide" },
+    { "name": "Drums", "file": "03 Drums.wav", "type": "drums" },
+    { "name": "Bass", "file": "04 Bass.wav", "type": "bass" },
+    { "name": "Keys", "file": "05 Keys.wav", "type": "keys" }
+  ],
+  "sections": [
+    { "name": "Intro", "start": 0.0 },
+    { "name": "Verse 1", "start": 16.0 },
+    { "name": "Chorus 1", "start": 48.0 },
+    { "name": "Bridge", "start": 96.0 }
+  ]
+}
