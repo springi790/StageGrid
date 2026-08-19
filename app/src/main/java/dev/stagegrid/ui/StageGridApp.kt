@@ -132,6 +132,8 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onExitLoop = viewModel::exitLoop,
                 onSection = viewModel::selectSection,
                 onEditSections = { sectionEditorOpen = true },
+                onPlaySectionWithCountIn = viewModel::playCurrentSectionWithCountIn,
+                onCountInBars = viewModel::setCountInBars,
                 onMaster = viewModel::setMaster,
                 onClick = viewModel::setClick,
                 onGuide = viewModel::setGuide,

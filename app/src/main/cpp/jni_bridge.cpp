@@ -63,6 +63,8 @@ extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nat
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetLoop(JNIEnv *, jobject, jlong h, jboolean e, jlong s, jlong end) { engine(h)->setLoop(e, s, end); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeScheduleJump(JNIEnv *, jobject, jlong h, jlong at, jlong target, jboolean disableLoop) { engine(h)->scheduleJump(at, target, disableLoop); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeClearScheduledJump(JNIEnv *, jobject, jlong h) { engine(h)->clearScheduledJump(); }
+extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativePrepareCountIn(JNIEnv *, jobject, jlong h, jlong targetMs, jint bars) { return engine(h)->prepareCountIn(targetMs, bars) ? JNI_TRUE : JNI_FALSE; }
+extern "C" JNIEXPORT jlong JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeCountInRemainingMs(JNIEnv *, jobject, jlong h) { return engine(h)->countInRemainingMs(); }
 extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetOutputDevice(JNIEnv *, jobject, jlong h, jint id) { return engine(h)->setOutputDevice(id) ? JNI_TRUE : JNI_FALSE; }
 extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSampleRate(JNIEnv *, jobject, jlong h) { return engine(h)->sampleRate(); }
 extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeFramesPerBurst(JNIEnv *, jobject, jlong h) { return engine(h)->framesPerBurst(); }

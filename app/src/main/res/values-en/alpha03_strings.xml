@@ -1,0 +1,12 @@
+<resources>
+    <string name="section">Section</string>
+    <string name="count_in_active">Count-in → %1$s · %2$d s</string>
+    <string name="count_in_click_only">During count-in only the Click is heard; all tracks enter together when it finishes.</string>
+    <string name="queued_next_bar">%1$s enters at the start of the next bar</string>
+    <string name="section_count_in">Section count-in</string>
+    <string name="section_count_in_help">Choose 1 or 2 bars, then while stopped use “Play section with count-in”.</string>
+    <string name="count_in_off">No count-in</string>
+    <string name="one_bar">1 bar</string>
+    <string name="two_bars">2 bars</string>
+    <string name="play_section_with_count_in">Play section with count-in</string>
+</resources>

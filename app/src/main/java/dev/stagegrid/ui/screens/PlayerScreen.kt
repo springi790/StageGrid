@@ -1,6 +1,7 @@
 package dev.stagegrid.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -47,6 +48,8 @@ fun PlayerScreen(
     onExitLoop: () -> Unit,
     onSection: (SectionEntity) -> Unit,
     onEditSections: () -> Unit,
+    onPlaySectionWithCountIn: () -> Unit,
+    onCountInBars: (Int) -> Unit,
     onMaster: (Float) -> Unit,
     onClick: (Boolean) -> Unit,
     onGuide: (Boolean) -> Unit,
@@ -72,12 +75,16 @@ fun PlayerScreen(
     var dragging by remember { mutableStateOf(false) }
     var seekFraction by remember { mutableFloatStateOf(0f) }
     var showAdvanced by remember { mutableStateOf(false) }
+    val verticalScroll = rememberScrollState()
 
     LaunchedEffect(state.positionMs, state.durationMs, dragging) {
         if (!dragging) seekFraction = if (state.durationMs > 0) state.positionMs.toFloat() / state.durationMs else 0f
     }
 
-    Column(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(
+        modifier.fillMaxSize().verticalScroll(verticalScroll).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text(song.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -96,16 +103,42 @@ fun PlayerScreen(
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column {
-                        Text(stringResource(R.string.now_section), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(state.currentSection?.name ?: stringResource(R.string.none), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    }
-                    Column {
-                        Text(stringResource(R.string.next_section_simple), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(state.nextSection?.name ?: stringResource(R.string.none), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                if (state.isCountingIn) {
+                    val targetName = state.countInTargetSection?.name ?: state.currentSection?.name ?: stringResource(R.string.section)
+                    val remainingSeconds = ((state.countInRemainingMs + 999L) / 1000L).coerceAtLeast(1L)
+                    Text(
+                        stringResource(R.string.count_in_active, targetName, remainingSeconds),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(stringResource(R.string.count_in_click_only), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text(stringResource(R.string.now_section), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(state.currentSection?.name ?: stringResource(R.string.none), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        }
+                        Column {
+                            Text(stringResource(R.string.next_section_simple), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(state.nextSection?.name ?: stringResource(R.string.none), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
+
+                state.queuedSectionId?.let { queuedId ->
+                    if (!state.isCountingIn) {
+                        val queued = state.sections.firstOrNull { it.id == queuedId }
+                        queued?.let {
+                            Text(
+                                stringResource(R.string.queued_next_bar, it.name),
+                                color = MaterialTheme.colorScheme.tertiary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(formatPlayerDuration(if (dragging) (seekFraction * state.durationMs).toLong() else state.positionMs))
                     Text(formatPlayerDuration(state.durationMs))
@@ -117,6 +150,7 @@ fun PlayerScreen(
                         dragging = false
                         onSeek((seekFraction * state.durationMs).toLong())
                     },
+                    enabled = !state.isCountingIn,
                 )
             }
         }
@@ -133,6 +167,7 @@ fun PlayerScreen(
                     FilterChip(
                         selected = selected || queued,
                         onClick = { onSection(section) },
+                        enabled = !state.isCountingIn,
                         label = { Text(if (queued) stringResource(R.string.queued_section_label, section.name) else section.name) },
                     )
                 }
@@ -152,7 +187,11 @@ fun PlayerScreen(
                 Text(if (state.isPlaying) stringResource(R.string.pause) else stringResource(R.string.play), fontWeight = FontWeight.Bold)
             }
             OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.stop)) }
-            OutlinedButton(onClick = if (state.loopSectionId == null) onLoop else onExitLoop, modifier = Modifier.weight(1f)) {
+            OutlinedButton(
+                onClick = if (state.loopSectionId == null) onLoop else onExitLoop,
+                modifier = Modifier.weight(1f),
+                enabled = !state.isCountingIn,
+            ) {
                 Text(if (state.loopSectionId == null) stringResource(R.string.loop) else stringResource(R.string.exit_loop))
             }
         }
@@ -183,6 +222,35 @@ fun PlayerScreen(
                             onClick = { onClickSubdivision(subdivision) },
                             label = { Text(subdivisionLabel(subdivision)) },
                         )
+                    }
+                }
+
+                Text(stringResource(R.string.section_count_in), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.section_count_in_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = state.countInBars == 0,
+                        onClick = { onCountInBars(0) },
+                        label = { Text(stringResource(R.string.count_in_off)) },
+                    )
+                    FilterChip(
+                        selected = state.countInBars == 1,
+                        onClick = { onCountInBars(1) },
+                        label = { Text(stringResource(R.string.one_bar)) },
+                    )
+                    FilterChip(
+                        selected = state.countInBars == 2,
+                        onClick = { onCountInBars(2) },
+                        label = { Text(stringResource(R.string.two_bars)) },
+                    )
+                }
+                if (state.countInBars > 0) {
+                    OutlinedButton(
+                        onClick = onPlaySectionWithCountIn,
+                        enabled = !state.isPlaying && state.currentSection != null && grid != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.play_section_with_count_in))
                     }
                 }
             }

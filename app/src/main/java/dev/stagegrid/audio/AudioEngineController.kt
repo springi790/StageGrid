@@ -12,7 +12,7 @@ import dev.stagegrid.data.LibraryRepository
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.model.TrackEntity
-import dev.stagegrid.model.TrackType
+import dev.stagegrid.music.MusicalGrid
 import dev.stagegrid.service.PlaybackService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,8 +59,10 @@ class AudioEngineController(
                 delay(80)
                 val current = _state.value
                 if (current.song != null && current.engineState !in setOf(EngineState.LOADING, EngineState.ERROR)) {
-                    val position = native.positionMs().coerceAtLeast(0)
+                    val rawPosition = native.positionMs()
+                    val position = rawPosition.coerceAtLeast(0L)
                     val actuallyPlaying = native.isPlaying()
+                    val countInRemaining = native.countInRemainingMs()
                     _state.update { previous ->
                         val crossedQueued = previous.queuedSectionId?.let { queuedId ->
                             val queued = previous.sections.firstOrNull { it.id == queuedId }
@@ -68,6 +70,8 @@ class AudioEngineController(
                         } ?: false
                         previous.copy(
                             positionMs = position,
+                            countInRemainingMs = countInRemaining,
+                            countInTargetSectionId = if (countInRemaining > 0L) previous.countInTargetSectionId else null,
                             engineState = when {
                                 actuallyPlaying -> EngineState.PLAYING
                                 previous.engineState == EngineState.PLAYING && position >= previous.durationMs - 5 -> EngineState.READY
@@ -75,6 +79,7 @@ class AudioEngineController(
                                 else -> previous.engineState
                             },
                             queuedSectionId = if (crossedQueued) null else previous.queuedSectionId,
+                            queuedJumpAtMs = if (crossedQueued) null else previous.queuedJumpAtMs,
                             loopSectionId = if (crossedQueued) null else previous.loopSectionId,
                         )
                     }
@@ -121,6 +126,7 @@ class AudioEngineController(
                 guideEnabled = previous.guideEnabled,
                 clickSubdivision = previous.clickSubdivision,
                 clickRoute = previous.clickRoute,
+                countInBars = previous.countInBars,
                 masterVolume = previous.masterVolume,
             )
         }
@@ -154,7 +160,17 @@ class AudioEngineController(
             audioManager.abandonAudioFocusRequest(focusRequest)
             context.stopService(Intent(context, PlaybackService::class.java))
             withContext(Dispatchers.Main) {
-                _state.update { it.copy(engineState = EngineState.READY, positionMs = 0, loopSectionId = null, queuedSectionId = null) }
+                _state.update {
+                    it.copy(
+                        engineState = EngineState.READY,
+                        positionMs = 0,
+                        loopSectionId = null,
+                        queuedSectionId = null,
+                        queuedJumpAtMs = null,
+                        countInRemainingMs = 0,
+                        countInTargetSectionId = null,
+                    )
+                }
             }
         }
     }
@@ -169,9 +185,17 @@ class AudioEngineController(
         val duration = _state.value.durationMs
         scope.launch {
             val returnState = if (_state.value.isPlaying) EngineState.PLAYING else EngineState.PAUSED
-            _state.update { it.copy(engineState = EngineState.SEEKING) }
+            _state.update {
+                it.copy(
+                    engineState = EngineState.SEEKING,
+                    countInRemainingMs = 0,
+                    countInTargetSectionId = null,
+                    queuedJumpAtMs = null,
+                    queuedSectionId = null,
+                )
+            }
             withContext(Dispatchers.Default) { native.seekToMs(ms.coerceIn(0, duration)) }
-            _state.update { it.copy(engineState = returnState, positionMs = native.positionMs()) }
+            _state.update { it.copy(engineState = returnState, positionMs = native.positionMs().coerceAtLeast(0L)) }
         }
     }
 
@@ -234,15 +258,54 @@ class AudioEngineController(
         _state.update { it.copy(clickRoute = route) }
     }
 
+    fun setCountInBars(bars: Int) {
+        _state.update { it.copy(countInBars = bars.coerceIn(0, 2)) }
+    }
+
+    fun playCurrentSectionWithCountIn() {
+        val current = _state.value
+        val section = current.currentSection ?: return
+        val bars = current.countInBars
+        val song = current.song ?: return
+        if (bars <= 0) {
+            seekTo(section.startMs)
+            return
+        }
+        if (MusicalGrid.from(song.bpm, song.timeSignature, song.gridOffsetMs) == null) {
+            _state.update { it.copy(errorMessage = "Count-in requires a valid BPM.") }
+            return
+        }
+
+        scope.launch {
+            val prepared = withContext(Dispatchers.Default) { native.prepareCountIn(section.startMs, bars) }
+            if (!prepared) {
+                _state.update { it.copy(errorMessage = native.diagnostics().lastError) }
+                return@launch
+            }
+            _state.update {
+                it.copy(
+                    positionMs = section.startMs,
+                    countInRemainingMs = native.countInRemainingMs(),
+                    countInTargetSectionId = section.id,
+                    queuedSectionId = null,
+                    queuedJumpAtMs = null,
+                    loopSectionId = null,
+                    errorMessage = null,
+                )
+            }
+            play()
+        }
+    }
+
     fun toggleCurrentSectionLoop() {
         val current = _state.value
         val section = current.currentSection ?: return
         if (current.loopSectionId == section.id) {
             native.setLoop(false, 0, 0)
-            _state.update { it.copy(loopSectionId = null, queuedSectionId = null) }
+            _state.update { it.copy(loopSectionId = null, queuedSectionId = null, queuedJumpAtMs = null) }
         } else {
             native.setLoop(true, section.startMs, section.endMs)
-            _state.update { it.copy(loopSectionId = section.id, queuedSectionId = null) }
+            _state.update { it.copy(loopSectionId = section.id, queuedSectionId = null, queuedJumpAtMs = null) }
         }
     }
 
@@ -257,13 +320,30 @@ class AudioEngineController(
             seekTo(section.startMs)
             return
         }
-        native.scheduleJump(active.endMs, section.startMs, disableLoopAfterJump = true)
-        _state.update { it.copy(queuedSectionId = section.id) }
+
+        val song = current.song
+        val grid = song?.let { MusicalGrid.from(it.bpm, it.timeSignature, it.gridOffsetMs) }
+        val quantizedBoundary = grid?.endOfBarContaining(current.positionMs)
+        val jumpAt = when {
+            quantizedBoundary != null && quantizedBoundary > current.positionMs && quantizedBoundary < current.durationMs -> quantizedBoundary
+            active.endMs > current.positionMs -> active.endMs
+            else -> current.positionMs + 1L
+        }
+
+        native.scheduleJump(jumpAt, section.startMs, disableLoopAfterJump = true)
+        _state.update {
+            it.copy(
+                queuedSectionId = section.id,
+                queuedJumpAtMs = jumpAt,
+                countInRemainingMs = 0,
+                countInTargetSectionId = null,
+            )
+        }
     }
 
     fun exitLoop() {
         native.setLoop(false, 0, 0)
-        _state.update { it.copy(loopSectionId = null, queuedSectionId = null) }
+        _state.update { it.copy(loopSectionId = null, queuedSectionId = null, queuedJumpAtMs = null) }
     }
 
     fun setOutputDevice(deviceId: Int) {

@@ -28,10 +28,15 @@ data class PlayerState(
     val masterVolume: Float = 1f,
     val loopSectionId: String? = null,
     val queuedSectionId: String? = null,
+    val queuedJumpAtMs: Long? = null,
+    val countInBars: Int = 0,
+    val countInRemainingMs: Long = 0L,
+    val countInTargetSectionId: String? = null,
     val selectedOutputDeviceId: Int? = null,
     val errorMessage: String? = null,
 ) {
     val isPlaying: Boolean get() = engineState == EngineState.PLAYING
+    val isCountingIn: Boolean get() = countInRemainingMs > 0L
     val currentSection: SectionEntity?
         get() = sections.lastOrNull { positionMs >= it.startMs && positionMs < it.endMs }
             ?: sections.lastOrNull { positionMs >= it.startMs }
@@ -40,4 +45,6 @@ data class PlayerState(
             val current = currentSection ?: return sections.firstOrNull()
             return sections.getOrNull(sections.indexOfFirst { it.id == current.id } + 1)
         }
+    val countInTargetSection: SectionEntity?
+        get() = countInTargetSectionId?.let { id -> sections.firstOrNull { it.id == id } }
 }

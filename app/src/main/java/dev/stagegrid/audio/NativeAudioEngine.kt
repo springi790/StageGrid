@@ -49,6 +49,9 @@ class NativeAudioEngine : Closeable {
     fun scheduleJump(atMs: Long, targetMs: Long, disableLoopAfterJump: Boolean = true) =
         nativeScheduleJump(handle, atMs, targetMs, disableLoopAfterJump)
     fun clearScheduledJump() = nativeClearScheduledJump(handle)
+    fun prepareCountIn(targetMs: Long, bars: Int): Boolean =
+        nativePrepareCountIn(handle, targetMs.coerceAtLeast(0L), bars.coerceIn(1, 2))
+    fun countInRemainingMs(): Long = nativeCountInRemainingMs(handle).coerceAtLeast(0L)
     fun setOutputDevice(deviceId: Int): Boolean = nativeSetOutputDevice(handle, deviceId)
 
     fun diagnostics(): Diagnostics = Diagnostics(
@@ -94,6 +97,8 @@ class NativeAudioEngine : Closeable {
     private external fun nativeSetLoop(handle: Long, enabled: Boolean, startMs: Long, endMs: Long)
     private external fun nativeScheduleJump(handle: Long, atMs: Long, targetMs: Long, disableLoopAfterJump: Boolean)
     private external fun nativeClearScheduledJump(handle: Long)
+    private external fun nativePrepareCountIn(handle: Long, targetMs: Long, bars: Int): Boolean
+    private external fun nativeCountInRemainingMs(handle: Long): Long
     private external fun nativeSetOutputDevice(handle: Long, deviceId: Int): Boolean
     private external fun nativeSampleRate(handle: Long): Int
     private external fun nativeFramesPerBurst(handle: Long): Int
