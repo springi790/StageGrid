@@ -17,6 +17,8 @@ import kotlin.math.roundToInt
  * relocate the same native cues when sections are reordered instead of re-analyzing speech.
  */
 object NativeGuideRenderer {
+    const val TRACK_NAME = "StageGrid Native Guide"
+
     data class Result(
         val file: File,
         val outputLanguage: String,
@@ -33,6 +35,7 @@ object NativeGuideRenderer {
         samples: List<GuideSample>,
         outputLanguage: String,
         sampleRate: Int = 48_000,
+        onProgress: ((Float) -> Unit)? = null,
     ): Result? {
         if (cues.isEmpty() || samples.isEmpty() || durationMs <= 0) return null
         val exactIndex = samples.associateBy { "${it.language}:${it.kind.name}:${it.key}" }
@@ -40,6 +43,7 @@ object NativeGuideRenderer {
         val rendered = mutableListOf<RenderEvent>()
         var missing = 0
 
+        onProgress?.invoke(0f)
         for (cue in cues) {
             val outputExact = "$outputLanguage:${cue.kind.name}:${cue.key}"
             val detectedExact = "${cue.language}:${cue.kind.name}:${cue.key}"
@@ -61,35 +65,52 @@ object NativeGuideRenderer {
             rendered += RenderEvent(startFrame, audio)
         }
         if (rendered.isEmpty()) return null
+        rendered.sortBy { it.startFrame }
 
         val totalFrames = (durationMs.coerceAtLeast(1L) * sampleRate.toLong() / 1000L).coerceAtLeast(1L)
         outputFile.parentFile?.mkdirs()
-        BufferedOutputStream(FileOutputStream(outputFile), 256 * 1024).use { out ->
+        BufferedOutputStream(FileOutputStream(outputFile), 512 * 1024).use { out ->
             writeWavHeader(out, sampleRate, totalFrames)
-            val blockFrames = 4096
+            val blockFrames = 16_384
+            val silentBytes = ByteArray(blockFrames * 2)
             var blockStart = 0L
+            var lastProgressBucket = -1
             while (blockStart < totalFrames) {
                 val count = minOf(blockFrames.toLong(), totalFrames - blockStart).toInt()
-                val mix = FloatArray(count)
                 val blockEnd = blockStart + count
-                for (event in rendered) {
+                val overlapping = rendered.filter { event ->
                     val eventEnd = event.startFrame + event.samples.size
-                    if (event.startFrame >= blockEnd || eventEnd <= blockStart) continue
-                    val sourceStart = (blockStart - event.startFrame).coerceAtLeast(0L).toInt()
-                    val destinationStart = (event.startFrame - blockStart).coerceAtLeast(0L).toInt()
-                    val copy = minOf(event.samples.size - sourceStart, count - destinationStart)
-                    for (i in 0 until copy) mix[destinationStart + i] += event.samples[sourceStart + i]
+                    event.startFrame < blockEnd && eventEnd > blockStart
                 }
-                val bytes = ByteArray(count * 2)
-                for (i in 0 until count) {
-                    val value = (mix[i].coerceIn(-1f, 1f) * 32767f).roundToInt()
-                    bytes[i * 2] = (value and 0xFF).toByte()
-                    bytes[i * 2 + 1] = ((value ushr 8) and 0xFF).toByte()
+
+                if (overlapping.isEmpty()) {
+                    out.write(silentBytes, 0, count * 2)
+                } else {
+                    val mix = FloatArray(count)
+                    for (event in overlapping) {
+                        val sourceStart = (blockStart - event.startFrame).coerceAtLeast(0L).toInt()
+                        val destinationStart = (event.startFrame - blockStart).coerceAtLeast(0L).toInt()
+                        val copy = minOf(event.samples.size - sourceStart, count - destinationStart)
+                        for (i in 0 until copy) mix[destinationStart + i] += event.samples[sourceStart + i]
+                    }
+                    val bytes = ByteArray(count * 2)
+                    for (i in 0 until count) {
+                        val value = (mix[i].coerceIn(-1f, 1f) * 32767f).roundToInt()
+                        bytes[i * 2] = (value and 0xFF).toByte()
+                        bytes[i * 2 + 1] = ((value ushr 8) and 0xFF).toByte()
+                    }
+                    out.write(bytes)
                 }
-                out.write(bytes)
+
                 blockStart += count
+                val bucket = ((blockStart * 20L) / totalFrames).toInt().coerceIn(0, 20)
+                if (bucket != lastProgressBucket) {
+                    lastProgressBucket = bucket
+                    onProgress?.invoke((blockStart.toDouble() / totalFrames.toDouble()).toFloat().coerceIn(0f, 1f))
+                }
             }
         }
+        onProgress?.invoke(1f)
         return Result(outputFile, outputLanguage, rendered.size, missing)
     }
 
