@@ -60,6 +60,9 @@ interface SectionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(section: SectionEntity)
 
+    @Query("DELETE FROM sections WHERE songId = :songId")
+    suspend fun clearForSong(songId: String)
+
     @Delete
     suspend fun delete(section: SectionEntity)
 }
