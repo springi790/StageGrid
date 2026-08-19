@@ -105,6 +105,27 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     fun setOutputDevice(id: Int) = app.audio.setOutputDevice(id)
     fun diagnostics(): NativeAudioEngine.Diagnostics = app.audio.diagnostics()
 
+    /**
+     * Manual section edits are only exposed by the UI while transport is stopped.
+     * Re-loading the currently loaded song is intentional: it gives the native
+     * engine one atomic, clean view of the updated section map before playback.
+     */
+    fun saveSection(section: SectionEntity) {
+        if (player.value.isPlaying) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { app.repository.saveSection(section) }
+            if (player.value.song?.id == section.songId) app.audio.loadSong(section.songId)
+        }
+    }
+
+    fun deleteSection(section: SectionEntity) {
+        if (player.value.isPlaying) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { app.repository.deleteSection(section) }
+            if (player.value.song?.id == section.songId) app.audio.loadSong(section.songId)
+        }
+    }
+
     fun saveSongMetadata(
         songId: String,
         title: String,
