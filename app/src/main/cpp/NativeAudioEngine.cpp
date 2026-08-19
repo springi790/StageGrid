@@ -120,8 +120,7 @@ bool NativeAudioEngine::loadSong(const std::vector<std::string>& paths, const st
 void NativeAudioEngine::unloadSong() {
     std::lock_guard<std::mutex> lock(controlMutex_);
     playing_.store(false, std::memory_order_release);
-    pendingGeneration_.store(0, std::memory_order_release);
-    pendingBank_.store(-1, std::memory_order_release);
+    cancelPendingPathFromControl();
     stopDecoderThreads();
     tracks_.clear();
     closeStreamLocked();
@@ -192,7 +191,8 @@ void NativeAudioEngine::decoderLoop(TrackState *track) {
 
         const int pending = pendingBank_.load(std::memory_order_acquire);
         const uint64_t pendingGeneration = pendingGeneration_.load(std::memory_order_acquire);
-        const bool hasPending = pendingGeneration != 0 && pending >= 0 && pending <= 1 && pending != active &&
+        const bool hasPending = pendingGeneration != 0 && pendingGeneration != kPathClaimedGeneration &&
+            pending >= 0 && pending <= 1 && pending != active &&
             bankGenerations_[pending].load(std::memory_order_acquire) == pendingGeneration;
         if (hasPending && localGeneration[pending] != pendingGeneration) initializeBank(pending, pendingGeneration);
 
@@ -293,9 +293,20 @@ int64_t NativeAudioEngine::firstDivergenceFrames(
     return best;
 }
 
-uint64_t NativeAudioEngine::requestHardPathReset(int64_t frame, const PathState &path) {
+void NativeAudioEngine::cancelPendingPathFromControl() noexcept {
+    // The realtime callback briefly publishes a sentinel after it has claimed a complete pending
+    // generation. Control threads are allowed to wait; the callback is never allowed to wait.
+    // Waiting here prevents rapid successive taps from rewriting a bank that the callback has
+    // already committed to activating in this callback cycle.
+    while (pendingGeneration_.load(std::memory_order_acquire) == kPathClaimedGeneration) {
+        std::this_thread::yield();
+    }
     pendingGeneration_.store(0, std::memory_order_release);
     pendingBank_.store(-1, std::memory_order_release);
+}
+
+uint64_t NativeAudioEngine::requestHardPathReset(int64_t frame, const PathState &path) {
+    cancelPendingPathFromControl();
     const int active = activeBank_.load(std::memory_order_acquire);
     storePathState(active, path);
     bankStartFrames_[active].store(frame, std::memory_order_release);
@@ -308,10 +319,9 @@ uint64_t NativeAudioEngine::requestHardPathReset(int64_t frame, const PathState 
 }
 
 void NativeAudioEngine::stagePathChange(const PathState &path) {
-    // Invalidate an older pending request before rewriting its inactive bank. This guarantees the
-    // callback can never activate a half-published replacement configuration.
-    pendingGeneration_.store(0, std::memory_order_release);
-    pendingBank_.store(-1, std::memory_order_release);
+    // Invalidate an older pending request before rewriting its inactive bank. If the callback has
+    // already claimed that generation, this control-side method waits until the handoff completes.
+    cancelPendingPathFromControl();
 
     const int active = activeBank_.load(std::memory_order_acquire);
     const PathState current = loadPathState(active);
@@ -359,7 +369,8 @@ bool NativeAudioEngine::waitForActivePreload(uint64_t generation, int timeoutMs)
 bool NativeAudioEngine::tryActivatePendingPath(int32_t numFrames) noexcept {
     const uint64_t generation = pendingGeneration_.load(std::memory_order_acquire);
     const int pending = pendingBank_.load(std::memory_order_acquire);
-    if (generation == 0 || pending < 0 || pending > 1 || pending == activeBank_.load(std::memory_order_relaxed)) return false;
+    if (generation == 0 || generation == kPathClaimedGeneration || pending < 0 || pending > 1 ||
+        pending == activeBank_.load(std::memory_order_relaxed)) return false;
     if (bankGenerations_[pending].load(std::memory_order_acquire) != generation) return false;
 
     const uint64_t now = outputFrameCounter_.load(std::memory_order_relaxed);
@@ -382,17 +393,28 @@ bool NativeAudioEngine::tryActivatePendingPath(int32_t numFrames) noexcept {
         const bool safeWindowExpired = safeFrames >= 0 && elapsed + static_cast<uint64_t>(std::max(0, numFrames)) >= static_cast<uint64_t>(safeFrames);
         const bool preparationTooOld = elapsed > static_cast<uint64_t>(sr / 2);
         if (safeWindowExpired || preparationTooOld) {
-            pendingGeneration_.store(0, std::memory_order_release);
-            pendingBank_.store(-1, std::memory_order_release);
-            pathSwapMisses_.fetch_add(1, std::memory_order_relaxed);
+            uint64_t expected = generation;
+            if (pendingGeneration_.compare_exchange_strong(
+                    expected, 0, std::memory_order_acq_rel, std::memory_order_acquire)) {
+                pendingBank_.store(-1, std::memory_order_release);
+                pathSwapMisses_.fetch_add(1, std::memory_order_relaxed);
+            }
         }
+        return false;
+    }
+
+    // Claim this exact generation before touching its read cursors. A rapid control-side request
+    // can invalidate a generation only before this CAS or after the callback finishes the handoff.
+    uint64_t expected = generation;
+    if (!pendingGeneration_.compare_exchange_strong(
+            expected, kPathClaimedGeneration, std::memory_order_acq_rel, std::memory_order_acquire)) {
         return false;
     }
 
     for (const auto &track : tracks_) {
         if (track->rings[pending]->discardFrames(static_cast<size_t>(elapsed)) != static_cast<size_t>(elapsed)) {
-            pendingGeneration_.store(0, std::memory_order_release);
             pendingBank_.store(-1, std::memory_order_release);
+            pendingGeneration_.store(0, std::memory_order_release);
             pathSwapMisses_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
@@ -402,8 +424,8 @@ bool NativeAudioEngine::tryActivatePendingPath(int32_t numFrames) noexcept {
     callbackGeneration_ = generation;
     callbackJumpConsumed_ = false;
     callbackLoopDisabledLocally_ = false;
-    pendingGeneration_.store(0, std::memory_order_release);
     pendingBank_.store(-1, std::memory_order_release);
+    pendingGeneration_.store(0, std::memory_order_release);
     pathSwaps_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -560,8 +582,7 @@ int64_t NativeAudioEngine::countInRemainingMs() const {
 bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
     std::lock_guard<std::mutex> lock(controlMutex_);
     const bool resume = playing_.exchange(false, std::memory_order_acq_rel);
-    pendingGeneration_.store(0, std::memory_order_release);
-    pendingBank_.store(-1, std::memory_order_release);
+    cancelPendingPathFromControl();
 
     const int active = activeBank_.load(std::memory_order_acquire);
     const PathState oldPath = loadPathState(active);
