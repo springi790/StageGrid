@@ -1,0 +1,12 @@
+<resources>
+    <string name="section">Sección</string>
+    <string name="count_in_active">Conteo → %1$s · %2$d s</string>
+    <string name="count_in_click_only">Durante el conteo solo suena el Click; las pistas entran juntas al terminar.</string>
+    <string name="queued_next_bar">%1$s entra al comenzar el próximo compás</string>
+    <string name="section_count_in">Entrada a sección</string>
+    <string name="section_count_in_help">Selecciona 1 o 2 compases y, estando detenido, usa “Reproducir sección con conteo”.</string>
+    <string name="count_in_off">Sin conteo</string>
+    <string name="one_bar">1 compás</string>
+    <string name="two_bars">2 compases</string>
+    <string name="play_section_with_count_in">Reproducir sección con conteo</string>
+</resources>
