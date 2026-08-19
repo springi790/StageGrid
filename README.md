@@ -2,7 +2,7 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Stems, native Click, Guide and the musical timeline share one real-time audio clock instead of independent Android media players.
 
-> **Current release: `0.2.0-alpha04.2` — Per-song Guide language + visible import progress.**
+> **Current release: `0.2.0-alpha05` — Double-buffered live path changes.**
 >
 > StageGrid is under active development. Only functionality with a real implementation is presented as available; planned modules live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -12,66 +12,71 @@ StageGrid is a native Android, local-first multitrack player for live performanc
 
 Common actions remain visible while technical controls such as grid offsets and manual routing stay behind optional advanced controls.
 
-## New in 0.2.0-alpha04.2
+## New in 0.2.0-alpha05
 
-This alpha improves the workflow around native Guides and makes long imports much easier to understand.
+This alpha hardens the part of the native audio engine used when Loop or a quantized section jump changes the future playback path while audio is already running.
 
-### Change a processed Guide language per song
+### Double-buffered path preparation
 
-A song that already has `StageGrid Native Guide.wav` can now change its Guide language directly from Player when the installed Guide pack contains that language.
+Previous builds rebuilt the decoder look-ahead when a live path changed. That was logically correct, but clearing the current buffers while Oboe was still consuming them could create an underrun window on a slower device or a song with many stems.
 
-```text
-Recognized Guide events
-        ↓
-Spanish / English / French / Portuguese
-        ↓
-regenerate only StageGrid Native Guide.wav
-        ↓
-reload song
-```
-
-Changing language does **not**:
-
-- re-import the stems;
-- re-run Guide recognition;
-- rebuild the Click;
-- replace the user's section map;
-- reconvert the song's MP3 stems.
-
-The selected output language is persisted in the song's `native-guide-events.json`. Guide regeneration is disabled while transport/count-in is active, and the replacement is rendered to a temporary file before the current Guide is swapped.
-
-Settings still defines the **default language for newly imported songs**. Player controls the language of the currently loaded song.
-
-### Import percentage and status
-
-The import dialog now reports an overall percentage plus the current operation, including stages such as:
+Alpha05 gives every track two decoder banks:
 
 ```text
-Copying files
-Preparing WAV tracks / decoding MP3
-Aligning Click
-Recognizing Guide cues
-Generating native Guide
-Building sections
-Saving library
+ACTIVE BANK
+currently feeding Oboe
+        │
+        │ keeps playing
+        ▼
+
+INACTIVE BANK
+prepare new Loop / section-jump path
+        │
+        │ all tracks ready
+        ▼
+atomic callback handoff
+        │
+        ▼
+new ACTIVE BANK
 ```
 
-MP3 conversion reports progress from codec timestamps instead of appearing frozen for the entire decode. WAV/local-copy work also contributes to the overall progress indicator.
+The inactive bank starts from the same master timeline position as the active bank. While it is being prepared, StageGrid records how many output frames elapsed. Immediately before activation, the callback advances the prepared bank by that same number of frames and then switches every stem together.
 
-### First import-performance pass
+The callback does not open files, seek WAV readers, allocate a new arrangement, wait on a mutex or ask Room/UI to do work. Decoder preparation stays on the existing background decoder threads.
 
-This release also removes several pieces of repeated work:
+### Safer last-moment section taps
 
-- the installed Guide sample file index is cached in memory instead of walking the same directory repeatedly;
-- Guide sample fingerprints are cached and are pre-warmed when a Guide pack is installed;
-- subsequent song imports in the same app process reuse those prepared templates;
-- local audio copies use larger buffered I/O;
-- native Guide rendering skips per-sample floating-point mixing for long blocks that contain only silence;
-- MP3 decode/copy buffers were increased to reduce avoidable small I/O operations.
+A quantized section request now asks the Musical Grid for a bar boundary that leaves a small preparation window for the inactive bank.
 
-These optimizations do not change audio alignment or move decoding into the real-time playback callback.
+If the next bar is only a few milliseconds away, StageGrid waits for the following bar instead of forcing an unsafe last-millisecond decoder rebuild:
 
-App version: `0.2.0-alpha04.2` (`versionCode 9`).
+```text
+User taps Chorus
+        │
+        ├─ next bar has enough preparation time → Chorus there
+        │
+        └─ next bar is too close → queue following bar
+```
+
+The current preparation lead is 180 ms. This does not change the musical destination; it only prevents a very late tap from trading timing safety for a potential glitch.
+
+### Path diagnostics
+
+Native diagnostics now expose:
+
+- successful prepared-bank swaps;
+- missed safe preparation windows;
+- whether a path replacement is currently being prepared.
+
+A missed safe window is cancelled rather than activating a stale prepared path after the point where the old and new timelines have already diverged.
+
+### Guide synchronization boundary
+
+`StageGrid Native Guide.wav` is a normal shared-clock stem, so it participates in the same double-buffered bank handoff and remains synchronized with the other audio tracks through loops and timeline jumps.
+
+This is **not yet** the later arrangement-aware Guide engine. If a live reorder requires a new spoken cue to be moved into a different pre-section bar, StageGrid still needs the upcoming event-relocation layer to synthesize/reposition that cue from `native-guide-events.json`.
+
+App version: `0.2.0-alpha05` (`versionCode 10`).
 
 ## Native Guide pipeline
 
@@ -100,6 +105,8 @@ When reconstruction succeeds, the original Guide remains in the library as a mut
 
 If a valid Musical Grid is available, recognized section calls can produce editable automatic sections. If BPM is entered only after import, StageGrid reuses the saved cue events to create the section map later without re-analyzing Guide audio.
 
+A processed song can change its generated Guide between installed languages directly from Player without re-importing stems or repeating Guide recognition.
+
 The recognition system is designed for sample-based Guide tracks matching the installed cue pack. It is **not** a general-purpose speech-to-text engine for arbitrary recordings.
 
 ## Current live workflow
@@ -127,7 +134,12 @@ Player
   ├─ Click / Guide
   ├─ Change native Guide language
   ├─ Section count-in
+  ├─ Section Loop
   └─ Quantized section changes
+             ↓
+       inactive path bank
+             ↓
+       realtime bank handoff
 ```
 
 A common stereo stage preset is:
@@ -151,6 +163,7 @@ Right → Tracks
 - Post-import metadata editing for title, artist, BPM, key, time signature, grid offset and notes.
 - Overall import percentage and current-stage descriptions.
 - Track-level progress for WAV preparation and MP3 decoding.
+- In-memory Guide sample index/template cache and pre-warming after Guide-pack installation.
 
 ### Audio formats
 
@@ -167,6 +180,12 @@ MP3 decoding never runs in the Oboe real-time callback. StageGrid does not indep
 - One native Oboe output stream.
 - One master output-frame playhead shared by all stems.
 - Streaming decoder threads and preallocated SPSC buffers.
+- Two decoder banks per track for prepared live path handoff.
+- Active-bank playback continues while an inactive Loop/jump path is decoded.
+- All tracks switch banks together from the realtime callback only after readiness/alignment checks.
+- Prepared banks are aligned by elapsed output-frame count before activation.
+- Unsafe late path swaps are cancelled instead of applying stale timeline data.
+- Total ring-buffer memory remains in the same order as the former single large bank by splitting that look-ahead budget across the two banks.
 - No filesystem, Room, Guide recognition or Compose work inside the real-time callback.
 - Shared source-rate mapping.
 - Play, pause, stop and seek.
@@ -174,7 +193,7 @@ MP3 decoding never runs in the Oboe real-time callback. StageGrid does not indep
 - Per-track volume, mute, solo and pan.
 - Per-track stereo routing: `L`, `L+R`, `R`.
 - Basic Android/USB stereo output-device selection.
-- Native diagnostics for sample rate, burst size, underruns and callback load.
+- Native diagnostics for sample rate, burst size, underruns, callback load and prepared-path swaps/misses.
 
 ### Native Click
 
@@ -196,7 +215,7 @@ MP3 decoding never runs in the Oboe real-time callback. StageGrid does not indep
 - App-generated `StageGrid Native Guide.wav`.
 - Original Guide retained muted after successful reconstruction.
 - Persisted cue events can regenerate sections after BPM becomes available.
-- Generated Guide playback uses the same shared multitrack clock as the stems.
+- Generated Guide playback uses the same shared multitrack clock and decoder-bank handoff as the stems.
 
 ### Musical Grid and sections
 
@@ -222,6 +241,7 @@ Implemented:
 - delayed section recovery from persisted Guide events when BPM is supplied later;
 - Section Loop / Exit Loop;
 - next-bar quantized section changes;
+- preparation-aware bar selection for very late section taps;
 - 1- or 2-bar native count-in.
 
 **Edit sections remains a first-class Player action.** Automatic recovery only replaces the untouched `Full Song` fallback, so manual section work is protected.
@@ -289,17 +309,16 @@ Then build normally.
 
 GitHub Actions runs unit tests and `assembleDebug` for development pull requests before changes are merged into `main`.
 
-Coverage includes areas such as stem classification, WAV parsing, Musical Grid conversion/snapping, quantized transitions, native Guide recognition/section inference, Room behavior, JNI/native loading and shared-clock native behavior.
+Coverage includes areas such as stem classification, WAV parsing, Musical Grid conversion/snapping, preparation-aware quantized boundaries, native Guide recognition/section inference, Room behavior, JNI/native loading and shared-clock native compilation.
 
-## Known limitations of 0.2.0-alpha04.2
+## Known limitations of 0.2.0-alpha05
 
 Still pending:
 
-- the Guide fingerprint cache is currently in-memory; after a full app-process restart the first Guide analysis may still pay the template preparation cost again;
+- double-buffered path handoff is implemented, but representative physical-device stress testing with 16/32+ active stems is still required before calling it stage-qualified;
+- the generated Guide WAV follows the original timeline; native Guide **event relocation** for arbitrary live ReOrder is still pending;
 - in-place Guide **audio re-analysis** for songs imported before a Guide pack was installed/changed is still pending;
-- arbitrary live ReOrder does not yet relocate generated Guide audio dynamically;
-- double-buffered arrangement/path updates;
-- high-track-count physical-device stress validation and deeper import-performance profiling on multiple Android devices;
+- the Guide fingerprint cache is currently in-memory; after a full app-process restart the first Guide analysis may pay the template preparation cost again;
 - Setlist Live NEXT/PREV with next-song preload;
 - restorable performance sessions;
 - waveform peak cache/editor;
@@ -315,6 +334,18 @@ Still pending:
 See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Release history
+
+### 0.2.0-alpha05
+
+**Double-buffered live path hardening**
+
+- two decoder banks per track;
+- background preparation of Loop/quantized-jump paths without clearing the bank currently feeding Oboe;
+- synchronized all-track bank activation in the realtime callback;
+- elapsed-output-frame alignment before prepared-bank activation;
+- safe-window rejection for stale late swaps;
+- preparation-aware next-bar selection with a 180 ms lead;
+- native diagnostics for path swaps, misses and pending state.
 
 ### 0.2.0-alpha04.2
 

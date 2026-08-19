@@ -32,6 +32,20 @@ class MusicalGridTest {
     }
 
     @Test
+    fun safeBoundaryUsesCurrentBarWhenThereIsEnoughPreparationTime() {
+        val grid = MusicalGrid(120.0, "4/4", 100L)
+
+        assertEquals(2_100L, grid.nextBarBoundaryAtLeast(1_000L, 180L))
+    }
+
+    @Test
+    fun safeBoundaryDefersOneBarWhenTapIsTooCloseToBoundary() {
+        val grid = MusicalGrid(120.0, "4/4", 100L)
+
+        assertEquals(4_100L, grid.nextBarBoundaryAtLeast(2_000L, 180L))
+    }
+
+    @Test
     fun numeratorControlsBeatsPerBar() {
         val grid = MusicalGrid(60.0, "6/8", 0L)
 

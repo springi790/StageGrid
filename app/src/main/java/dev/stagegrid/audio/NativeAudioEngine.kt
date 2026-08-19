@@ -16,6 +16,9 @@ class NativeAudioEngine : Closeable {
         val loadedTracks: Int,
         val positionMs: Long,
         val durationMs: Long,
+        val pathSwaps: Long,
+        val pathSwapMisses: Long,
+        val pathChangePending: Boolean,
         val lastError: String,
     )
 
@@ -62,6 +65,9 @@ class NativeAudioEngine : Closeable {
         loadedTracks = nativeLoadedTracks(handle),
         positionMs = nativePositionMs(handle),
         durationMs = nativeDurationMs(handle),
+        pathSwaps = nativePathSwaps(handle),
+        pathSwapMisses = nativePathSwapMisses(handle),
+        pathChangePending = nativePathChangePending(handle),
         lastError = nativeLastError(handle),
     )
 
@@ -105,6 +111,9 @@ class NativeAudioEngine : Closeable {
     private external fun nativeUnderruns(handle: Long): Long
     private external fun nativeCpuLoad(handle: Long): Float
     private external fun nativeLoadedTracks(handle: Long): Int
+    private external fun nativePathSwaps(handle: Long): Long
+    private external fun nativePathSwapMisses(handle: Long): Long
+    private external fun nativePathChangePending(handle: Long): Boolean
     private external fun nativeLastError(handle: Long): String
 
     companion object {

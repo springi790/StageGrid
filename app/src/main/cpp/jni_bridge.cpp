@@ -71,4 +71,7 @@ extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nat
 extern "C" JNIEXPORT jlong JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeUnderruns(JNIEnv *, jobject, jlong h) { return engine(h)->underruns(); }
 extern "C" JNIEXPORT jfloat JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeCpuLoad(JNIEnv *, jobject, jlong h) { return engine(h)->cpuLoad(); }
 extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeLoadedTracks(JNIEnv *, jobject, jlong h) { return engine(h)->loadedTracks(); }
+extern "C" JNIEXPORT jlong JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativePathSwaps(JNIEnv *, jobject, jlong h) { return engine(h)->pathSwaps(); }
+extern "C" JNIEXPORT jlong JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativePathSwapMisses(JNIEnv *, jobject, jlong h) { return engine(h)->pathSwapMisses(); }
+extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativePathChangePending(JNIEnv *, jobject, jlong h) { return engine(h)->pathChangePending() ? JNI_TRUE : JNI_FALSE; }
 extern "C" JNIEXPORT jstring JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeLastError(JNIEnv *env, jobject, jlong h) { const auto error = engine(h)->lastError(); return env->NewStringUTF(error.c_str()); }

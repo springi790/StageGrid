@@ -41,6 +41,22 @@ public:
         return true;
     }
 
+    /**
+     * Advances the consumer by up to `frames` without reading samples.
+     *
+     * The double-buffered path engine uses this only on an inactive/prepared bank immediately
+     * before that bank becomes active. It keeps the prepared bank aligned with the output frames
+     * that elapsed while the currently-active bank continued feeding the callback.
+     */
+    size_t discardFrames(size_t frames) noexcept {
+        const auto r = readIndex_.load(std::memory_order_relaxed);
+        const auto w = writeIndex_.load(std::memory_order_acquire);
+        const size_t available = (w - r) / 2;
+        const size_t discard = frames < available ? frames : available;
+        readIndex_.store(r + discard * 2, std::memory_order_release);
+        return discard;
+    }
+
     void clear() noexcept {
         const auto w = writeIndex_.load(std::memory_order_acquire);
         readIndex_.store(w, std::memory_order_release);

@@ -1,0 +1,5 @@
+<resources>
+    <string name="path_swaps_value">Cambios de ruta preparados: %1$d</string>
+    <string name="path_swap_misses_value">Cambios cancelados por tiempo: %1$d</string>
+    <string name="path_pending_value">Preparando cambio de ruta: %1$s</string>
+</resources>

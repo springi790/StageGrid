@@ -323,11 +323,12 @@ class AudioEngineController(
 
         val song = current.song
         val grid = song?.let { MusicalGrid.from(it.bpm, it.timeSignature, it.gridOffsetMs) }
-        val quantizedBoundary = grid?.endOfBarContaining(current.positionMs)
+        val quantizedBoundary = grid?.nextBarBoundaryAtLeast(current.positionMs, PATH_PRELOAD_LEAD_MS)
         val jumpAt = when {
             quantizedBoundary != null && quantizedBoundary > current.positionMs && quantizedBoundary < current.durationMs -> quantizedBoundary
+            active.endMs - current.positionMs >= PATH_PRELOAD_LEAD_MS -> active.endMs
             active.endMs > current.positionMs -> active.endMs
-            else -> current.positionMs + 1L
+            else -> current.positionMs + PATH_PRELOAD_LEAD_MS
         }
 
         native.scheduleJump(jumpAt, section.startMs, disableLoopAfterJump = true)
@@ -369,5 +370,11 @@ class AudioEngineController(
         scope.cancel()
         audioManager.abandonAudioFocusRequest(focusRequest)
         native.close()
+    }
+
+    private companion object {
+        // Leaves the decoder bank enough time to prepare even on songs with many stems. If the tap
+        // lands closer than this to the next bar line, MusicalGrid queues the following bar instead.
+        const val PATH_PRELOAD_LEAD_MS = 180L
     }
 }

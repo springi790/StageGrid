@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <thread>
 
 namespace {
@@ -16,7 +17,14 @@ NativeAudioEngine::TrackState::~TrackState() {
     if (decoderThread.joinable()) decoderThread.join();
 }
 
-NativeAudioEngine::NativeAudioEngine() = default;
+NativeAudioEngine::NativeAudioEngine() {
+    bankGenerations_[0].store(1, std::memory_order_relaxed);
+    bankGenerations_[1].store(0, std::memory_order_relaxed);
+    bankStartFrames_[0].store(0, std::memory_order_relaxed);
+    bankStartFrames_[1].store(0, std::memory_order_relaxed);
+    storePathState(0, PathState{});
+    storePathState(1, PathState{});
+}
 
 NativeAudioEngine::~NativeAudioEngine() {
     std::lock_guard<std::mutex> lock(controlMutex_);
@@ -94,22 +102,25 @@ bool NativeAudioEngine::loadSong(const std::vector<std::string>& paths, const st
     gridOffsetFrame_.store(std::max<int64_t>(0, gridOffsetMs) * static_cast<int64_t>(sr) / 1000, std::memory_order_release);
     durationFrames_.store(static_cast<int64_t>(std::ceil(maxSeconds * sr)), std::memory_order_release);
     playheadFrame_.store(0, std::memory_order_release);
-    loopEnabled_.store(false, std::memory_order_release);
-    jumpAtFrame_.store(-1, std::memory_order_release);
-    jumpTargetFrame_.store(-1, std::memory_order_release);
     trackGateUntilFrame_.store(-1, std::memory_order_release);
+    outputFrameCounter_.store(0, std::memory_order_release);
+    pathSwaps_.store(0, std::memory_order_release);
+    pathSwapMisses_.store(0, std::memory_order_release);
+    activeBank_.store(0, std::memory_order_release);
+    pendingBank_.store(-1, std::memory_order_release);
+    pendingGeneration_.store(0, std::memory_order_release);
+    const uint64_t generation = requestHardPathReset(0, PathState{});
     underruns_.store(0, std::memory_order_release);
-    requestPathReset(0);
-    startDecoderThreads();
-    const auto gen = pathGeneration_.load(std::memory_order_acquire);
-    waitForPreload(gen, 500);
 
+    startDecoderThreads();
+    waitForActivePreload(generation, 500);
     return true;
 }
 
 void NativeAudioEngine::unloadSong() {
     std::lock_guard<std::mutex> lock(controlMutex_);
     playing_.store(false, std::memory_order_release);
+    cancelPendingPathFromControl();
     stopDecoderThreads();
     tracks_.clear();
     closeStreamLocked();
@@ -132,68 +143,291 @@ void NativeAudioEngine::stopDecoderThreads() {
     }
 }
 
+NativeAudioEngine::PathState NativeAudioEngine::loadPathState(int bank) const noexcept {
+    const int slot = std::clamp(bank, 0, 1);
+    const auto &source = pathStates_[slot];
+    PathState state;
+    state.loopEnabled = source.loopEnabled.load(std::memory_order_acquire);
+    state.loopStartFrame = source.loopStartFrame.load(std::memory_order_acquire);
+    state.loopEndFrame = source.loopEndFrame.load(std::memory_order_acquire);
+    state.jumpAtFrame = source.jumpAtFrame.load(std::memory_order_acquire);
+    state.jumpTargetFrame = source.jumpTargetFrame.load(std::memory_order_acquire);
+    state.disableLoopAfterJump = source.disableLoopAfterJump.load(std::memory_order_acquire);
+    return state;
+}
+
+void NativeAudioEngine::storePathState(int bank, const PathState &state) noexcept {
+    const int slot = std::clamp(bank, 0, 1);
+    auto &target = pathStates_[slot];
+    target.loopEnabled.store(state.loopEnabled, std::memory_order_relaxed);
+    target.loopStartFrame.store(state.loopStartFrame, std::memory_order_relaxed);
+    target.loopEndFrame.store(state.loopEndFrame, std::memory_order_relaxed);
+    target.jumpAtFrame.store(state.jumpAtFrame, std::memory_order_relaxed);
+    target.jumpTargetFrame.store(state.jumpTargetFrame, std::memory_order_relaxed);
+    target.disableLoopAfterJump.store(state.disableLoopAfterJump, std::memory_order_relaxed);
+}
+
 void NativeAudioEngine::decoderLoop(TrackState *track) {
-    uint64_t localGeneration = 0;
-    int64_t cursor = 0;
-    bool jumpConsumed = false;
-    bool loopDisabledLocally = false;
+    std::array<uint64_t, 2> localGeneration{0, 0};
+    std::array<int64_t, 2> cursor{0, 0};
+    std::array<bool, 2> jumpConsumed{false, false};
+    std::array<bool, 2> loopDisabledLocally{false, false};
+    std::array<PathState, 2> localPath{};
+
+    const auto initializeBank = [&](int slot, uint64_t generation) {
+        track->rings[slot]->clear();
+        cursor[slot] = bankStartFrames_[slot].load(std::memory_order_acquire);
+        jumpConsumed[slot] = false;
+        loopDisabledLocally[slot] = false;
+        localPath[slot] = loadPathState(slot);
+        localGeneration[slot] = generation;
+        track->readyGeneration[slot].store(0, std::memory_order_release);
+    };
 
     while (track->alive.load(std::memory_order_acquire)) {
-        const uint64_t generation = pathGeneration_.load(std::memory_order_acquire);
-        if (generation != localGeneration) {
-            track->ring.clear();
-            cursor = resetFrame_.load(std::memory_order_acquire);
-            jumpConsumed = false;
-            loopDisabledLocally = false;
-            localGeneration = generation;
-            track->readyGeneration.store(0, std::memory_order_release);
+        const int active = activeBank_.load(std::memory_order_acquire);
+        const uint64_t activeGeneration = bankGenerations_[active].load(std::memory_order_acquire);
+        if (localGeneration[active] != activeGeneration) initializeBank(active, activeGeneration);
+
+        const int pending = pendingBank_.load(std::memory_order_acquire);
+        const uint64_t pendingGeneration = pendingGeneration_.load(std::memory_order_acquire);
+        const bool hasPending = pendingGeneration != 0 && pendingGeneration != kPathClaimedGeneration &&
+            pending >= 0 && pending <= 1 && pending != active &&
+            bankGenerations_[pending].load(std::memory_order_acquire) == pendingGeneration;
+        if (hasPending && localGeneration[pending] != pendingGeneration) initializeBank(pending, pendingGeneration);
+
+        const int sr = std::max(1, outputSampleRate_.load(std::memory_order_acquire));
+        constexpr size_t bankCapacityFrames = TrackState::kRingCapacitySamples / 2;
+        const size_t activeLowWater = std::min<size_t>(bankCapacityFrames / 2, static_cast<size_t>(std::max(1024, sr / 8)));
+        const size_t pendingTarget = std::min<size_t>(bankCapacityFrames - 2048, static_cast<size_t>(std::max(4096, sr / 2)));
+
+        int fillSlot = active;
+        if (hasPending) {
+            const size_t activeAvailable = track->rings[active]->availableFrames();
+            const size_t pendingAvailable = track->rings[pending]->availableFrames();
+            if (activeAvailable > activeLowWater && pendingAvailable < pendingTarget) fillSlot = pending;
         }
 
-        if (track->ring.freeFrames() < 512) {
+        auto &ring = *track->rings[fillSlot];
+        if (ring.freeFrames() < 512) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
 
-        const int sr = outputSampleRate_.load(std::memory_order_acquire);
         const int64_t duration = durationFrames_.load(std::memory_order_acquire);
-        const size_t targetFrames = std::min<size_t>(2048, track->ring.freeFrames());
+        const size_t targetFrames = std::min<size_t>(2048, ring.freeFrames());
         size_t written = 0;
+        const uint64_t expectedGeneration = localGeneration[fillSlot];
         for (; written < targetFrames; ++written) {
-            if (localGeneration != pathGeneration_.load(std::memory_order_acquire)) break;
+            if (expectedGeneration != bankGenerations_[fillSlot].load(std::memory_order_acquire)) break;
             float l = 0.0f, r = 0.0f;
-            if (cursor >= 0 && cursor < duration) {
-                const double sourceFrame = static_cast<double>(cursor) * track->reader->sampleRate() / std::max(1, sr);
+            if (cursor[fillSlot] >= 0 && cursor[fillSlot] < duration) {
+                const double sourceFrame = static_cast<double>(cursor[fillSlot]) * track->reader->sampleRate() / sr;
                 track->reader->sampleAt(sourceFrame, l, r);
             }
-            if (!track->ring.writeStereo(l, r)) break;
-            cursor = nextTimelineFrame(cursor, jumpConsumed, loopDisabledLocally);
+            if (!ring.writeStereo(l, r)) break;
+            cursor[fillSlot] = nextTimelineFrame(
+                cursor[fillSlot],
+                localPath[fillSlot],
+                jumpConsumed[fillSlot],
+                loopDisabledLocally[fillSlot]
+            );
         }
 
-        const size_t preloaded = track->ring.availableFrames();
-        if (preloaded >= static_cast<size_t>(std::max(256, sr / 20))) {
-            track->readyGeneration.store(localGeneration, std::memory_order_release);
+        const size_t readyThreshold = std::min<size_t>(
+            bankCapacityFrames / 4,
+            static_cast<size_t>(std::max(256, sr / 40))
+        );
+        if (ring.availableFrames() >= readyThreshold) {
+            track->readyGeneration[fillSlot].store(expectedGeneration, std::memory_order_release);
         }
         if (written == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
-int64_t NativeAudioEngine::nextTimelineFrame(int64_t current, bool &jumpConsumed, bool &loopDisabledLocally) const noexcept {
+int64_t NativeAudioEngine::nextTimelineFrame(
+    int64_t current,
+    const PathState &path,
+    bool &jumpConsumed,
+    bool &loopDisabledLocally
+) const noexcept {
     const int64_t next = current + 1;
-    const int64_t jumpAt = jumpAtFrame_.load(std::memory_order_relaxed);
-    if (!jumpConsumed && jumpAt >= 0 && next >= jumpAt) {
-        const int64_t target = jumpTargetFrame_.load(std::memory_order_relaxed);
-        if (target >= 0) {
-            jumpConsumed = true;
-            if (disableLoopAfterJump_.load(std::memory_order_relaxed)) loopDisabledLocally = true;
-            return target;
+    if (!jumpConsumed && path.jumpAtFrame >= 0 && next >= path.jumpAtFrame && path.jumpTargetFrame >= 0) {
+        jumpConsumed = true;
+        if (path.disableLoopAfterJump) loopDisabledLocally = true;
+        return path.jumpTargetFrame;
+    }
+
+    if (!loopDisabledLocally && path.loopEnabled && path.loopEndFrame > 0 && next >= path.loopEndFrame) {
+        return path.loopStartFrame;
+    }
+    return next;
+}
+
+int64_t NativeAudioEngine::firstDivergenceFrames(
+    const PathState &current,
+    const PathState &pending,
+    int64_t startFrame
+) const noexcept {
+    int64_t best = -1;
+    const auto consider = [&](int64_t transitionFrame) {
+        if (transitionFrame < startFrame) return;
+        const int64_t delta = transitionFrame - startFrame;
+        if (best < 0 || delta < best) best = delta;
+    };
+
+    const bool loopDiffers = current.loopEnabled != pending.loopEnabled ||
+        current.loopStartFrame != pending.loopStartFrame || current.loopEndFrame != pending.loopEndFrame;
+    if (loopDiffers) {
+        if (current.loopEnabled) consider(current.loopEndFrame);
+        if (pending.loopEnabled) consider(pending.loopEndFrame);
+    }
+
+    const bool jumpDiffers = current.jumpAtFrame != pending.jumpAtFrame ||
+        current.jumpTargetFrame != pending.jumpTargetFrame ||
+        current.disableLoopAfterJump != pending.disableLoopAfterJump;
+    if (jumpDiffers) {
+        if (current.jumpAtFrame >= 0) consider(current.jumpAtFrame);
+        if (pending.jumpAtFrame >= 0) consider(pending.jumpAtFrame);
+    }
+    return best;
+}
+
+void NativeAudioEngine::cancelPendingPathFromControl() noexcept {
+    // The realtime callback briefly publishes a sentinel after it has claimed a complete pending
+    // generation. Control threads are allowed to wait; the callback is never allowed to wait.
+    // Waiting here prevents rapid successive taps from rewriting a bank that the callback has
+    // already committed to activating in this callback cycle.
+    while (pendingGeneration_.load(std::memory_order_acquire) == kPathClaimedGeneration) {
+        std::this_thread::yield();
+    }
+    pendingGeneration_.store(0, std::memory_order_release);
+    pendingBank_.store(-1, std::memory_order_release);
+}
+
+uint64_t NativeAudioEngine::requestHardPathReset(int64_t frame, const PathState &path) {
+    cancelPendingPathFromControl();
+    const int active = activeBank_.load(std::memory_order_acquire);
+    storePathState(active, path);
+    bankStartFrames_[active].store(frame, std::memory_order_release);
+    const uint64_t generation = generationCounter_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    bankGenerations_[active].store(generation, std::memory_order_release);
+    callbackGeneration_ = 0;
+    callbackJumpConsumed_ = false;
+    callbackLoopDisabledLocally_ = false;
+    return generation;
+}
+
+void NativeAudioEngine::stagePathChange(const PathState &path) {
+    // Invalidate an older pending request before rewriting its inactive bank. If the callback has
+    // already claimed that generation, this control-side method waits until the handoff completes.
+    cancelPendingPathFromControl();
+
+    const int active = activeBank_.load(std::memory_order_acquire);
+    const PathState current = loadPathState(active);
+    const bool same = current.loopEnabled == path.loopEnabled &&
+        current.loopStartFrame == path.loopStartFrame && current.loopEndFrame == path.loopEndFrame &&
+        current.jumpAtFrame == path.jumpAtFrame && current.jumpTargetFrame == path.jumpTargetFrame &&
+        current.disableLoopAfterJump == path.disableLoopAfterJump;
+    if (same) return;
+
+    const int64_t startFrame = playheadFrame_.load(std::memory_order_acquire);
+    if (!playing_.load(std::memory_order_acquire)) {
+        requestHardPathReset(startFrame, path);
+        return;
+    }
+
+    const int inactive = 1 - active;
+    storePathState(inactive, path);
+    bankStartFrames_[inactive].store(startFrame, std::memory_order_release);
+    const uint64_t generation = generationCounter_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    bankGenerations_[inactive].store(generation, std::memory_order_release);
+    pendingStartOutputFrame_.store(outputFrameCounter_.load(std::memory_order_acquire), std::memory_order_release);
+    pendingSafeOutputFrames_.store(firstDivergenceFrames(current, path, startFrame), std::memory_order_release);
+    pendingBank_.store(inactive, std::memory_order_release);
+    pendingGeneration_.store(generation, std::memory_order_release);
+}
+
+bool NativeAudioEngine::waitForActivePreload(uint64_t generation, int timeoutMs) {
+    if (tracks_.empty()) return true;
+    const int active = activeBank_.load(std::memory_order_acquire);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        bool ready = true;
+        for (const auto &track : tracks_) {
+            if (track->readyGeneration[active].load(std::memory_order_acquire) != generation) {
+                ready = false;
+                break;
+            }
+        }
+        if (ready) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return false;
+}
+
+bool NativeAudioEngine::tryActivatePendingPath(int32_t numFrames) noexcept {
+    const uint64_t generation = pendingGeneration_.load(std::memory_order_acquire);
+    const int pending = pendingBank_.load(std::memory_order_acquire);
+    if (generation == 0 || generation == kPathClaimedGeneration || pending < 0 || pending > 1 ||
+        pending == activeBank_.load(std::memory_order_relaxed)) return false;
+    if (bankGenerations_[pending].load(std::memory_order_acquire) != generation) return false;
+
+    const uint64_t now = outputFrameCounter_.load(std::memory_order_relaxed);
+    const uint64_t started = pendingStartOutputFrame_.load(std::memory_order_relaxed);
+    const uint64_t elapsed = now >= started ? now - started : 0;
+    const int64_t safeFrames = pendingSafeOutputFrames_.load(std::memory_order_relaxed);
+
+    bool ready = true;
+    const size_t needed = static_cast<size_t>(elapsed) + static_cast<size_t>(std::max(0, numFrames)) + 32;
+    for (const auto &track : tracks_) {
+        if (track->readyGeneration[pending].load(std::memory_order_acquire) != generation ||
+            track->rings[pending]->availableFrames() < needed) {
+            ready = false;
+            break;
         }
     }
 
-    if (!loopDisabledLocally && loopEnabled_.load(std::memory_order_relaxed)) {
-        const int64_t end = loopEndFrame_.load(std::memory_order_relaxed);
-        if (end > 0 && next >= end) return loopStartFrame_.load(std::memory_order_relaxed);
+    if (!ready) {
+        const int sr = std::max(1, outputSampleRate_.load(std::memory_order_relaxed));
+        const bool safeWindowExpired = safeFrames >= 0 && elapsed + static_cast<uint64_t>(std::max(0, numFrames)) >= static_cast<uint64_t>(safeFrames);
+        const bool preparationTooOld = elapsed > static_cast<uint64_t>(sr / 2);
+        if (safeWindowExpired || preparationTooOld) {
+            uint64_t expected = generation;
+            if (pendingGeneration_.compare_exchange_strong(
+                    expected, 0, std::memory_order_acq_rel, std::memory_order_acquire)) {
+                pendingBank_.store(-1, std::memory_order_release);
+                pathSwapMisses_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        return false;
     }
-    return next;
+
+    // Claim this exact generation before touching its read cursors. A rapid control-side request
+    // can invalidate a generation only before this CAS or after the callback finishes the handoff.
+    uint64_t expected = generation;
+    if (!pendingGeneration_.compare_exchange_strong(
+            expected, kPathClaimedGeneration, std::memory_order_acq_rel, std::memory_order_acquire)) {
+        return false;
+    }
+
+    for (const auto &track : tracks_) {
+        if (track->rings[pending]->discardFrames(static_cast<size_t>(elapsed)) != static_cast<size_t>(elapsed)) {
+            pendingBank_.store(-1, std::memory_order_release);
+            pendingGeneration_.store(0, std::memory_order_release);
+            pathSwapMisses_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
+
+    activeBank_.store(pending, std::memory_order_release);
+    callbackGeneration_ = generation;
+    callbackJumpConsumed_ = false;
+    callbackLoopDisabledLocally_ = false;
+    pendingBank_.store(-1, std::memory_order_release);
+    pendingGeneration_.store(0, std::memory_order_release);
+    pathSwaps_.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 bool NativeAudioEngine::play() {
@@ -218,41 +452,29 @@ void NativeAudioEngine::pause() {
 void NativeAudioEngine::stop() {
     const bool wasPlaying = playing_.exchange(false, std::memory_order_acq_rel);
     trackGateUntilFrame_.store(-1, std::memory_order_release);
-    clearScheduledJump();
-    loopEnabled_.store(false, std::memory_order_release);
-    requestPathReset(0);
+    PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
+    path.loopEnabled = false;
+    path.jumpAtFrame = -1;
+    path.jumpTargetFrame = -1;
+    path.disableLoopAfterJump = false;
+    const uint64_t generation = requestHardPathReset(0, path);
     playheadFrame_.store(0, std::memory_order_release);
-    if (wasPlaying) waitForPreload(pathGeneration_.load(std::memory_order_acquire), 250);
+    outputFrameCounter_.store(0, std::memory_order_release);
+    if (wasPlaying) waitForActivePreload(generation, 250);
 }
 
 void NativeAudioEngine::seekToMs(int64_t ms) {
     const int64_t target = std::clamp<int64_t>(msToFrames(ms), 0, durationFrames_.load(std::memory_order_acquire));
     const bool resume = playing_.exchange(false, std::memory_order_acq_rel);
     trackGateUntilFrame_.store(-1, std::memory_order_release);
-    clearScheduledJump();
-    requestPathReset(target);
+    PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
+    path.jumpAtFrame = -1;
+    path.jumpTargetFrame = -1;
+    path.disableLoopAfterJump = false;
+    const uint64_t generation = requestHardPathReset(target, path);
     playheadFrame_.store(target, std::memory_order_release);
-    waitForPreload(pathGeneration_.load(std::memory_order_acquire), 350);
+    waitForActivePreload(generation, 350);
     playing_.store(resume, std::memory_order_release);
-}
-
-void NativeAudioEngine::requestPathReset(int64_t frame) {
-    resetFrame_.store(frame, std::memory_order_release);
-    pathGeneration_.fetch_add(1, std::memory_order_acq_rel);
-}
-
-bool NativeAudioEngine::waitForPreload(uint64_t generation, int timeoutMs) {
-    if (tracks_.empty()) return true;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-    while (std::chrono::steady_clock::now() < deadline) {
-        bool ready = true;
-        for (const auto &track : tracks_) {
-            if (track->readyGeneration.load(std::memory_order_acquire) != generation) { ready = false; break; }
-        }
-        if (ready) return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    return false;
 }
 
 void NativeAudioEngine::setTrackVolume(int index, float volume) {
@@ -287,31 +509,38 @@ void NativeAudioEngine::setClickRoute(int route) {
 
 void NativeAudioEngine::setLoop(bool enabled, int64_t startMs, int64_t endMs) {
     trackGateUntilFrame_.store(-1, std::memory_order_release);
+    PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
+    path.jumpAtFrame = -1;
+    path.jumpTargetFrame = -1;
+    path.disableLoopAfterJump = false;
+
     const int64_t start = msToFrames(startMs);
     const int64_t end = msToFrames(endMs);
     if (!enabled || end <= start + 1) {
-        loopEnabled_.store(false, std::memory_order_release);
+        path.loopEnabled = false;
     } else {
-        loopStartFrame_.store(std::max<int64_t>(0, start), std::memory_order_release);
-        loopEndFrame_.store(std::min<int64_t>(end, durationFrames_.load()), std::memory_order_release);
-        loopEnabled_.store(true, std::memory_order_release);
+        path.loopStartFrame = std::max<int64_t>(0, start);
+        path.loopEndFrame = std::min<int64_t>(end, durationFrames_.load(std::memory_order_acquire));
+        path.loopEnabled = path.loopEndFrame > path.loopStartFrame + 1;
     }
-    clearScheduledJump();
-    requestPathReset(playheadFrame_.load(std::memory_order_acquire));
+    stagePathChange(path);
 }
 
 void NativeAudioEngine::scheduleJump(int64_t atMs, int64_t targetMs, bool disableLoopAfterJump) {
     trackGateUntilFrame_.store(-1, std::memory_order_release);
-    jumpAtFrame_.store(msToFrames(atMs), std::memory_order_release);
-    jumpTargetFrame_.store(msToFrames(targetMs), std::memory_order_release);
-    disableLoopAfterJump_.store(disableLoopAfterJump, std::memory_order_release);
-    requestPathReset(playheadFrame_.load(std::memory_order_acquire));
+    PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
+    path.jumpAtFrame = msToFrames(atMs);
+    path.jumpTargetFrame = msToFrames(targetMs);
+    path.disableLoopAfterJump = disableLoopAfterJump;
+    stagePathChange(path);
 }
 
 void NativeAudioEngine::clearScheduledJump() {
-    jumpAtFrame_.store(-1, std::memory_order_release);
-    jumpTargetFrame_.store(-1, std::memory_order_release);
-    disableLoopAfterJump_.store(false, std::memory_order_release);
+    PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
+    path.jumpAtFrame = -1;
+    path.jumpTargetFrame = -1;
+    path.disableLoopAfterJump = false;
+    stagePathChange(path);
 }
 
 bool NativeAudioEngine::prepareCountIn(int64_t targetMs, int bars) {
@@ -331,12 +560,15 @@ bool NativeAudioEngine::prepareCountIn(int64_t targetMs, int bars) {
 
     const bool wasPlaying = playing_.exchange(false, std::memory_order_acq_rel);
     (void)wasPlaying;
-    loopEnabled_.store(false, std::memory_order_release);
-    clearScheduledJump();
+    PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
+    path.loopEnabled = false;
+    path.jumpAtFrame = -1;
+    path.jumpTargetFrame = -1;
+    path.disableLoopAfterJump = false;
     trackGateUntilFrame_.store(target, std::memory_order_release);
-    requestPathReset(start);
+    const uint64_t generation = requestHardPathReset(start, path);
     playheadFrame_.store(start, std::memory_order_release);
-    waitForPreload(pathGeneration_.load(std::memory_order_acquire), 350);
+    waitForActivePreload(generation, 350);
     return true;
 }
 
@@ -350,17 +582,20 @@ int64_t NativeAudioEngine::countInRemainingMs() const {
 bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
     std::lock_guard<std::mutex> lock(controlMutex_);
     const bool resume = playing_.exchange(false, std::memory_order_acq_rel);
+    cancelPendingPathFromControl();
 
+    const int active = activeBank_.load(std::memory_order_acquire);
+    const PathState oldPath = loadPathState(active);
     const int oldSr = std::max(1, outputSampleRate_.load(std::memory_order_acquire));
     const auto oldToMs = [oldSr](int64_t frame) -> int64_t {
         return frame < 0 ? -1 : (frame * 1000) / oldSr;
     };
     const int64_t rawPositionFrame = playheadFrame_.load(std::memory_order_acquire);
     const int64_t positionMsBefore = (rawPositionFrame * 1000) / oldSr;
-    const int64_t loopStartMsBefore = oldToMs(loopStartFrame_.load(std::memory_order_acquire));
-    const int64_t loopEndMsBefore = oldToMs(loopEndFrame_.load(std::memory_order_acquire));
-    const int64_t jumpAtMsBefore = oldToMs(jumpAtFrame_.load(std::memory_order_acquire));
-    const int64_t jumpTargetMsBefore = oldToMs(jumpTargetFrame_.load(std::memory_order_acquire));
+    const int64_t loopStartMsBefore = oldToMs(oldPath.loopStartFrame);
+    const int64_t loopEndMsBefore = oldToMs(oldPath.loopEndFrame);
+    const int64_t jumpAtMsBefore = oldToMs(oldPath.jumpAtFrame);
+    const int64_t jumpTargetMsBefore = oldToMs(oldPath.jumpTargetFrame);
     const int64_t gridOffsetMsBefore = oldToMs(gridOffsetFrame_.load(std::memory_order_acquire));
     const int64_t gateUntilMsBefore = oldToMs(trackGateUntilFrame_.load(std::memory_order_acquire));
 
@@ -388,13 +623,15 @@ bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
         ? std::min<int64_t>(convertedPosition, durationFrames_.load(std::memory_order_acquire))
         : std::clamp<int64_t>(convertedPosition, 0, durationFrames_.load(std::memory_order_acquire));
     playheadFrame_.store(newPosition, std::memory_order_release);
-    if (loopEnabled_.load(std::memory_order_acquire)) {
-        loopStartFrame_.store(msToNewFrames(loopStartMsBefore), std::memory_order_release);
-        loopEndFrame_.store(msToNewFrames(loopEndMsBefore), std::memory_order_release);
+
+    PathState newPath = oldPath;
+    if (newPath.loopEnabled) {
+        newPath.loopStartFrame = msToNewFrames(loopStartMsBefore);
+        newPath.loopEndFrame = msToNewFrames(loopEndMsBefore);
     }
     if (jumpAtMsBefore >= 0 && jumpTargetMsBefore >= 0) {
-        jumpAtFrame_.store(msToNewFrames(jumpAtMsBefore), std::memory_order_release);
-        jumpTargetFrame_.store(msToNewFrames(jumpTargetMsBefore), std::memory_order_release);
+        newPath.jumpAtFrame = msToNewFrames(jumpAtMsBefore);
+        newPath.jumpTargetFrame = msToNewFrames(jumpTargetMsBefore);
     }
     if (countInWasActive && gateUntilMsBefore >= 0) {
         trackGateUntilFrame_.store(msToNewFrames(gateUntilMsBefore), std::memory_order_release);
@@ -402,8 +639,8 @@ bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
         trackGateUntilFrame_.store(-1, std::memory_order_release);
     }
 
-    requestPathReset(newPosition);
-    waitForPreload(pathGeneration_.load(std::memory_order_acquire), 350);
+    const uint64_t generation = requestHardPathReset(newPosition, newPath);
+    waitForActivePreload(generation, 350);
     if (resume) {
         const auto startResult = stream_->requestStart();
         if (startResult != oboe::Result::OK) {
@@ -462,18 +699,22 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
 
     if (!playing_.load(std::memory_order_acquire) || tracks_.empty()) return oboe::DataCallbackResult::Continue;
 
-    const uint64_t generation = pathGeneration_.load(std::memory_order_acquire);
+    tryActivatePendingPath(numFrames);
+    const int active = activeBank_.load(std::memory_order_acquire);
+    const uint64_t generation = bankGenerations_[active].load(std::memory_order_acquire);
     if (generation != callbackGeneration_) {
         callbackGeneration_ = generation;
         callbackJumpConsumed_ = false;
         callbackLoopDisabledLocally_ = false;
     }
+    const PathState callbackPath = loadPathState(active);
 
     bool anySolo = false;
     for (const auto &track : tracks_) anySolo = anySolo || track->solo.load(std::memory_order_relaxed);
 
     int64_t frame = playheadFrame_.load(std::memory_order_relaxed);
     const int64_t duration = durationFrames_.load(std::memory_order_relaxed);
+    int32_t renderedFrames = 0;
     for (int32_t i = 0; i < numFrames; ++i) {
         float mixL = 0.0f, mixR = 0.0f;
         bool trackUnderrun = false;
@@ -485,7 +726,7 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
 
         for (const auto &track : tracks_) {
             float l = 0.0f, r = 0.0f;
-            if (!track->ring.readStereo(l, r)) {
+            if (!track->rings[active]->readStereo(l, r)) {
                 trackUnderrun = true;
                 continue;
             }
@@ -521,8 +762,9 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
         const float master = masterVolume_.load(std::memory_order_relaxed);
         out[i * 2] = clampUnit(mixL * master);
         out[i * 2 + 1] = clampUnit(mixR * master);
+        renderedFrames++;
 
-        frame = nextTimelineFrame(frame, callbackJumpConsumed_, callbackLoopDisabledLocally_);
+        frame = nextTimelineFrame(frame, callbackPath, callbackJumpConsumed_, callbackLoopDisabledLocally_);
         if (frame >= duration) {
             frame = duration;
             playing_.store(false, std::memory_order_release);
@@ -530,6 +772,7 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
         }
     }
     playheadFrame_.store(frame, std::memory_order_release);
+    if (renderedFrames > 0) outputFrameCounter_.fetch_add(static_cast<uint64_t>(renderedFrames), std::memory_order_relaxed);
 
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
     const double budget = static_cast<double>(numFrames) / std::max(1, stream->getSampleRate());

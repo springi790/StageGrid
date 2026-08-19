@@ -1,0 +1,5 @@
+<resources>
+    <string name="path_swaps_value">Prepared path swaps: %1$d</string>
+    <string name="path_swap_misses_value">Path changes cancelled by timing: %1$d</string>
+    <string name="path_pending_value">Preparing path change: %1$s</string>
+</resources>
