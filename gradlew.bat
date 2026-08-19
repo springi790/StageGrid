@@ -1,31 +1,31 @@
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 
 set "APP_HOME=%~dp0"
 set "WRAPPER_JAR=%APP_HOME%gradle\wrapper\gradle-wrapper.jar"
 
-rem Resolve a usable Java installation. A malformed JAVA_HOME from the host
-rem environment should not prevent StageGrid from building on Windows.
+rem Resolve a usable Java installation. Prefer Android Studio's bundled JDK so
+rem a malformed JAVA_HOME inherited from Windows cannot break batch parsing.
 set "JAVA_EXE="
 
-if defined JAVA_HOME (
-  if exist "%JAVA_HOME%\bin\java.exe" (
-    set "JAVA_EXE=%JAVA_HOME%\bin\java.exe"
-  )
-)
-
-rem Android Studio ships with a compatible JetBrains Runtime/JDK.
-if not defined JAVA_EXE (
-  if exist "%ProgramFiles%\Android\Android Studio\jbr\bin\java.exe" (
-    set "JAVA_HOME=%ProgramFiles%\Android\Android Studio\jbr"
-    set "JAVA_EXE=%ProgramFiles%\Android\Android Studio\jbr\bin\java.exe"
-  )
+if exist "%ProgramFiles%\Android\Android Studio\jbr\bin\java.exe" (
+  set "JAVA_HOME=%ProgramFiles%\Android\Android Studio\jbr"
+  set "JAVA_EXE=%ProgramFiles%\Android\Android Studio\jbr\bin\java.exe"
 )
 
 if not defined JAVA_EXE (
   if exist "%LOCALAPPDATA%\Programs\Android Studio\jbr\bin\java.exe" (
     set "JAVA_HOME=%LOCALAPPDATA%\Programs\Android Studio\jbr"
     set "JAVA_EXE=%LOCALAPPDATA%\Programs\Android Studio\jbr\bin\java.exe"
+  )
+)
+
+rem Only inspect an existing JAVA_HOME after the safe defaults above. Delayed
+rem expansion prevents characters such as > or & inside a broken value from
+rem being interpreted as batch syntax.
+if not defined JAVA_EXE if defined JAVA_HOME (
+  if exist "!JAVA_HOME!\bin\java.exe" (
+    set "JAVA_EXE=!JAVA_HOME!\bin\java.exe"
   )
 )
 
@@ -48,11 +48,11 @@ if not defined JAVA_EXE (
   exit /b 1
 )
 
-if defined JAVA_HOME set "PATH=%JAVA_HOME%\bin;%PATH%"
+if defined JAVA_HOME set "PATH=!JAVA_HOME!\bin;!PATH!"
 
 if exist "%WRAPPER_JAR%" (
-  "%JAVA_EXE%" -classpath "%WRAPPER_JAR%" org.gradle.wrapper.GradleWrapperMain %*
-  exit /b %ERRORLEVEL%
+  "!JAVA_EXE!" -classpath "%WRAPPER_JAR%" org.gradle.wrapper.GradleWrapperMain %*
+  exit /b !ERRORLEVEL!
 )
 
 set "GRADLE_VERSION=9.5.1"
@@ -78,7 +78,7 @@ if not exist "%GRADLE_HOME%\bin\gradle.bat" (
     )
   )
   for /f "tokens=*" %%H in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-FileHash -Algorithm SHA256 '%ZIP%').Hash.ToLower()"') do set "ACTUAL_SHA256=%%H"
-  if /I not "%ACTUAL_SHA256%"=="%EXPECTED_SHA256%" (
+  if /I not "!ACTUAL_SHA256!"=="%EXPECTED_SHA256%" (
     echo StageGrid: Gradle checksum mismatch; refusing to execute unverified download.
     del /q "%ZIP%" 2>nul
     exit /b 1
@@ -88,4 +88,4 @@ if not exist "%GRADLE_HOME%\bin\gradle.bat" (
 )
 
 call "%GRADLE_HOME%\bin\gradle.bat" %*
-exit /b %ERRORLEVEL%
+exit /b !ERRORLEVEL!
