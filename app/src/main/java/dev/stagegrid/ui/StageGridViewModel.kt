@@ -9,7 +9,9 @@ import dev.stagegrid.audio.AudioDeviceManager
 import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.audio.ClickSubdivision
 import dev.stagegrid.audio.PlayerState
+import dev.stagegrid.guide.GuideCueAnalyzer
 import dev.stagegrid.guide.GuidePackManager
+import dev.stagegrid.guide.NativeGuideEventStore
 import dev.stagegrid.importer.SongImporter
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.SetlistBundle
@@ -17,6 +19,7 @@ import dev.stagegrid.model.SetlistEntity
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.settings.AppSettingsRepository
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -109,7 +112,15 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun dismissImportState() { _importState.value = ImportUiState() }
 
-    fun loadSong(songId: String) = app.audio.loadSong(songId)
+    fun loadSong(songId: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                app.repository.getSong(songId)?.let { recoverNativeGuideSections(it) }
+            }
+            app.audio.loadSong(songId)
+        }
+    }
+
     fun playPause() = if (player.value.isPlaying) app.audio.pause() else app.audio.play()
     fun stop() = app.audio.stop()
     fun stopAll() = app.audio.stopAll()
@@ -173,12 +184,12 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         loadAfterSave: Boolean = false,
     ) {
         viewModelScope.launch {
-            val updated = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 val current = app.repository.getSong(songId) ?: return@withContext null
                 val bpm = bpmText.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it in 20.0..400.0 }
                 val signature = timeSignature.trim().takeIf { it.matches(Regex("[1-9]\\d?/([1-9]\\d?)")) } ?: "4/4"
                 val gridOffsetMs = gridOffsetMsText.trim().toLongOrNull()?.coerceIn(0L, 60_000L) ?: current.gridOffsetMs
-                current.copy(
+                val updated = current.copy(
                     title = title.trim().ifBlank { current.title },
                     artist = artist.trim(),
                     bpm = bpm,
@@ -186,10 +197,49 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
                     timeSignature = signature,
                     gridOffsetMs = gridOffsetMs,
                     notes = notes.trim(),
-                ).also { app.repository.updateSong(it) }
+                )
+                app.repository.updateSong(updated)
+                val generatedSections = recoverNativeGuideSections(updated)
+                MetadataSaveResult(updated, generatedSections)
             }
-            if (updated != null && loadAfterSave) app.audio.loadSong(updated.id)
+            if (result != null) {
+                val shouldReload = loadAfterSave || (result.generatedSections && player.value.song?.id == result.song.id)
+                if (shouldReload) app.audio.loadSong(result.song.id)
+            }
         }
+    }
+
+    /**
+     * Reuses cues already saved by alpha04 once a valid BPM/grid becomes available. The audio is
+     * never re-analyzed here. Existing user-authored section maps are protected by the repository's
+     * placeholder-only replacement guard.
+     */
+    private suspend fun recoverNativeGuideSections(song: SongEntity): Boolean {
+        if (song.bpm == null || song.durationMs <= 0L) return false
+        val eventFile = File(app.filesDir, "library/${song.id}/native-guide-events.json")
+        val analysis = NativeGuideEventStore.readAnalysis(eventFile) ?: return false
+        val proposals = GuideCueAnalyzer.inferSections(
+            result = analysis,
+            bpm = song.bpm,
+            timeSignature = song.timeSignature,
+            gridOffsetMs = song.gridOffsetMs,
+            durationMs = song.durationMs,
+        )
+        if (proposals.isEmpty()) return false
+        val sections = proposals.mapIndexed { index, proposal ->
+            val end = proposals.getOrNull(index + 1)?.startMs ?: song.durationMs
+            SectionEntity(
+                songId = song.id,
+                name = proposal.name,
+                startMs = proposal.startMs,
+                endMs = end.coerceAtLeast(proposal.startMs + 1L),
+                sortOrder = index,
+                colorArgb = AUTO_SECTION_COLORS[index % AUTO_SECTION_COLORS.size],
+            )
+        }
+        val replaced = app.repository.replacePlaceholderSections(song.id, song.durationMs, sections)
+        if (replaced) NativeGuideEventStore.writeSectionProposals(eventFile, proposals)
+        return replaced
     }
 
     fun createSetlist(name: String) {
@@ -224,4 +274,15 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setLiveMode(enabled: Boolean) = viewModelScope.launch { app.settings.setLiveMode(enabled) }
     fun setPerformanceLock(enabled: Boolean) = viewModelScope.launch { app.settings.setPerformanceLock(enabled) }
+
+    private data class MetadataSaveResult(
+        val song: SongEntity,
+        val generatedSections: Boolean,
+    )
+
+    companion object {
+        private val AUTO_SECTION_COLORS = longArrayOf(
+            0xFF5B8CFF, 0xFF2FBF9F, 0xFF9C6CFF, 0xFFF39C55, 0xFFE85D75, 0xFF4FB6E9,
+        )
+    }
 }
