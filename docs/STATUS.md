@@ -1,4 +1,4 @@
-# Implementation status — 0.2.0-alpha04.2
+# Implementation status — 0.2.0-alpha05
 
 ## Implemented in source
 
@@ -12,9 +12,9 @@
 - WAV/MP3 stem detection/classification; WAV metadata extraction and offline MP3-to-PCM normalization using Android MediaCodec.
 - Optional `song.json` metadata + section import.
 - Post-import/later-editable title, artist, BPM, key, time signature, grid offset and notes.
-- Import UI now exposes an overall percentage, current pipeline stage and current file/detail where useful.
+- Import UI exposes an overall percentage, current pipeline stage and current file/detail where useful.
 - MP3 decoder progress is derived from codec presentation timestamps; WAV/local-copy work reports byte progress.
-- Local audio copy/decode buffers have been enlarged to reduce small I/O operations.
+- Local audio copy/decode buffers are enlarged to reduce small I/O operations.
 
 ### Shared-clock audio
 
@@ -27,6 +27,20 @@
 - Foreground playback service, MediaSession, audio focus, LIVE mode and Performance Lock.
 - Diagnostics for sample rate, burst size, underruns, loaded tracks and callback load.
 
+### Double-buffered live path engine — alpha05
+
+- Each loaded track owns two preallocated SPSC decoder banks.
+- The currently active bank remains available to the Oboe callback while an inactive bank prepares a changed Loop/jump timeline.
+- Decoder threads prioritize keeping the active bank above a low-water mark while filling the inactive replacement bank in parallel.
+- Replacement banks use an immutable local copy of the published path state for that bank generation.
+- A monotonically increasing output-frame counter aligns the prepared bank with the frames that elapsed while it was being built.
+- The realtime callback activates every track's prepared bank together only after all tracks report the same ready generation and enough aligned data is available.
+- Bank activation uses atomic state plus ring-buffer consumer advancement; no filesystem access, WAV seeking, allocation, Room call, UI work or blocking mutex is added to the realtime callback.
+- A conservative first-divergence window prevents a prepared path from being activated after the old and new timelines could already have diverged.
+- Stale/late prepared changes are cancelled and counted instead of being applied after their safe handoff window.
+- Native diagnostics expose successful path swaps, missed safe windows and whether a path change is pending.
+- The two one-second-at-48-kHz banks use approximately the same ring-buffer memory budget as the previous single two-second bank.
+
 ### Native Click and Musical Grid
 
 - Imported Click is reference-only for grid analysis.
@@ -36,6 +50,8 @@
 - Native Click output route: `L`, `L+R` or `R`.
 - Deterministic milliseconds ↔ bar/beat conversion.
 - Beat/bar snapping and Player musical-position readout.
+- Quantized live section jumps can request the next bar boundary with a minimum decoder-preparation lead.
+- If a tap is too close to the immediate bar boundary, StageGrid queues the following bar rather than forcing an unsafe last-millisecond path replacement.
 - Click subdivision/route and section count-in preferences persisted with DataStore.
 
 ### Sections and live navigation
@@ -44,13 +60,14 @@
 - Visual/manual Section Editor with friendly playhead actions plus optional precise bar/beat editing.
 - Edit Sections remains visible directly in the Player while stopped with a valid grid.
 - Section loop / Exit Loop.
-- Live section changes queue to the next musical bar when a valid grid exists, with section-boundary fallback otherwise.
+- Live section changes queue to a musical bar when a valid grid exists, with section-boundary fallback otherwise.
+- Loop and quantized-jump path changes use the double-buffered native handoff while transport is active.
 - Native 1- or 2-bar count-in/pre-roll.
 - Virtual negative-time count-in for sections that start at song frame zero.
 - Imported stems are gated during count-in and enter together at the target frame.
 - Persisted Guide events can recover automatic sections after BPM/grid metadata becomes available, while preserving manually edited section maps.
 
-### Native Guide — alpha04.2
+### Native Guide
 
 - User-supplied Guide sample ZIP installation into app-private storage; third-party sample audio is not bundled with StageGrid.
 - Bounded Guide-pack extraction and WAV validation.
@@ -62,16 +79,14 @@
 - Recognized structured events persisted to `native-guide-events.json`.
 - App-generated PCM `StageGrid Native Guide.wav` using recognized events and installed cue samples.
 - Original imported Guide retained as a muted reference after successful native reconstruction.
-- Per-song Guide language can now be changed from Player after recognition without re-importing stems or re-running recognition.
+- Per-song Guide language can be changed from Player after recognition without re-importing stems or re-running recognition.
 - Per-song output language is persisted in `native-guide-events.json`.
 - Guide re-render is disabled during active playback/count-in and uses a temporary file before swapping the active generated Guide.
 - Native Guide render progress is exposed to Player.
-- Native Guide renderer fast-writes silent blocks instead of running floating-point sample conversion across long stretches of silence.
 - Installed Guide sample file index is cached in memory.
-- Guide cue fingerprints/templates are cached and pre-warmed when a pack is installed, avoiding repeated template reconstruction during subsequent imports in the same app process.
+- Guide cue fingerprints/templates are cached and pre-warmed when a pack is installed.
 - Automatic section proposals from recognized section cues when no explicit manifest section map exists and BPM/grid data is valid.
-- Automatic sections remain editable in the normal Section Editor.
-- JVM test coverage for Guide template matching and one-bar-ahead section inference.
+- Generated native Guide audio is a normal shared-clock track and participates in the same alpha05 decoder-bank handoff as other stems.
 
 ### Setlists / UX
 
@@ -82,9 +97,9 @@
 
 ## Implemented, but not yet claimed as stage-validated
 
-- Live loop/path/queued-jump changes rebuild decoder look-ahead. Logical behavior and CI builds pass, but a broad physical-device/high-track-count stress matrix has not yet proven every transition glitch-free.
+- Double-buffered Loop/jump handoff is implemented and compiled in CI, but a broad physical-device/high-track-count stress matrix is still required before claiming glitch-free stage qualification.
 - Native Guide recognition is designed for Guide stems assembled from cues matching the installed sample pack. It is not generic speech-to-text for arbitrary spoken recordings.
-- Native Guide events are persisted structurally, but the rendered Guide still follows the original timeline. Arrangement-aware Guide relocation after arbitrary live ReOrder is not complete.
+- Native Guide events are persisted structurally, but the rendered Guide still follows the original timeline. Arrangement-aware relocation/synthesis of the spoken pre-section cue after arbitrary live ReOrder is not complete.
 - Guide fingerprint caching is currently in-memory; after a full process restart the first Guide analysis may pay template preparation cost again.
 - Import percentages represent weighted pipeline progress. ZIP/folder staging cannot always know total expanded work before traversal, so early staging percentages are stage-weighted rather than exact byte completion.
 - Mixed-source-rate playback uses deterministic linear interpolation against the master timeline; this is not the final mastering-grade resampler.
@@ -92,7 +107,7 @@
 
 ## Deliberately not exposed as finished
 
-- Double-buffered arrangement/path engine for hardened live ReOrder.
+- Arrangement-aware native Guide event relocation after arbitrary live ReOrder.
 - In-place native Guide re-analysis for songs imported before installing/changing a Guide pack.
 - Persistent on-disk Guide fingerprint cache/index.
 - Waveform cache/editor.
@@ -115,4 +130,4 @@ These are architectural extension points, not fake buttons.
 
 ## Qualification status
 
-StageGrid `0.2.0-alpha04.2` is a development alpha, not a stage-ready 1.0 release. CI validates unit tests and debug assembly, but final qualification still requires representative physical Android devices, high track counts, USB reconnect/routing tests, live arrangement stress tests, import-performance profiling and crash/session-recovery validation.
+StageGrid `0.2.0-alpha05` is a development alpha, not a stage-ready 1.0 release. CI validates unit tests and debug assembly, but final qualification still requires representative physical Android devices, high track counts, USB reconnect/routing tests, live path stress tests, import-performance profiling and crash/session-recovery validation.
