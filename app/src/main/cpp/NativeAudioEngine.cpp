@@ -97,6 +97,7 @@ bool NativeAudioEngine::loadSong(const std::vector<std::string>& paths, const st
     loopEnabled_.store(false, std::memory_order_release);
     jumpAtFrame_.store(-1, std::memory_order_release);
     jumpTargetFrame_.store(-1, std::memory_order_release);
+    trackGateUntilFrame_.store(-1, std::memory_order_release);
     underruns_.store(0, std::memory_order_release);
     requestPathReset(0);
     startDecoderThreads();
@@ -114,6 +115,7 @@ void NativeAudioEngine::unloadSong() {
     closeStreamLocked();
     playheadFrame_.store(0, std::memory_order_release);
     durationFrames_.store(0, std::memory_order_release);
+    trackGateUntilFrame_.store(-1, std::memory_order_release);
 }
 
 void NativeAudioEngine::startDecoderThreads() {
@@ -215,6 +217,9 @@ void NativeAudioEngine::pause() {
 
 void NativeAudioEngine::stop() {
     const bool wasPlaying = playing_.exchange(false, std::memory_order_acq_rel);
+    trackGateUntilFrame_.store(-1, std::memory_order_release);
+    clearScheduledJump();
+    loopEnabled_.store(false, std::memory_order_release);
     requestPathReset(0);
     playheadFrame_.store(0, std::memory_order_release);
     if (wasPlaying) waitForPreload(pathGeneration_.load(std::memory_order_acquire), 250);
@@ -223,6 +228,8 @@ void NativeAudioEngine::stop() {
 void NativeAudioEngine::seekToMs(int64_t ms) {
     const int64_t target = std::clamp<int64_t>(msToFrames(ms), 0, durationFrames_.load(std::memory_order_acquire));
     const bool resume = playing_.exchange(false, std::memory_order_acq_rel);
+    trackGateUntilFrame_.store(-1, std::memory_order_release);
+    clearScheduledJump();
     requestPathReset(target);
     playheadFrame_.store(target, std::memory_order_release);
     waitForPreload(pathGeneration_.load(std::memory_order_acquire), 350);
@@ -230,7 +237,7 @@ void NativeAudioEngine::seekToMs(int64_t ms) {
 }
 
 void NativeAudioEngine::requestPathReset(int64_t frame) {
-    resetFrame_.store(std::max<int64_t>(0, frame), std::memory_order_release);
+    resetFrame_.store(frame, std::memory_order_release);
     pathGeneration_.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -279,6 +286,7 @@ void NativeAudioEngine::setClickRoute(int route) {
 }
 
 void NativeAudioEngine::setLoop(bool enabled, int64_t startMs, int64_t endMs) {
+    trackGateUntilFrame_.store(-1, std::memory_order_release);
     const int64_t start = msToFrames(startMs);
     const int64_t end = msToFrames(endMs);
     if (!enabled || end <= start + 1) {
@@ -293,6 +301,7 @@ void NativeAudioEngine::setLoop(bool enabled, int64_t startMs, int64_t endMs) {
 }
 
 void NativeAudioEngine::scheduleJump(int64_t atMs, int64_t targetMs, bool disableLoopAfterJump) {
+    trackGateUntilFrame_.store(-1, std::memory_order_release);
     jumpAtFrame_.store(msToFrames(atMs), std::memory_order_release);
     jumpTargetFrame_.store(msToFrames(targetMs), std::memory_order_release);
     disableLoopAfterJump_.store(disableLoopAfterJump, std::memory_order_release);
@@ -305,21 +314,55 @@ void NativeAudioEngine::clearScheduledJump() {
     disableLoopAfterJump_.store(false, std::memory_order_release);
 }
 
+bool NativeAudioEngine::prepareCountIn(int64_t targetMs, int bars) {
+    const double bpm = bpm_.load(std::memory_order_acquire);
+    if (bpm <= 0.0 || tracks_.empty()) {
+        setLastError("Count-in requires a loaded song with a valid BPM.");
+        return false;
+    }
+
+    const int safeBars = std::clamp(bars, 1, 2);
+    const int sr = std::max(1, outputSampleRate_.load(std::memory_order_acquire));
+    const int beatsPerBar = std::max(1, beatsPerBar_.load(std::memory_order_acquire));
+    const double framesPerBeat = static_cast<double>(sr) * 60.0 / bpm;
+    const int64_t countInFrames = std::max<int64_t>(1, static_cast<int64_t>(std::llround(framesPerBeat * beatsPerBar * safeBars)));
+    const int64_t target = std::clamp<int64_t>(msToFrames(targetMs), 0, durationFrames_.load(std::memory_order_acquire));
+    const int64_t start = target - countInFrames;
+
+    const bool wasPlaying = playing_.exchange(false, std::memory_order_acq_rel);
+    (void)wasPlaying;
+    loopEnabled_.store(false, std::memory_order_release);
+    clearScheduledJump();
+    trackGateUntilFrame_.store(target, std::memory_order_release);
+    requestPathReset(start);
+    playheadFrame_.store(start, std::memory_order_release);
+    waitForPreload(pathGeneration_.load(std::memory_order_acquire), 350);
+    return true;
+}
+
+int64_t NativeAudioEngine::countInRemainingMs() const {
+    const int64_t gate = trackGateUntilFrame_.load(std::memory_order_acquire);
+    const int64_t current = playheadFrame_.load(std::memory_order_acquire);
+    if (gate < 0 || current >= gate) return 0;
+    return framesToMs(gate - current);
+}
+
 bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
     std::lock_guard<std::mutex> lock(controlMutex_);
     const bool resume = playing_.exchange(false, std::memory_order_acq_rel);
 
-    // Preserve musical/timeline positions if the new device negotiates a different sample rate.
     const int oldSr = std::max(1, outputSampleRate_.load(std::memory_order_acquire));
     const auto oldToMs = [oldSr](int64_t frame) -> int64_t {
         return frame < 0 ? -1 : (frame * 1000) / oldSr;
     };
-    const int64_t positionMsBefore = oldToMs(playheadFrame_.load(std::memory_order_acquire));
+    const int64_t rawPositionFrame = playheadFrame_.load(std::memory_order_acquire);
+    const int64_t positionMsBefore = (rawPositionFrame * 1000) / oldSr;
     const int64_t loopStartMsBefore = oldToMs(loopStartFrame_.load(std::memory_order_acquire));
     const int64_t loopEndMsBefore = oldToMs(loopEndFrame_.load(std::memory_order_acquire));
     const int64_t jumpAtMsBefore = oldToMs(jumpAtFrame_.load(std::memory_order_acquire));
     const int64_t jumpTargetMsBefore = oldToMs(jumpTargetFrame_.load(std::memory_order_acquire));
     const int64_t gridOffsetMsBefore = oldToMs(gridOffsetFrame_.load(std::memory_order_acquire));
+    const int64_t gateUntilMsBefore = oldToMs(trackGateUntilFrame_.load(std::memory_order_acquire));
 
     outputDeviceId_.store(deviceId, std::memory_order_release);
     if (!openStreamLocked()) {
@@ -331,13 +374,19 @@ bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
     const auto msToNewFrames = [sr](int64_t ms) -> int64_t {
         return ms < 0 ? -1 : (ms * static_cast<int64_t>(std::max(1, sr))) / 1000;
     };
+    const auto signedMsToNewFrames = [sr](int64_t ms) -> int64_t {
+        return (ms * static_cast<int64_t>(std::max(1, sr))) / 1000;
+    };
     double maxSeconds = 0.0;
     for (const auto &track : tracks_) maxSeconds = std::max(maxSeconds, track->reader->durationSeconds());
     durationFrames_.store(static_cast<int64_t>(std::ceil(maxSeconds * sr)), std::memory_order_release);
     gridOffsetFrame_.store(std::max<int64_t>(0, msToNewFrames(gridOffsetMsBefore)), std::memory_order_release);
 
-    const int64_t newPosition = std::clamp<int64_t>(
-        msToNewFrames(positionMsBefore), 0, durationFrames_.load(std::memory_order_acquire));
+    const bool countInWasActive = gateUntilMsBefore >= 0 && rawPositionFrame < trackGateUntilFrame_.load(std::memory_order_acquire);
+    const int64_t convertedPosition = signedMsToNewFrames(positionMsBefore);
+    const int64_t newPosition = countInWasActive
+        ? std::min<int64_t>(convertedPosition, durationFrames_.load(std::memory_order_acquire))
+        : std::clamp<int64_t>(convertedPosition, 0, durationFrames_.load(std::memory_order_acquire));
     playheadFrame_.store(newPosition, std::memory_order_release);
     if (loopEnabled_.load(std::memory_order_acquire)) {
         loopStartFrame_.store(msToNewFrames(loopStartMsBefore), std::memory_order_release);
@@ -346,6 +395,11 @@ bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
     if (jumpAtMsBefore >= 0 && jumpTargetMsBefore >= 0) {
         jumpAtFrame_.store(msToNewFrames(jumpAtMsBefore), std::memory_order_release);
         jumpTargetFrame_.store(msToNewFrames(jumpTargetMsBefore), std::memory_order_release);
+    }
+    if (countInWasActive && gateUntilMsBefore >= 0) {
+        trackGateUntilFrame_.store(msToNewFrames(gateUntilMsBefore), std::memory_order_release);
+    } else {
+        trackGateUntilFrame_.store(-1, std::memory_order_release);
     }
 
     requestPathReset(newPosition);
@@ -377,7 +431,6 @@ float NativeAudioEngine::generatedClickSample(int64_t timelineFrame) const noexc
     if (bpm <= 0.0) return 0.0f;
     const int sr = std::max(1, outputSampleRate_.load(std::memory_order_relaxed));
     const int64_t gridOffset = gridOffsetFrame_.load(std::memory_order_relaxed);
-    if (timelineFrame < gridOffset) return 0.0f;
 
     const int subdivision = std::max(1, clickSubdivision_.load(std::memory_order_relaxed));
     const double framesPerBeat = sr * 60.0 / bpm;
@@ -424,16 +477,21 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
     for (int32_t i = 0; i < numFrames; ++i) {
         float mixL = 0.0f, mixR = 0.0f;
         bool trackUnderrun = false;
+        const int64_t gateUntil = trackGateUntilFrame_.load(std::memory_order_relaxed);
+        const bool suppressImportedTracks = gateUntil >= 0 && frame < gateUntil;
+        if (gateUntil >= 0 && frame >= gateUntil) {
+            trackGateUntilFrame_.store(-1, std::memory_order_relaxed);
+        }
+
         for (const auto &track : tracks_) {
             float l = 0.0f, r = 0.0f;
             if (!track->ring.readStereo(l, r)) {
                 trackUnderrun = true;
                 continue;
             }
+            if (suppressImportedTracks) continue;
             if (track->mute.load(std::memory_order_relaxed)) continue;
             if (anySolo && !track->solo.load(std::memory_order_relaxed)) continue;
-            // Imported click is retained only as an alignment/reference asset. Live click is
-            // always generated from the master musical clock.
             if (track->type == CLICK) continue;
             if (track->type == GUIDE && !guideEnabled_.load(std::memory_order_relaxed)) continue;
 
