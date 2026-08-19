@@ -56,6 +56,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
             app.settings.settings.collectLatest { preferences ->
                 app.audio.setClickSubdivision(preferences.clickSubdivision)
                 app.audio.setClickRoute(preferences.clickRoute)
+                app.audio.setCountInBars(preferences.countInBars)
             }
         }
     }
@@ -86,6 +87,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     fun toggleLoop() = app.audio.toggleCurrentSectionLoop()
     fun exitLoop() = app.audio.exitLoop()
     fun selectSection(section: SectionEntity) = app.audio.queueOrJumpSection(section)
+    fun playCurrentSectionWithCountIn() = app.audio.playCurrentSectionWithCountIn()
     fun setMaster(value: Float) = app.audio.setMasterVolume(value)
     fun setClick(enabled: Boolean) = app.audio.setClickEnabled(enabled)
     fun setGuide(enabled: Boolean) = app.audio.setGuideEnabled(enabled)
@@ -97,6 +99,11 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         app.audio.setClickRoute(route)
         viewModelScope.launch { app.settings.setClickRoute(route) }
     }
+    fun setCountInBars(bars: Int) {
+        val normalized = bars.coerceIn(0, 2)
+        app.audio.setCountInBars(normalized)
+        viewModelScope.launch { app.settings.setCountInBars(normalized) }
+    }
     fun setTrackVolume(index: Int, value: Float) = app.audio.setTrackVolume(index, value)
     fun setTrackMute(index: Int, value: Boolean) = app.audio.setTrackMute(index, value)
     fun setTrackSolo(index: Int, value: Boolean) = app.audio.setTrackSolo(index, value)
@@ -105,11 +112,6 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     fun setOutputDevice(id: Int) = app.audio.setOutputDevice(id)
     fun diagnostics(): NativeAudioEngine.Diagnostics = app.audio.diagnostics()
 
-    /**
-     * Manual section edits are only exposed by the UI while transport is stopped.
-     * Re-loading the currently loaded song is intentional: it gives the native
-     * engine one atomic, clean view of the updated section map before playback.
-     */
     fun saveSection(section: SectionEntity) {
         if (player.value.isPlaying) return
         viewModelScope.launch {
