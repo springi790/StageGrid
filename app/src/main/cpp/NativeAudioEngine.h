@@ -53,7 +53,10 @@ public:
     int loadedTracks() const noexcept { return static_cast<int>(tracks_.size()); }
     int64_t pathSwaps() const noexcept { return pathSwaps_.load(std::memory_order_acquire); }
     int64_t pathSwapMisses() const noexcept { return pathSwapMisses_.load(std::memory_order_acquire); }
-    bool pathChangePending() const noexcept { return pendingGeneration_.load(std::memory_order_acquire) != 0; }
+    bool pathChangePending() const noexcept {
+        const auto generation = pendingGeneration_.load(std::memory_order_acquire);
+        return generation != 0 && generation != kPathClaimedGeneration;
+    }
     std::string lastError() const;
 
     oboe::DataCallbackResult onAudioReady(oboe::AudioStream *stream, void *audioData, int32_t numFrames) override;
@@ -112,6 +115,7 @@ private:
     void storePathState(int bank, const PathState &state) noexcept;
     int64_t nextTimelineFrame(int64_t current, const PathState &path, bool &jumpConsumed, bool &loopDisabledLocally) const noexcept;
     int64_t firstDivergenceFrames(const PathState &current, const PathState &pending, int64_t startFrame) const noexcept;
+    void cancelPendingPathFromControl() noexcept;
     uint64_t requestHardPathReset(int64_t frame, const PathState &path);
     void stagePathChange(const PathState &path);
     bool waitForActivePreload(uint64_t generation, int timeoutMs);
@@ -146,6 +150,7 @@ private:
 
     // Live path changes use the inactive bank. Control threads publish a complete path snapshot,
     // decoder threads preload it, and only the realtime callback switches all tracks together.
+    static constexpr uint64_t kPathClaimedGeneration = ~uint64_t{0};
     std::array<AtomicPathState, 2> pathStates_{};
     std::array<std::atomic<uint64_t>, 2> bankGenerations_{};
     std::array<std::atomic<int64_t>, 2> bankStartFrames_{};
