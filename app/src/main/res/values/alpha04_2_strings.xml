@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="import_progress_percent">%1$d%%</string>
+    <string name="import_stage_preparing">Preparando la importación…</string>
+    <string name="import_stage_copying">Copiando archivos al almacenamiento local…</string>
+    <string name="import_stage_processing_track">Preparando pistas WAV…</string>
+    <string name="import_stage_decoding_mp3">Convirtiendo MP3 a audio listo para reproducción…</string>
+    <string name="import_stage_analyzing_click">Alineando el click y la cuadrícula musical…</string>
+    <string name="import_stage_analyzing_guide">Reconociendo llamadas de la guía…</string>
+    <string name="import_stage_rendering_guide">Generando la guía nativa…</string>
+    <string name="import_stage_building_sections">Organizando las secciones de la canción…</string>
+    <string name="import_stage_saving_library">Guardando la canción en la biblioteca…</string>
+    <string name="import_stage_complete">Importación completada.</string>
+    <string name="native_guide_song_title">Guía nativa de esta canción</string>
+    <string name="native_guide_events_count">%1$d llamadas reconocidas</string>
+    <string name="native_guide_song_language">Idioma de la guía</string>
+    <string name="native_guide_language_help">Puedes cambiar el idioma sin volver a importar ni analizar los multitracks.</string>
+    <string name="native_guide_regenerating">Regenerando guía… %1$d%%</string>
+    <string name="native_guide_change_stop_first">Detén la reproducción para cambiar el idioma.</string>
+    <string name="native_guide_pack_missing_languages">Instala un paquete con otros idiomas para poder cambiarlos.</string>
+    <string name="guide_language_es">Español</string>
+    <string name="guide_language_en">Inglés</string>
+    <string name="guide_language_fr">Francés</string>
+    <string name="guide_language_pt">Portugués</string>
+</resources>
