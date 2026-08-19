@@ -42,6 +42,9 @@ class GuidePackManager(private val context: Context) {
 
     private val root = File(context.filesDir, "guide-packs/current")
 
+    @Volatile
+    private var cachedSamples: List<GuideSample>? = null
+
     fun status(): Status {
         val samples = listSamples()
         return Status(
@@ -52,20 +55,33 @@ class GuidePackManager(private val context: Context) {
         )
     }
 
+    /**
+     * Filesystem walking used to happen every time status/language resolution or an import requested
+     * samples. Keep one immutable in-memory index until the installed pack changes.
+     */
     fun listSamples(): List<GuideSample> {
-        if (!root.isDirectory) return emptyList()
-        return root.walkTopDown()
-            .filter { it.isFile && it.extension.equals("wav", true) }
-            .mapNotNull { file ->
-                val relative = file.relativeTo(root).invariantSeparatorsPath.split('/')
-                if (relative.size < 3) return@mapNotNull null
-                val language = relative[0]
-                val kind = runCatching { CueKind.valueOf(relative[1].uppercase(Locale.ROOT)) }.getOrNull()
-                    ?: return@mapNotNull null
-                GuideSample(language, file.nameWithoutExtension, kind, file)
+        cachedSamples?.let { return it }
+        return synchronized(this) {
+            cachedSamples?.let { return@synchronized it }
+            val indexed = if (!root.isDirectory) {
+                emptyList()
+            } else {
+                root.walkTopDown()
+                    .filter { it.isFile && it.extension.equals("wav", true) }
+                    .mapNotNull { file ->
+                        val relative = file.relativeTo(root).invariantSeparatorsPath.split('/')
+                        if (relative.size < 3) return@mapNotNull null
+                        val language = relative[0]
+                        val kind = runCatching { CueKind.valueOf(relative[1].uppercase(Locale.ROOT)) }.getOrNull()
+                            ?: return@mapNotNull null
+                        GuideSample(language, file.nameWithoutExtension, kind, file)
+                    }
+                    .sortedWith(compareBy<GuideSample> { it.language }.thenBy { it.kind.ordinal }.thenBy { it.key })
+                    .toList()
             }
-            .sortedWith(compareBy<GuideSample> { it.language }.thenBy { it.kind.ordinal }.thenBy { it.key })
-            .toList()
+            cachedSamples = indexed
+            indexed
+        }
     }
 
     fun findSample(language: String, key: String): GuideSample? =
@@ -119,7 +135,7 @@ class GuidePackManager(private val context: Context) {
                     val out = File(stage, relative)
                     out.parentFile?.mkdirs()
                     FileOutputStream(out).use { output ->
-                        val buffer = ByteArray(64 * 1024)
+                        val buffer = ByteArray(128 * 1024)
                         while (true) {
                             val read = zip.read(buffer)
                             if (read <= 0) break
@@ -154,6 +170,7 @@ class GuidePackManager(private val context: Context) {
                 stage.deleteRecursively()
             }
             backup.deleteRecursively()
+            cachedSamples = null
             return InstallResult(status(), skipped)
         } catch (t: Throwable) {
             stage.deleteRecursively()
