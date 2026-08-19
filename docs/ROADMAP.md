@@ -52,18 +52,39 @@ Delivered in source: local import/library, shared-clock Oboe stereo engine, WAV 
 - keep automatically generated sections editable in the existing Section Editor;
 - template matching and rendering run at import time, never in the Oboe real-time callback.
 
-The alpha04 event sidecar is intentionally a foundation for a later arrangement-aware Guide engine. In alpha04 the generated Guide follows the original song timeline; moving native Guide events along with arbitrary live ReOrder/path changes remains pending.
+### 0.2.0-alpha04.1 — delayed section recovery
+
+- reuse persisted native Guide cue events when BPM/time-signature metadata is supplied after import;
+- rebuild automatic section proposals without re-analyzing Guide audio;
+- recover already-imported songs when loaded;
+- replace only the untouched `Full Song` placeholder so manual section maps are protected.
+
+### 0.2.0-alpha04.2 — per-song Guide language + import visibility/performance
+
+- allow an already-processed song to switch its native Guide between installed ES/EN/FR/PT languages from Player;
+- regenerate only the native Guide from persisted cue events; do not re-import stems or re-run recognition;
+- persist each song's selected Guide output language in its sidecar;
+- stage the regenerated Guide in a temporary file and swap it only while transport/count-in is inactive;
+- show import percentage plus current pipeline stage and current file/detail;
+- expose MP3 decode progress from MediaCodec timestamps and WAV/local-copy progress from bytes copied;
+- cache the installed Guide sample index and Guide template fingerprints in memory;
+- pre-warm Guide templates when a pack is installed;
+- enlarge buffered local I/O and optimize native Guide rendering for long silent blocks.
+
+The native Guide event sidecar is intentionally a foundation for the later arrangement-aware Guide engine. The generated Guide still follows the original song timeline; moving native Guide events along with arbitrary live ReOrder/path changes remains pending.
 
 ### Remaining 0.2 work
 
 - path-change double buffering so loop/reorder changes cannot starve the callback;
 - arrangement-aware relocation of native Guide events after live section reorder/path changes;
 - re-analyze an already imported song against a newly installed Guide pack without requiring a fresh song import;
+- persistent on-disk Guide fingerprint cache/index if physical-device profiling shows first-analysis preparation remains significant;
 - setlist live NEXT/PREV song transport and next-song preload;
 - persisted/restorable performance session without auto-emitting audio after a crash;
 - first-run onboarding for import, Click/Guide, routing and sections;
 - additional accessibility/large-touch-target pass for live use;
-- physical-device stress validation of quantized jumps/count-in/native Guides under high track counts.
+- physical-device stress validation of quantized jumps/count-in/native Guides under high track counts;
+- physical-device import profiling to identify the next highest-cost stages after the alpha04.2 optimizations.
 
 ## 0.3 — expanded decoder/cache layer
 

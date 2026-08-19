@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -36,10 +37,12 @@ import dev.stagegrid.audio.PlayerState
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.music.MusicalGrid
+import dev.stagegrid.ui.StageGridViewModel
 
 @Composable
 fun PlayerScreen(
     state: PlayerState,
+    nativeGuide: StageGridViewModel.NativeGuideUiState,
     onPlayPause: () -> Unit,
     onStop: () -> Unit,
     onStopAll: () -> Unit,
@@ -53,6 +56,7 @@ fun PlayerScreen(
     onMaster: (Float) -> Unit,
     onClick: (Boolean) -> Unit,
     onGuide: (Boolean) -> Unit,
+    onNativeGuideLanguage: (String) -> Unit,
     onClickSubdivision: (ClickSubdivision) -> Unit,
     onClickRoute: (StereoRoute) -> Unit,
     modifier: Modifier = Modifier,
@@ -256,6 +260,52 @@ fun PlayerScreen(
             }
         }
 
+        if (nativeGuide.available && nativeGuide.songId == song.id) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.native_guide_song_title), fontWeight = FontWeight.Bold)
+                    Text(
+                        stringResource(R.string.native_guide_events_count, nativeGuide.eventCount),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(stringResource(R.string.native_guide_song_language), fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.native_guide_language_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                    if (nativeGuide.rendering) {
+                        Text(
+                            stringResource(R.string.native_guide_regenerating, nativeGuide.renderPercent),
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        LinearProgressIndicator(
+                            progress = { nativeGuide.renderPercent.coerceIn(0, 100) / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            nativeGuide.languages.forEach { language ->
+                                FilterChip(
+                                    selected = nativeGuide.currentLanguage == language,
+                                    onClick = { onNativeGuideLanguage(language) },
+                                    enabled = !state.isPlaying && !state.isCountingIn,
+                                    label = { Text(guideLanguageLabel(language)) },
+                                )
+                            }
+                        }
+                        if (state.isPlaying || state.isCountingIn) {
+                            Text(stringResource(R.string.native_guide_change_stop_first), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else if (nativeGuide.languages.size <= 1) {
+                            Text(stringResource(R.string.native_guide_pack_missing_languages), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    nativeGuide.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        }
+
         Text(stringResource(R.string.master_value, (state.masterVolume * 100).toInt()))
         Slider(value = state.masterVolume.coerceIn(0f, 1f), onValueChange = onMaster)
 
@@ -310,6 +360,15 @@ private fun routeLabel(route: StereoRoute): String = when (route) {
     StereoRoute.LEFT -> stringResource(R.string.route_left)
     StereoRoute.BOTH -> stringResource(R.string.route_both)
     StereoRoute.RIGHT -> stringResource(R.string.route_right)
+}
+
+@Composable
+private fun guideLanguageLabel(language: String): String = when (language) {
+    "es" -> stringResource(R.string.guide_language_es)
+    "en" -> stringResource(R.string.guide_language_en)
+    "fr" -> stringResource(R.string.guide_language_fr)
+    "pt" -> stringResource(R.string.guide_language_pt)
+    else -> language.uppercase()
 }
 
 private fun formatPlayerDuration(ms: Long): String {

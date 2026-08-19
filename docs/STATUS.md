@@ -1,4 +1,4 @@
-# Implementation status — 0.2.0-alpha04
+# Implementation status — 0.2.0-alpha04.2
 
 ## Implemented in source
 
@@ -12,6 +12,9 @@
 - WAV/MP3 stem detection/classification; WAV metadata extraction and offline MP3-to-PCM normalization using Android MediaCodec.
 - Optional `song.json` metadata + section import.
 - Post-import/later-editable title, artist, BPM, key, time signature, grid offset and notes.
+- Import UI now exposes an overall percentage, current pipeline stage and current file/detail where useful.
+- MP3 decoder progress is derived from codec presentation timestamps; WAV/local-copy work reports byte progress.
+- Local audio copy/decode buffers have been enlarged to reduce small I/O operations.
 
 ### Shared-clock audio
 
@@ -45,8 +48,9 @@
 - Native 1- or 2-bar count-in/pre-roll.
 - Virtual negative-time count-in for sections that start at song frame zero.
 - Imported stems are gated during count-in and enter together at the target frame.
+- Persisted Guide events can recover automatic sections after BPM/grid metadata becomes available, while preserving manually edited section maps.
 
-### Native Guide — alpha04
+### Native Guide — alpha04.2
 
 - User-supplied Guide sample ZIP installation into app-private storage; third-party sample audio is not bundled with StageGrid.
 - Bounded Guide-pack extraction and WAV validation.
@@ -54,10 +58,17 @@
 - Offline import-time Guide cue recognition using short-time audio fingerprints/templates rather than cloud speech recognition.
 - Recognition of section/count/dynamic cues represented by the installed pack.
 - Dominant Guide language detection.
-- Output language preference: Auto/ES/EN/FR/PT when installed.
+- Default output language preference for new imports: Auto/ES/EN/FR/PT when installed.
 - Recognized structured events persisted to `native-guide-events.json`.
 - App-generated PCM `StageGrid Native Guide.wav` using recognized events and installed cue samples.
 - Original imported Guide retained as a muted reference after successful native reconstruction.
+- Per-song Guide language can now be changed from Player after recognition without re-importing stems or re-running recognition.
+- Per-song output language is persisted in `native-guide-events.json`.
+- Guide re-render is disabled during active playback/count-in and uses a temporary file before swapping the active generated Guide.
+- Native Guide render progress is exposed to Player.
+- Native Guide renderer fast-writes silent blocks instead of running floating-point sample conversion across long stretches of silence.
+- Installed Guide sample file index is cached in memory.
+- Guide cue fingerprints/templates are cached and pre-warmed when a pack is installed, avoiding repeated template reconstruction during subsequent imports in the same app process.
 - Automatic section proposals from recognized section cues when no explicit manifest section map exists and BPM/grid data is valid.
 - Automatic sections remain editable in the normal Section Editor.
 - JVM test coverage for Guide template matching and one-bar-ahead section inference.
@@ -73,7 +84,9 @@
 
 - Live loop/path/queued-jump changes rebuild decoder look-ahead. Logical behavior and CI builds pass, but a broad physical-device/high-track-count stress matrix has not yet proven every transition glitch-free.
 - Native Guide recognition is designed for Guide stems assembled from cues matching the installed sample pack. It is not generic speech-to-text for arbitrary spoken recordings.
-- Native Guide events are persisted structurally, but the alpha04 rendered Guide still follows the original timeline. Arrangement-aware Guide relocation after arbitrary live ReOrder is not complete.
+- Native Guide events are persisted structurally, but the rendered Guide still follows the original timeline. Arrangement-aware Guide relocation after arbitrary live ReOrder is not complete.
+- Guide fingerprint caching is currently in-memory; after a full process restart the first Guide analysis may pay template preparation cost again.
+- Import percentages represent weighted pipeline progress. ZIP/folder staging cannot always know total expanded work before traversal, so early staging percentages are stage-weighted rather than exact byte completion.
 - Mixed-source-rate playback uses deterministic linear interpolation against the master timeline; this is not the final mastering-grade resampler.
 - USB output-device selection is real, but the current stream is stereo only.
 
@@ -81,6 +94,7 @@
 
 - Double-buffered arrangement/path engine for hardened live ReOrder.
 - In-place native Guide re-analysis for songs imported before installing/changing a Guide pack.
+- Persistent on-disk Guide fingerprint cache/index.
 - Waveform cache/editor.
 - Time stretching / tempo change.
 - Pitch shifting / transposition.
@@ -101,4 +115,4 @@ These are architectural extension points, not fake buttons.
 
 ## Qualification status
 
-StageGrid `0.2.0-alpha04` is a development alpha, not a stage-ready 1.0 release. CI validates unit tests and debug assembly, but final qualification still requires representative physical Android devices, high track counts, USB reconnect/routing tests, live arrangement stress tests and crash/session-recovery validation.
+StageGrid `0.2.0-alpha04.2` is a development alpha, not a stage-ready 1.0 release. CI validates unit tests and debug assembly, but final qualification still requires representative physical Android devices, high track counts, USB reconnect/routing tests, live arrangement stress tests, import-performance profiling and crash/session-recovery validation.

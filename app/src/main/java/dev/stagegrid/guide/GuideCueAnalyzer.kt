@@ -47,12 +47,23 @@ object GuideCueAnalyzer {
         val trimStartWindows: Int,
     )
 
+    private data class TemplateCache(
+        val signature: Long,
+        val templates: List<Template>,
+    )
+
     private data class Match(val template: Template, val score: Float, val activeStart: Int)
 
     private const val WINDOW_MS = 10
     private const val SEARCH_RADIUS_WINDOWS = 12 // +/-120 ms
     private const val MIN_SCORE = 0.82f
     private const val MIN_MARGIN = 0.055f
+
+    @Volatile
+    private var templateCache: TemplateCache? = null
+
+    /** Prepares the installed pack once so the first song import does not rebuild every sample fingerprint. */
+    fun prepare(samples: List<GuideSample>): Int = templatesFor(samples).size
 
     fun analyze(guideFile: File, samples: List<GuideSample>): Result {
         if (samples.isEmpty()) return Result(emptyList(), null, 0)
@@ -62,7 +73,7 @@ object GuideCueAnalyzer {
         val candidates = findCandidates(guideEnvelope)
         if (candidates.isEmpty()) return Result(emptyList(), null, 0)
 
-        val templates = samples.mapNotNull { sample -> buildTemplate(sample) }
+        val templates = templatesFor(samples)
         if (templates.isEmpty()) return Result(emptyList(), null, candidates.size)
 
         val accepted = mutableListOf<DetectedCue>()
@@ -143,6 +154,31 @@ object GuideCueAnalyzer {
             }
         }
         return unique
+    }
+
+    private fun templatesFor(samples: List<GuideSample>): List<Template> {
+        if (samples.isEmpty()) return emptyList()
+        val signature = sampleSignature(samples)
+        templateCache?.takeIf { it.signature == signature }?.let { return it.templates }
+        return synchronized(this) {
+            templateCache?.takeIf { it.signature == signature }?.let { return@synchronized it.templates }
+            val built = samples.mapNotNull(::buildTemplate)
+            templateCache = TemplateCache(signature, built)
+            built
+        }
+    }
+
+    private fun sampleSignature(samples: List<GuideSample>): Long {
+        var hash = 1125899906842597L
+        for (sample in samples) {
+            hash = 31L * hash + sample.language.hashCode()
+            hash = 31L * hash + sample.key.hashCode()
+            hash = 31L * hash + sample.kind.ordinal
+            hash = 31L * hash + sample.file.absolutePath.hashCode()
+            hash = 31L * hash + sample.file.length()
+            hash = 31L * hash + sample.file.lastModified()
+        }
+        return hash
     }
 
     private fun buildTemplate(sample: GuideSample): Template? {

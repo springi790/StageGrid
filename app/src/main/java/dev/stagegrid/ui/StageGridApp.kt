@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.NavigationBar
@@ -31,8 +31,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.stagegrid.R
+import dev.stagegrid.importer.ImportStage
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.ui.screens.CloudBrowserDialog
 import dev.stagegrid.ui.screens.LibraryScreen
@@ -59,6 +62,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val importState by viewModel.importState.collectAsStateWithLifecycle()
     val guidePackState by viewModel.guidePackState.collectAsStateWithLifecycle()
+    val nativeGuideState by viewModel.nativeGuideState.collectAsStateWithLifecycle()
     val selectedSetlist by viewModel.selectedSetlist.collectAsStateWithLifecycle()
 
     var screen by rememberSaveable { mutableStateOf(MainScreen.LIBRARY) }
@@ -128,6 +132,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             )
             MainScreen.PLAYER -> PlayerScreen(
                 state = player,
+                nativeGuide = nativeGuideState,
                 onPlayPause = viewModel::playPause,
                 onStop = viewModel::stop,
                 onStopAll = viewModel::stopAll,
@@ -141,6 +146,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onMaster = viewModel::setMaster,
                 onClick = viewModel::setClick,
                 onGuide = viewModel::setGuide,
+                onNativeGuideLanguage = viewModel::setSongNativeGuideLanguage,
                 onClickSubdivision = viewModel::setClickSubdivision,
                 onClickRoute = viewModel::setClickRoute,
                 modifier = contentModifier,
@@ -199,7 +205,23 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             onDismissRequest = {},
             confirmButton = {},
             title = { Text(stringResource(R.string.importing)) },
-            text = { CircularProgressIndicator() },
+            text = {
+                Column {
+                    Text(
+                        stringResource(R.string.import_progress_percent, importState.progress.percent),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    LinearProgressIndicator(
+                        progress = { importState.progress.fraction },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    )
+                    Text(importStageLabel(importState.progress.stage), fontWeight = FontWeight.SemiBold)
+                    importState.progress.detail?.let {
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
         )
     }
     importState.result?.let { result ->
@@ -262,6 +284,20 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             confirmButton = { TextButton(onClick = viewModel::dismissImportState) { Text(stringResource(R.string.close)) } },
         )
     }
+}
+
+@Composable
+private fun importStageLabel(stage: ImportStage): String = when (stage) {
+    ImportStage.PREPARING -> stringResource(R.string.import_stage_preparing)
+    ImportStage.COPYING -> stringResource(R.string.import_stage_copying)
+    ImportStage.PROCESSING_TRACK -> stringResource(R.string.import_stage_processing_track)
+    ImportStage.DECODING_MP3 -> stringResource(R.string.import_stage_decoding_mp3)
+    ImportStage.ANALYZING_CLICK -> stringResource(R.string.import_stage_analyzing_click)
+    ImportStage.ANALYZING_GUIDE -> stringResource(R.string.import_stage_analyzing_guide)
+    ImportStage.RENDERING_GUIDE -> stringResource(R.string.import_stage_rendering_guide)
+    ImportStage.BUILDING_SECTIONS -> stringResource(R.string.import_stage_building_sections)
+    ImportStage.SAVING_LIBRARY -> stringResource(R.string.import_stage_saving_library)
+    ImportStage.COMPLETE -> stringResource(R.string.import_stage_complete)
 }
 
 @Composable

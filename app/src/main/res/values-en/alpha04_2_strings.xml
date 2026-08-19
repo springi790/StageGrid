@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="import_progress_percent">%1$d%%</string>
+    <string name="import_stage_preparing">Preparing import…</string>
+    <string name="import_stage_copying">Copying files to local storage…</string>
+    <string name="import_stage_processing_track">Preparing WAV tracks…</string>
+    <string name="import_stage_decoding_mp3">Converting MP3 to playback-ready audio…</string>
+    <string name="import_stage_analyzing_click">Aligning Click and the musical grid…</string>
+    <string name="import_stage_analyzing_guide">Recognizing Guide cues…</string>
+    <string name="import_stage_rendering_guide">Generating the native Guide…</string>
+    <string name="import_stage_building_sections">Organizing song sections…</string>
+    <string name="import_stage_saving_library">Saving the song to the library…</string>
+    <string name="import_stage_complete">Import complete.</string>
+    <string name="native_guide_song_title">Native Guide for this song</string>
+    <string name="native_guide_events_count">%1$d recognized cues</string>
+    <string name="native_guide_song_language">Guide language</string>
+    <string name="native_guide_language_help">Change language without re-importing or re-analyzing the multitracks.</string>
+    <string name="native_guide_regenerating">Regenerating Guide… %1$d%%</string>
+    <string name="native_guide_change_stop_first">Stop playback before changing the language.</string>
+    <string name="native_guide_pack_missing_languages">Install a pack with other languages to make them available.</string>
+    <string name="guide_language_es">Spanish</string>
+    <string name="guide_language_en">English</string>
+    <string name="guide_language_fr">French</string>
+    <string name="guide_language_pt">Portuguese</string>
+</resources>

@@ -2,7 +2,7 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Stems, native Click, Guide and the musical timeline share one real-time audio clock instead of independent Android media players.
 
-> **Current release: `0.2.0-alpha04.1` — Native Guide section-recovery hotfix.**
+> **Current release: `0.2.0-alpha04.2` — Per-song Guide language + visible import progress.**
 >
 > StageGrid is under active development. Only functionality with a real implementation is presented as available; planned modules live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -12,44 +12,66 @@ StageGrid is a native Android, local-first multitrack player for live performanc
 
 Common actions remain visible while technical controls such as grid offsets and manual routing stay behind optional advanced controls.
 
-## New in 0.2.0-alpha04.1
+## New in 0.2.0-alpha04.2
 
-This hotfix closes an important alpha04 workflow gap: Guide recognition could succeed before the song BPM was known, so `StageGrid Native Guide.wav` was generated but automatic sections could not be created yet.
+This alpha improves the workflow around native Guides and makes long imports much easier to understand.
 
-StageGrid now:
+### Change a processed Guide language per song
 
-- keeps recognized Guide cues in `native-guide-events.json` as before;
-- reuses those persisted events after BPM/time-signature metadata becomes available;
-- generates the automatic section map **without re-analyzing the Guide audio**;
-- retries section recovery when the song is loaded, so an already-imported alpha04 song can be fixed without re-importing its stems;
-- replaces only the untouched import placeholder `Full Song` section;
-- never overwrites a section map that has already been created or edited manually;
-- updates the stored native-Guide section proposals after successful recovery;
-- uses the current BPM, time signature and grid offset when rebuilding the section markers.
-
-App version: `0.2.0-alpha04.1` (`versionCode 8`).
-
-### Existing-song recovery
-
-For a song already imported with a generated native Guide but no automatic sections:
+A song that already has `StageGrid Native Guide.wav` can now change its Guide language directly from Player when the installed Guide pack contains that language.
 
 ```text
-StageGrid Native Guide exists
-        +
-native-guide-events.json exists
-        +
-BPM / Musical Grid is valid
-        +
-only "Full Song" exists
+Recognized Guide events
         ↓
-load song or save metadata
+Spanish / English / French / Portuguese
         ↓
-rebuild section proposals from saved cues
+regenerate only StageGrid Native Guide.wav
         ↓
-Intro / Verse / Chorus / Bridge ...
+reload song
 ```
 
-No multitrack re-import is required.
+Changing language does **not**:
+
+- re-import the stems;
+- re-run Guide recognition;
+- rebuild the Click;
+- replace the user's section map;
+- reconvert the song's MP3 stems.
+
+The selected output language is persisted in the song's `native-guide-events.json`. Guide regeneration is disabled while transport/count-in is active, and the replacement is rendered to a temporary file before the current Guide is swapped.
+
+Settings still defines the **default language for newly imported songs**. Player controls the language of the currently loaded song.
+
+### Import percentage and status
+
+The import dialog now reports an overall percentage plus the current operation, including stages such as:
+
+```text
+Copying files
+Preparing WAV tracks / decoding MP3
+Aligning Click
+Recognizing Guide cues
+Generating native Guide
+Building sections
+Saving library
+```
+
+MP3 conversion reports progress from codec timestamps instead of appearing frozen for the entire decode. WAV/local-copy work also contributes to the overall progress indicator.
+
+### First import-performance pass
+
+This release also removes several pieces of repeated work:
+
+- the installed Guide sample file index is cached in memory instead of walking the same directory repeatedly;
+- Guide sample fingerprints are cached and are pre-warmed when a Guide pack is installed;
+- subsequent song imports in the same app process reuse those prepared templates;
+- local audio copies use larger buffered I/O;
+- native Guide rendering skips per-sample floating-point mixing for long blocks that contain only silence;
+- MP3 decode/copy buffers were increased to reduce avoidable small I/O operations.
+
+These optimizations do not change audio alignment or move decoding into the real-time playback callback.
+
+App version: `0.2.0-alpha04.2` (`versionCode 9`).
 
 ## Native Guide pipeline
 
@@ -76,7 +98,7 @@ StageGrid Native Guide.wav
 
 When reconstruction succeeds, the original Guide remains in the library as a muted reference and the generated Guide becomes the active Guide track.
 
-If a valid Musical Grid is available, recognized section calls can also produce editable automatic sections. If BPM is entered only after import, alpha04.1 now performs that section-generation step later from the saved cue events.
+If a valid Musical Grid is available, recognized section calls can produce editable automatic sections. If BPM is entered only after import, StageGrid reuses the saved cue events to create the section map later without re-analyzing Guide audio.
 
 The recognition system is designed for sample-based Guide tracks matching the installed cue pack. It is **not** a general-purpose speech-to-text engine for arbitrary recordings.
 
@@ -89,7 +111,7 @@ Install Guide sample pack (optional)
   ↓
 Library / Drive folder
   ↓
-Import song
+Import song with percentage/status
   ↓
 Click → Musical Grid reference
 Guide → native cue recognition
@@ -103,6 +125,7 @@ Player
   ├─ Current + next section
   ├─ Edit sections
   ├─ Click / Guide
+  ├─ Change native Guide language
   ├─ Section count-in
   └─ Quantized section changes
 ```
@@ -126,6 +149,8 @@ Right → Tracks
 - ZIP-slip protection, extraction limits and safe filenames.
 - Optional `song.json` metadata, stem types and section markers.
 - Post-import metadata editing for title, artist, BPM, key, time signature, grid offset and notes.
+- Overall import percentage and current-stage descriptions.
+- Track-level progress for WAV preparation and MP3 decoding.
 
 ### Audio formats
 
@@ -165,11 +190,12 @@ MP3 decoding never runs in the Oboe real-time callback. StageGrid does not indep
 - Imported Guide detection.
 - User-installed local Guide sample packs.
 - Offline template/fingerprint recognition.
-- Auto or selected output language when installed.
+- Auto or selected default output language on import.
+- Per-song Guide-language changes from Player after processing.
 - Structured `native-guide-events.json` cue storage.
 - App-generated `StageGrid Native Guide.wav`.
 - Original Guide retained muted after successful reconstruction.
-- Persisted cue events can now regenerate sections after BPM becomes available.
+- Persisted cue events can regenerate sections after BPM becomes available.
 - Generated Guide playback uses the same shared multitrack clock as the stems.
 
 ### Musical Grid and sections
@@ -265,14 +291,15 @@ GitHub Actions runs unit tests and `assembleDebug` for development pull requests
 
 Coverage includes areas such as stem classification, WAV parsing, Musical Grid conversion/snapping, quantized transitions, native Guide recognition/section inference, Room behavior, JNI/native loading and shared-clock native behavior.
 
-## Known limitations of 0.2.0-alpha04.1
+## Known limitations of 0.2.0-alpha04.2
 
 Still pending:
 
-- in-place Guide **audio re-analysis** for songs imported before a Guide pack was installed/changed; alpha04.1 can recover sections only when recognized events already exist;
+- the Guide fingerprint cache is currently in-memory; after a full app-process restart the first Guide analysis may still pay the template preparation cost again;
+- in-place Guide **audio re-analysis** for songs imported before a Guide pack was installed/changed is still pending;
 - arbitrary live ReOrder does not yet relocate generated Guide audio dynamically;
 - double-buffered arrangement/path updates;
-- high-track-count physical-device stress validation;
+- high-track-count physical-device stress validation and deeper import-performance profiling on multiple Android devices;
 - Setlist Live NEXT/PREV with next-song preload;
 - restorable performance sessions;
 - waveform peak cache/editor;
@@ -288,6 +315,19 @@ Still pending:
 See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Release history
+
+### 0.2.0-alpha04.2
+
+**Per-song Guide language + import progress/performance pass**
+
+- change an already-generated native Guide between installed languages without re-import/re-analysis;
+- persist the song-specific output language in the native Guide sidecar;
+- safe temporary render/swap while transport is stopped;
+- visible overall import percentage and current operation;
+- MP3 codec progress reporting;
+- cached Guide pack file index and prepared sample fingerprints;
+- larger buffered local copies;
+- faster silence handling while rendering native Guide WAVs.
 
 ### 0.2.0-alpha04.1
 

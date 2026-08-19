@@ -12,7 +12,11 @@ import dev.stagegrid.audio.PlayerState
 import dev.stagegrid.guide.GuideCueAnalyzer
 import dev.stagegrid.guide.GuidePackManager
 import dev.stagegrid.guide.NativeGuideEventStore
+import dev.stagegrid.guide.NativeGuideRenderer
+import dev.stagegrid.importer.ImportProgress
+import dev.stagegrid.importer.ImportStage
 import dev.stagegrid.importer.SongImporter
+import dev.stagegrid.importer.WavMetadataReader
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.SetlistBundle
 import dev.stagegrid.model.SetlistEntity
@@ -20,6 +24,7 @@ import dev.stagegrid.model.SongEntity
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.settings.AppSettingsRepository
 import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -45,6 +50,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     data class ImportUiState(
         val running: Boolean = false,
+        val progress: ImportProgress = ImportProgress(0, ImportStage.PREPARING),
         val result: SongImporter.ImportResult? = null,
         val error: String? = null,
     )
@@ -55,11 +61,26 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         val error: String? = null,
     )
 
+    data class NativeGuideUiState(
+        val songId: String? = null,
+        val available: Boolean = false,
+        val currentLanguage: String? = null,
+        val detectedLanguage: String? = null,
+        val languages: List<String> = emptyList(),
+        val eventCount: Int = 0,
+        val rendering: Boolean = false,
+        val renderPercent: Int = 0,
+        val error: String? = null,
+    )
+
     private val _importState = MutableStateFlow(ImportUiState())
     val importState: StateFlow<ImportUiState> = _importState.asStateFlow()
 
     private val _guidePackState = MutableStateFlow(GuidePackUiState(status = app.guidePacks.status()))
     val guidePackState: StateFlow<GuidePackUiState> = _guidePackState.asStateFlow()
+
+    private val _nativeGuideState = MutableStateFlow(NativeGuideUiState())
+    val nativeGuideState: StateFlow<NativeGuideUiState> = _nativeGuideState.asStateFlow()
 
     private val _selectedSetlist = MutableStateFlow<SetlistBundle?>(null)
     val selectedSetlist: StateFlow<SetlistBundle?> = _selectedSetlist.asStateFlow()
@@ -74,16 +95,29 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun importZip(uri: Uri) = runImport { app.importer.importZip(uri) }
-    fun importFolder(uri: Uri) = runImport { app.importer.importFolder(uri) }
-    fun importFiles(uris: List<Uri>) = runImport { app.importer.importFiles(uris) }
+    fun importZip(uri: Uri) = runImport { progress -> app.importer.importZip(uri, progress) }
+    fun importFolder(uri: Uri) = runImport { progress -> app.importer.importFolder(uri, progress) }
+    fun importFiles(uris: List<Uri>) = runImport { progress -> app.importer.importFiles(uris, progress) }
 
-    private fun runImport(block: suspend () -> SongImporter.ImportResult) {
+    private fun runImport(block: suspend ((ImportProgress) -> Unit) -> SongImporter.ImportResult) {
         viewModelScope.launch {
             _importState.value = ImportUiState(running = true)
             try {
-                val result = withContext(Dispatchers.IO) { block() }
-                _importState.value = ImportUiState(result = result)
+                val result = withContext(Dispatchers.IO) {
+                    block { progress ->
+                        _importState.value = _importState.value.copy(
+                            running = true,
+                            progress = progress,
+                            result = null,
+                            error = null,
+                        )
+                    }
+                }
+                _importState.value = ImportUiState(
+                    running = false,
+                    progress = ImportProgress(100, ImportStage.COMPLETE),
+                    result = result,
+                )
             } catch (t: Throwable) {
                 _importState.value = ImportUiState(error = t.message ?: "Import failed")
             }
@@ -94,8 +128,15 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _guidePackState.value = _guidePackState.value.copy(installing = true, error = null)
             try {
-                val result = withContext(Dispatchers.IO) { app.guidePacks.installZip(uri) }
+                val result = withContext(Dispatchers.IO) {
+                    val installed = app.guidePacks.installZip(uri)
+                    // Pay the one-time template preparation cost when the pack is installed rather
+                    // than rebuilding hundreds of cue fingerprints during each song import.
+                    GuideCueAnalyzer.prepare(app.guidePacks.listSamples())
+                    installed
+                }
                 _guidePackState.value = GuidePackUiState(status = result.status)
+                player.value.song?.id?.let { refreshNativeGuideState(it) }
             } catch (t: Throwable) {
                 _guidePackState.value = _guidePackState.value.copy(
                     installing = false,
@@ -117,6 +158,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
             withContext(Dispatchers.IO) {
                 app.repository.getSong(songId)?.let { recoverNativeGuideSections(it) }
             }
+            refreshNativeGuideState(songId)
             app.audio.loadSong(songId)
         }
     }
@@ -148,6 +190,29 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     fun setNativeGuideLanguage(language: String) = viewModelScope.launch {
         app.settings.setNativeGuideLanguage(language)
     }
+
+    /** Regenerates only the current song's native Guide from already-recognized events. */
+    fun setSongNativeGuideLanguage(language: String) {
+        val song = player.value.song ?: return
+        if (player.value.isPlaying || player.value.isCountingIn || _nativeGuideState.value.rendering) return
+        if (language !in _nativeGuideState.value.languages) return
+        if (language == _nativeGuideState.value.currentLanguage) return
+
+        viewModelScope.launch {
+            _nativeGuideState.value = _nativeGuideState.value.copy(
+                rendering = true,
+                renderPercent = 0,
+                error = null,
+            )
+            val error = withContext(Dispatchers.IO) {
+                rerenderNativeGuide(song, language)
+            }
+            if (error == null) app.audio.loadSong(song.id)
+            val refreshed = withContext(Dispatchers.IO) { buildNativeGuideState(song.id) }
+            _nativeGuideState.value = refreshed.copy(error = error)
+        }
+    }
+
     fun setTrackVolume(index: Int, value: Float) = app.audio.setTrackVolume(index, value)
     fun setTrackMute(index: Int, value: Boolean) = app.audio.setTrackMute(index, value)
     fun setTrackSolo(index: Int, value: Boolean) = app.audio.setTrackSolo(index, value)
@@ -204,8 +269,113 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
             }
             if (result != null) {
                 val shouldReload = loadAfterSave || (result.generatedSections && player.value.song?.id == result.song.id)
-                if (shouldReload) app.audio.loadSong(result.song.id)
+                if (shouldReload) {
+                    refreshNativeGuideState(result.song.id)
+                    app.audio.loadSong(result.song.id)
+                }
             }
+        }
+    }
+
+    private suspend fun refreshNativeGuideState(songId: String) {
+        _nativeGuideState.value = withContext(Dispatchers.IO) { buildNativeGuideState(songId) }
+    }
+
+    private suspend fun buildNativeGuideState(songId: String): NativeGuideUiState {
+        val bundle = app.repository.getSongBundle(songId) ?: return NativeGuideUiState(songId = songId)
+        val nativeTrack = bundle.tracks.firstOrNull { it.name == NativeGuideRenderer.TRACK_NAME }
+            ?: return NativeGuideUiState(songId = songId)
+        if (!File(nativeTrack.filePath).isFile) return NativeGuideUiState(songId = songId)
+        val eventFile = nativeGuideEventFile(songId)
+        val analysis = NativeGuideEventStore.readAnalysis(eventFile)
+            ?: return NativeGuideUiState(songId = songId)
+        return NativeGuideUiState(
+            songId = songId,
+            available = true,
+            currentLanguage = NativeGuideEventStore.readOutputLanguage(eventFile),
+            detectedLanguage = analysis.dominantLanguage,
+            languages = app.guidePacks.status().languages,
+            eventCount = analysis.cues.size,
+        )
+    }
+
+    private suspend fun rerenderNativeGuide(song: SongEntity, language: String): String? {
+        val bundle = app.repository.getSongBundle(song.id) ?: return "Song data is no longer available."
+        val nativeTrack = bundle.tracks.firstOrNull { it.name == NativeGuideRenderer.TRACK_NAME }
+            ?: return "This song does not have a StageGrid Native Guide."
+        val eventFile = nativeGuideEventFile(song.id)
+        val analysis = NativeGuideEventStore.readAnalysis(eventFile)
+            ?: return "Recognized Guide events are not available for this song."
+        val samples = app.guidePacks.listSamples()
+        if (samples.none { it.language == language }) return "The selected Guide language is not installed."
+
+        val target = File(nativeTrack.filePath)
+        val temp = File(target.parentFile, ".${target.name}.language-${System.nanoTime()}.wav")
+        val rendered = try {
+            NativeGuideRenderer.render(
+                outputFile = temp,
+                durationMs = song.durationMs,
+                cues = analysis.cues,
+                samples = samples,
+                outputLanguage = language,
+                onProgress = { progress ->
+                    _nativeGuideState.value = _nativeGuideState.value.copy(
+                        rendering = true,
+                        renderPercent = (progress * 100f).roundToInt().coerceIn(0, 100),
+                    )
+                },
+            )
+        } catch (t: Throwable) {
+            temp.delete()
+            return t.message ?: "Native Guide could not be regenerated."
+        } ?: run {
+            temp.delete()
+            return "No compatible Guide samples could be rendered in the selected language."
+        }
+
+        if (!replaceRenderedGuide(temp, target)) {
+            temp.delete()
+            return "StageGrid could not replace the current native Guide safely."
+        }
+
+        val metadata = runCatching { WavMetadataReader.read(target) }.getOrElse {
+            return "The regenerated Guide could not be validated: ${it.message ?: "unknown error"}."
+        }
+        app.repository.updateTrack(
+            nativeTrack.copy(
+                channels = metadata.channels,
+                sampleRate = metadata.sampleRate,
+                bitDepth = metadata.bitDepth,
+                durationMs = metadata.durationMs,
+            ),
+        )
+        NativeGuideEventStore.writeOutputLanguage(eventFile, rendered.outputLanguage)
+        return null
+    }
+
+    private fun replaceRenderedGuide(temp: File, target: File): Boolean {
+        val parent = target.parentFile ?: return false
+        val backup = File(parent, ".${target.name}.previous-${System.nanoTime()}")
+        var backedUp = false
+        try {
+            if (target.exists()) {
+                if (!target.renameTo(backup)) return false
+                backedUp = true
+            }
+            if (!temp.renameTo(target)) {
+                temp.copyTo(target, overwrite = true)
+                temp.delete()
+            }
+            if (!target.isFile || target.length() <= 44L) error("Rendered Guide is empty")
+            if (backedUp) backup.delete()
+            return true
+        } catch (_: Throwable) {
+            target.delete()
+            if (backedUp) backup.renameTo(target)
+            return false
+        } finally {
+            temp.delete()
+            if (target.exists()) backup.delete()
         }
     }
 
@@ -216,7 +386,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
      */
     private suspend fun recoverNativeGuideSections(song: SongEntity): Boolean {
         if (song.bpm == null || song.durationMs <= 0L) return false
-        val eventFile = File(app.filesDir, "library/${song.id}/native-guide-events.json")
+        val eventFile = nativeGuideEventFile(song.id)
         val analysis = NativeGuideEventStore.readAnalysis(eventFile) ?: return false
         val proposals = GuideCueAnalyzer.inferSections(
             result = analysis,
@@ -241,6 +411,9 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         if (replaced) NativeGuideEventStore.writeSectionProposals(eventFile, proposals)
         return replaced
     }
+
+    private fun nativeGuideEventFile(songId: String): File =
+        File(app.filesDir, "library/$songId/native-guide-events.json")
 
     fun createSetlist(name: String) {
         if (name.isBlank()) return
