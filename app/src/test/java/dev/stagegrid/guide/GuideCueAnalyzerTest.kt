@@ -7,13 +7,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.io.path.createTempDirectory
 import kotlin.math.PI
 import kotlin.math.sin
 
 class GuideCueAnalyzerTest {
     @Test
     fun recognizesTemplateCuesAndInfersSectionsOneBarAhead() {
-        val root = createTempDir(prefix = "stagegrid-guide-test-")
+        val root = createTempDirectory("stagegrid-guide-test-").toFile()
         try {
             val intro = File(root, "intro.wav")
             val chorus = File(root, "chorus.wav")
@@ -53,7 +54,7 @@ class GuideCueAnalyzerTest {
         val sampleRate = 48_000
         val durationMs = 1_200
         val samples = ShortArray(sampleRate * durationMs / 1000)
-        val block = sampleRate / 10 // 100 ms blocks
+        val block = sampleRate / 10
         for (i in pattern.indices) {
             if (pattern[i] == 0) continue
             val start = i * block
