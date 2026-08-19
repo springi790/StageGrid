@@ -88,6 +88,8 @@ class GuidePackManager(private val context: Context) {
         stage.mkdirs()
         var installed = 0
         var skipped = 0
+        var entries = 0
+        var extractedBytes = 0L
         val used = mutableSetOf<String>()
 
         try {
@@ -96,6 +98,8 @@ class GuidePackManager(private val context: Context) {
             ZipInputStream(BufferedInputStream(input)).use { zip ->
                 while (true) {
                     val entry = zip.nextEntry ?: break
+                    entries++
+                    require(entries <= MAX_ZIP_ENTRIES) { "Guide pack contains too many files." }
                     if (entry.isDirectory) {
                         zip.closeEntry()
                         continue
@@ -114,7 +118,16 @@ class GuidePackManager(private val context: Context) {
                     }
                     val out = File(stage, relative)
                     out.parentFile?.mkdirs()
-                    FileOutputStream(out).use { output -> zip.copyTo(output, 64 * 1024) }
+                    FileOutputStream(out).use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val read = zip.read(buffer)
+                            if (read <= 0) break
+                            extractedBytes += read
+                            require(extractedBytes <= MAX_EXTRACTED_BYTES) { "Guide pack expands beyond the configured safety limit." }
+                            output.write(buffer, 0, read)
+                        }
+                    }
                     zip.closeEntry()
                     val valid = runCatching { WavMetadataReader.read(out) }.isSuccess
                     if (!valid) {
@@ -122,6 +135,7 @@ class GuidePackManager(private val context: Context) {
                         skipped++
                     } else {
                         installed++
+                        require(installed <= MAX_GUIDE_SAMPLES) { "Guide pack contains too many Guide samples." }
                     }
                 }
             }
@@ -197,5 +211,11 @@ class GuidePackManager(private val context: Context) {
             if (cursor.moveToFirst()) return cursor.getString(0)
         }
         return uri.lastPathSegment?.substringAfterLast('/')
+    }
+
+    private companion object {
+        const val MAX_ZIP_ENTRIES = 4_096
+        const val MAX_GUIDE_SAMPLES = 2_048
+        const val MAX_EXTRACTED_BYTES = 1024L * 1024L * 1024L
     }
 }
