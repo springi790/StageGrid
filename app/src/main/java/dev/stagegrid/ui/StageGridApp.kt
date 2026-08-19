@@ -38,6 +38,7 @@ import dev.stagegrid.ui.screens.CloudBrowserDialog
 import dev.stagegrid.ui.screens.LibraryScreen
 import dev.stagegrid.ui.screens.MixerScreen
 import dev.stagegrid.ui.screens.PlayerScreen
+import dev.stagegrid.ui.screens.SectionEditorDialog
 import dev.stagegrid.ui.screens.SetlistsScreen
 import dev.stagegrid.ui.screens.SettingsScreen
 
@@ -62,6 +63,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     var screen by rememberSaveable { mutableStateOf(MainScreen.LIBRARY) }
     var editingSong by remember { mutableStateOf<SongEntity?>(null) }
     var cloudBrowserOpen by rememberSaveable { mutableStateOf(false) }
+    var sectionEditorOpen by rememberSaveable { mutableStateOf(false) }
 
     val zipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let(viewModel::importZip)
@@ -129,6 +131,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onLoop = viewModel::toggleLoop,
                 onExitLoop = viewModel::exitLoop,
                 onSection = viewModel::selectSection,
+                onEditSections = { sectionEditorOpen = true },
                 onMaster = viewModel::setMaster,
                 onClick = viewModel::setClick,
                 onGuide = viewModel::setGuide,
@@ -164,6 +167,21 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             onImportZip = viewModel::importZip,
             onImportFiles = viewModel::importFiles,
         )
+    }
+
+    if (sectionEditorOpen) {
+        player.song?.let { loadedSong ->
+            SectionEditorDialog(
+                song = loadedSong,
+                sections = player.sections,
+                positionMs = player.positionMs,
+                durationMs = player.durationMs,
+                isPlaying = player.isPlaying,
+                onSave = viewModel::saveSection,
+                onDelete = viewModel::deleteSection,
+                onDismiss = { sectionEditorOpen = false },
+            )
+        } ?: run { sectionEditorOpen = false }
     }
 
     if (importState.running) {
