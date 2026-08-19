@@ -17,12 +17,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.UUID
 import java.util.zip.ZipInputStream
+import kotlin.math.roundToInt
 
 class SongImporter(
     private val context: Context,
@@ -47,17 +49,23 @@ class SongImporter(
 
     class ImportException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
-    suspend fun importZip(uri: Uri): ImportResult = withContext(Dispatchers.IO) {
+    suspend fun importZip(
+        uri: Uri,
+        onProgress: ((ImportProgress) -> Unit)? = null,
+    ): ImportResult = withContext(Dispatchers.IO) {
+        report(onProgress, 2, ImportStage.PREPARING)
         val displayName = queryDisplayName(uri) ?: "Imported Song.zip"
         val id = UUID.randomUUID().toString()
         val songRoot = File(context.filesDir, "library/$id")
         val stage = File(songRoot, ".staging")
         try {
             stage.mkdirs()
+            report(onProgress, 4, ImportStage.COPYING, displayName)
             val input = context.contentResolver.openInputStream(uri)
                 ?: throw ImportException("The selected ZIP could not be opened.")
-            input.use { raw -> extractZip(raw.buffered(), stage) }
-            finalizeImport(id, displayName.substringBeforeLast('.'), stage, songRoot)
+            input.use { raw -> extractZip(raw.buffered(COPY_BUFFER), stage, onProgress) }
+            report(onProgress, 14, ImportStage.PREPARING)
+            finalizeImport(id, displayName.substringBeforeLast('.'), stage, songRoot, onProgress)
         } catch (t: Throwable) {
             songRoot.deleteRecursively()
             if (t is ImportException) throw t
@@ -65,7 +73,11 @@ class SongImporter(
         }
     }
 
-    suspend fun importFolder(treeUri: Uri): ImportResult = withContext(Dispatchers.IO) {
+    suspend fun importFolder(
+        treeUri: Uri,
+        onProgress: ((ImportProgress) -> Unit)? = null,
+    ): ImportResult = withContext(Dispatchers.IO) {
+        report(onProgress, 2, ImportStage.PREPARING)
         val rootDoc = DocumentFile.fromTreeUri(context, treeUri)
             ?: throw ImportException("The selected folder could not be opened.")
         val id = UUID.randomUUID().toString()
@@ -73,8 +85,10 @@ class SongImporter(
         val stage = File(songRoot, ".staging")
         try {
             stage.mkdirs()
+            report(onProgress, 4, ImportStage.COPYING, rootDoc.name)
             copyDocumentTree(rootDoc, stage, 0, CopyBudget())
-            finalizeImport(id, rootDoc.name ?: "Imported Song", stage, songRoot)
+            report(onProgress, 14, ImportStage.PREPARING)
+            finalizeImport(id, rootDoc.name ?: "Imported Song", stage, songRoot, onProgress)
         } catch (t: Throwable) {
             songRoot.deleteRecursively()
             if (t is ImportException) throw t
@@ -82,9 +96,13 @@ class SongImporter(
         }
     }
 
-    suspend fun importFiles(uris: List<Uri>): ImportResult = withContext(Dispatchers.IO) {
+    suspend fun importFiles(
+        uris: List<Uri>,
+        onProgress: ((ImportProgress) -> Unit)? = null,
+    ): ImportResult = withContext(Dispatchers.IO) {
         if (uris.isEmpty()) throw ImportException("No files were selected.")
         if (uris.size > MAX_FILES) throw ImportException("Too many files were selected (max $MAX_FILES).")
+        report(onProgress, 2, ImportStage.PREPARING)
         val id = UUID.randomUUID().toString()
         val songRoot = File(context.filesDir, "library/$id")
         val stage = File(songRoot, ".staging")
@@ -93,13 +111,19 @@ class SongImporter(
             val budget = CopyBudget()
             uris.forEachIndexed { index, uri ->
                 val name = sanitizeFileName(queryDisplayName(uri) ?: "track-${index + 1}.wav")
+                report(onProgress, 3 + (((index + 1) * 10f) / uris.size).roundToInt(), ImportStage.COPYING, name)
                 val dest = uniqueFile(stage, name)
                 val input = context.contentResolver.openInputStream(uri)
                     ?: throw ImportException("Could not open $name")
-                input.use { src -> FileOutputStream(dest).use { out -> copyBounded(src, out, budget) } }
+                input.use { src ->
+                    BufferedOutputStream(FileOutputStream(dest), COPY_BUFFER).use { out ->
+                        copyBounded(src, out, budget)
+                    }
+                }
             }
             val title = queryDisplayName(uris.first())?.substringBeforeLast('.') ?: "Imported Song"
-            finalizeImport(id, title, stage, songRoot)
+            report(onProgress, 14, ImportStage.PREPARING)
+            finalizeImport(id, title, stage, songRoot, onProgress)
         } catch (t: Throwable) {
             songRoot.deleteRecursively()
             if (t is ImportException) throw t
@@ -112,7 +136,9 @@ class SongImporter(
         fallbackTitle: String,
         stage: File,
         songRoot: File,
+        onProgress: ((ImportProgress) -> Unit)?,
     ): ImportResult {
+        report(onProgress, 15, ImportStage.PREPARING)
         val allFiles = stage.walkTopDown().filter { it.isFile }.toList()
         val manifestFile = allFiles.firstOrNull { it.name.equals("song.json", true) }
         val manifest = SongManifestParser.parse(manifestFile)
@@ -149,17 +175,29 @@ class SongImporter(
         var guideReferenceFile: File? = null
         var totalEncoderDelayFrames = 0L
         var mp3WithGaplessMetadata = 0
+        val trackProgressStart = 18f
+        val trackProgressEnd = 70f
+        val progressPerTrack = (trackProgressEnd - trackProgressStart) / playableSources.size.toFloat()
 
         playableSources.forEachIndexed { index, source ->
             val isMp3 = source.extension.equals("mp3", true)
+            val trackBase = trackProgressStart + progressPerTrack * index
             val destinationName = if (isMp3) "${source.nameWithoutExtension}.wav" else source.name
             val safeName = uniqueFile(audioDir, sanitizeFileName(destinationName))
             var mp3Decode: Mp3ToWavDecoder.DecodeResult? = null
+            val stageType = if (isMp3) ImportStage.DECODING_MP3 else ImportStage.PROCESSING_TRACK
+            report(onProgress, trackBase.roundToInt(), stageType, source.name)
             val metadata = try {
                 if (isMp3) {
-                    Mp3ToWavDecoder.decode(source, safeName).also { mp3Decode = it }.metadata
+                    Mp3ToWavDecoder.decode(source, safeName) { fraction ->
+                        val weighted = trackBase + progressPerTrack * fraction
+                        report(onProgress, weighted.roundToInt(), ImportStage.DECODING_MP3, source.name)
+                    }.also { mp3Decode = it }.metadata
                 } else {
-                    source.copyTo(safeName, overwrite = false)
+                    copyLocalFile(source, safeName) { fraction ->
+                        val weighted = trackBase + progressPerTrack * fraction
+                        report(onProgress, weighted.roundToInt(), ImportStage.PROCESSING_TRACK, source.name)
+                    }
                     WavMetadataReader.read(safeName)
                 }
             } catch (t: Throwable) {
@@ -187,8 +225,6 @@ class SongImporter(
                 bitDepth = metadata.bitDepth,
                 durationMs = metadata.durationMs,
                 sortOrder = index,
-                // Imported click files are kept as a reference for grid detection, but the live
-                // engine uses its own sample-accurate click generator.
                 muted = type == TrackType.CLICK,
             )
         }
@@ -198,6 +234,7 @@ class SongImporter(
                 "during import (total leading trim: $totalEncoderDelayFrames decoded frames)."
         }
 
+        report(onProgress, 72, ImportStage.ANALYZING_CLICK, clickReferenceFile?.name)
         val gridAnalysis = clickReferenceFile?.let { runCatching { ClickGridAnalyzer.analyze(it) }.getOrNull() }
         val gridOffsetMs = gridAnalysis?.offsetMs ?: 0L
         if (gridAnalysis != null) {
@@ -212,6 +249,7 @@ class SongImporter(
         var nativeGuideLanguage: String? = null
         val installedGuideSamples = guidePacks.listSamples()
         if (guideReferenceFile != null && installedGuideSamples.isNotEmpty()) {
+            report(onProgress, 77, ImportStage.ANALYZING_GUIDE, guideReferenceFile?.name)
             guideAnalysis = runCatching { GuideCueAnalyzer.analyze(guideReferenceFile!!, installedGuideSamples) }
                 .onFailure { warnings += "Native Guide analysis failed: ${it.message ?: "unknown error"}. The imported Guide track was kept." }
                 .getOrNull()
@@ -228,7 +266,8 @@ class SongImporter(
                 nativeGuideLanguage = guidePacks.resolveOutputLanguage(preferredLanguage, analysis.dominantLanguage)
                 val outputLanguage = nativeGuideLanguage
                 if (outputLanguage != null && tracks.size < MAX_TRACKS) {
-                    val nativeGuideFile = uniqueFile(audioDir, "StageGrid Native Guide.wav")
+                    val nativeGuideFile = uniqueFile(audioDir, "${NativeGuideRenderer.TRACK_NAME}.wav")
+                    report(onProgress, 86, ImportStage.RENDERING_GUIDE, outputLanguage)
                     val rendered = runCatching {
                         NativeGuideRenderer.render(
                             outputFile = nativeGuideFile,
@@ -236,6 +275,9 @@ class SongImporter(
                             cues = analysis.cues,
                             samples = installedGuideSamples,
                             outputLanguage = outputLanguage,
+                            onProgress = { fraction ->
+                                report(onProgress, (86f + 7f * fraction).roundToInt(), ImportStage.RENDERING_GUIDE, outputLanguage)
+                            },
                         )
                     }.getOrNull()
                     if (rendered != null) {
@@ -245,7 +287,7 @@ class SongImporter(
                         }
                         tracks += TrackEntity(
                             songId = songId,
-                            name = "StageGrid Native Guide",
+                            name = NativeGuideRenderer.TRACK_NAME,
                             filePath = rendered.file.absolutePath,
                             type = TrackType.GUIDE.name,
                             channels = metadata.channels,
@@ -281,6 +323,7 @@ class SongImporter(
             warnings += "A Guide track was detected. Install a Guide sample pack in Settings to enable native Guide recognition and automatic section detection on future imports."
         }
 
+        report(onProgress, 94, ImportStage.BUILDING_SECTIONS)
         val manifestSectionStarts = manifest.sections.filter { it.startMs < maxDuration }.sortedBy { it.startMs }
         val sections = when {
             manifestSectionStarts.isNotEmpty() -> manifestSectionStarts.mapIndexed { i, section ->
@@ -313,6 +356,7 @@ class SongImporter(
             )
         }
 
+        report(onProgress, 97, ImportStage.SAVING_LIBRARY)
         val title = manifest.title ?: fallbackTitle.ifBlank { "Imported Song" }
         val song = SongEntity(
             id = songId,
@@ -327,6 +371,7 @@ class SongImporter(
         repository.saveImportedSong(song, tracks, sections)
         stage.deleteRecursively()
         File(songRoot, "import-fingerprint.sha256").writeText(hashTrackSet(tracks))
+        report(onProgress, 100, ImportStage.COMPLETE)
 
         return ImportResult(
             songId = songId,
@@ -344,15 +389,23 @@ class SongImporter(
         )
     }
 
-    private fun extractZip(input: java.io.InputStream, destination: File) {
+    private fun extractZip(
+        input: java.io.InputStream,
+        destination: File,
+        onProgress: ((ImportProgress) -> Unit)?,
+    ) {
         var count = 0
         var totalBytes = 0L
         val canonicalRoot = destination.canonicalFile
-        ZipInputStream(BufferedInputStream(input)).use { zip ->
+        ZipInputStream(BufferedInputStream(input, COPY_BUFFER)).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
                 count++
                 if (count > MAX_FILES) throw ImportException("The ZIP contains too many files.")
+                if (count % 8 == 0) {
+                    val estimated = 4 + (count / 8).coerceAtMost(8)
+                    report(onProgress, estimated, ImportStage.COPYING, entry.name.substringAfterLast('/'))
+                }
                 if (entry.isDirectory) {
                     zip.closeEntry(); continue
                 }
@@ -362,7 +415,7 @@ class SongImporter(
                     throw ImportException("The ZIP contains an unsafe path: ${entry.name}")
                 }
                 outFile.parentFile?.mkdirs()
-                FileOutputStream(outFile).use { out ->
+                BufferedOutputStream(FileOutputStream(outFile), COPY_BUFFER).use { out ->
                     val buffer = ByteArray(COPY_BUFFER)
                     while (true) {
                         val read = zip.read(buffer)
@@ -394,7 +447,9 @@ class SongImporter(
                     val dest = uniqueFile(destination, safeName)
                     val input = context.contentResolver.openInputStream(child.uri)
                         ?: throw ImportException("Could not open ${child.name}")
-                    input.use { src -> FileOutputStream(dest).use { out -> copyBounded(src, out, budget) } }
+                    input.use { src ->
+                        BufferedOutputStream(FileOutputStream(dest), COPY_BUFFER).use { out -> copyBounded(src, out, budget) }
+                    }
                 }
             }
         }
@@ -409,6 +464,38 @@ class SongImporter(
             if (budget.bytes > MAX_EXTRACTED_BYTES) throw ImportException("The selected content exceeds the configured safety limit.")
             output.write(buffer, 0, read)
         }
+    }
+
+    private fun copyLocalFile(source: File, destination: File, onProgress: (Float) -> Unit) {
+        val total = source.length().coerceAtLeast(1L)
+        var copied = 0L
+        var lastBucket = -1
+        BufferedInputStream(source.inputStream(), COPY_BUFFER).use { input ->
+            BufferedOutputStream(FileOutputStream(destination), COPY_BUFFER).use { output ->
+                val buffer = ByteArray(COPY_BUFFER)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read <= 0) break
+                    output.write(buffer, 0, read)
+                    copied += read
+                    val bucket = ((copied * 25L) / total).toInt().coerceIn(0, 25)
+                    if (bucket != lastBucket) {
+                        lastBucket = bucket
+                        onProgress((copied.toDouble() / total.toDouble()).toFloat().coerceIn(0f, 1f))
+                    }
+                }
+            }
+        }
+        onProgress(1f)
+    }
+
+    private fun report(
+        listener: ((ImportProgress) -> Unit)?,
+        percent: Int,
+        stage: ImportStage,
+        detail: String? = null,
+    ) {
+        listener?.invoke(ImportProgress(percent.coerceIn(0, 100), stage, detail?.takeIf { it.isNotBlank() }))
     }
 
     private fun queryDisplayName(uri: Uri): String? {
@@ -449,7 +536,7 @@ class SongImporter(
     private fun defaultSectionColor(index: Int): Long = SECTION_COLORS[index % SECTION_COLORS.size]
 
     companion object {
-        private const val COPY_BUFFER = 128 * 1024
+        private const val COPY_BUFFER = 256 * 1024
         private const val MAX_FILES = 512
         private const val MAX_TRACKS = 64
         private const val MAX_DEPTH = 8
