@@ -1,7 +1,7 @@
 <resources>
     <string name="cloud_folder_button">Google Drive / cloud</string>
     <string name="cloud_folder_title">Synced folder</string>
-    <string name="cloud_folder_explanation">In Android's system picker, open Google Drive and choose one of your folders. StageGrid remembers access only to that folder and copies only the files you select into its local library.</string>
+    <string name="cloud_folder_explanation">In Android’s system picker, open Google Drive and choose one of your folders. StageGrid remembers access only to that folder and copies only the files you select into its local library.</string>
     <string name="cloud_choose_folder">Choose folder</string>
     <string name="cloud_back">Back</string>
     <string name="cloud_refresh">Refresh</string>
