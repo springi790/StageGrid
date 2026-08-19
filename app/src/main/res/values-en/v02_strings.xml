@@ -1,0 +1,24 @@
+<resources>
+    <string name="musical_grid">Musical grid</string>
+    <string name="bar_beat_value">Bar %1$d · Beat %2$d</string>
+    <string name="edit_sections">Edit sections</string>
+    <string name="section_editor">Section editor</string>
+    <string name="section_editor_requires_bpm">Set a valid BPM before using musical-grid snapping.</string>
+    <string name="section_editor_playback_warning">Stop playback before changing sections so edits are applied safely.</string>
+    <string name="add_section">Add section</string>
+    <string name="section_name">Section name</string>
+    <string name="start_position">Start</string>
+    <string name="end_position">End</string>
+    <string name="bar">Bar</string>
+    <string name="beat">Beat</string>
+    <string name="use_playhead_start">Playhead → start</string>
+    <string name="use_playhead_end">Playhead → end</string>
+    <string name="snap_to">Snap</string>
+    <string name="snap_beat">Beat</string>
+    <string name="snap_bar">Bar</string>
+    <string name="invalid_section_range">The end must be after the start.</string>
+    <string name="section_range_value">%1$s → %2$s</string>
+    <string name="no_sections_editor">There are no sections yet. Add the first one from the playhead.</string>
+    <string name="timeline">Timeline</string>
+    <string name="grid_offset_value">Offset: %1$d ms</string>
+</resources>
