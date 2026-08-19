@@ -33,11 +33,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.stagegrid.R
+import dev.stagegrid.model.SongEntity
+import dev.stagegrid.ui.screens.CloudBrowserDialog
 import dev.stagegrid.ui.screens.LibraryScreen
 import dev.stagegrid.ui.screens.MixerScreen
 import dev.stagegrid.ui.screens.PlayerScreen
 import dev.stagegrid.ui.screens.SetlistsScreen
-import dev.stagegrid.model.SongEntity
 import dev.stagegrid.ui.screens.SettingsScreen
 
 private enum class MainScreen(val labelRes: Int) {
@@ -60,6 +61,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
 
     var screen by rememberSaveable { mutableStateOf(MainScreen.LIBRARY) }
     var editingSong by remember { mutableStateOf<SongEntity?>(null) }
+    var cloudBrowserOpen by rememberSaveable { mutableStateOf(false) }
 
     val zipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let(viewModel::importZip)
@@ -102,6 +104,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onImportZip = { zipLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
                 onImportFolder = { folderLauncher.launch(null) },
                 onImportFiles = { filesLauncher.launch(arrayOf("audio/wav", "audio/x-wav", "audio/*")) },
+                onOpenCloud = { cloudBrowserOpen = true },
                 onLoadSong = { id -> viewModel.loadSong(id); screen = MainScreen.PLAYER },
                 onEditSong = { editingSong = it },
                 modifier = contentModifier,
@@ -153,6 +156,14 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 modifier = contentModifier,
             )
         }
+    }
+
+    if (cloudBrowserOpen) {
+        CloudBrowserDialog(
+            onDismiss = { cloudBrowserOpen = false },
+            onImportZip = viewModel::importZip,
+            onImportFiles = viewModel::importFiles,
+        )
     }
 
     if (importState.running) {
