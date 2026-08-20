@@ -40,7 +40,9 @@ object ArrangementRuntime {
         if (target == index) return graph.normalized()
         val item = nodes.removeAt(index)
         nodes.add(target, item)
-        return graph.copy(nodes = nodes).normalized()
+        return graph.copy(
+            nodes = nodes.mapIndexed { newOrder, node -> node.copy(order = newOrder) },
+        ).normalized()
     }
 
     fun setRepeat(graph: ArrangementGraph, nodeId: String, repeatCount: Int): ArrangementGraph = graph.copy(
