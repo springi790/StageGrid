@@ -193,8 +193,12 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
             }
             val latest = viewModel.player.value
             if (_state.value.activeNodeId != nodeId || latest.currentSection?.id != sectionId) return@launch
+            val previousCountInBars = latest.countInBars
             app.audio.setCountInBars(bars)
             app.audio.playCurrentSectionWithCountIn()
+            // The node pre-roll is local arrangement metadata; it must not overwrite the user's
+            // persistent/session-wide count-in preference after this launch has captured `bars`.
+            app.audio.setCountInBars(previousCountInBars)
         }
     }
 
