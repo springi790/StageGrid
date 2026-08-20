@@ -40,14 +40,14 @@ import dev.stagegrid.importer.ImportStage
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.ui.screens.CloudBrowserDialog
 import dev.stagegrid.ui.screens.LibraryScreen
+import dev.stagegrid.ui.screens.LiveWorkspaceScreen
 import dev.stagegrid.ui.screens.MixerScreen
-import dev.stagegrid.ui.screens.PlayerScreen
 import dev.stagegrid.ui.screens.SectionEditorDialog
 import dev.stagegrid.ui.screens.SetlistsScreen
 import dev.stagegrid.ui.screens.SettingsScreen
 
 private enum class MainScreen(val labelRes: Int) {
-    LIBRARY(R.string.library), SETLISTS(R.string.setlists), PLAYER(R.string.player), MIXER(R.string.mixer), SETTINGS(R.string.settings),
+    LIBRARY(R.string.library), SETLISTS(R.string.setlists), PLAYER(R.string.live_workspace), MIXER(R.string.mixer), SETTINGS(R.string.settings),
 }
 
 @Composable
@@ -55,11 +55,11 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     val songs by viewModel.songs.collectAsStateWithLifecycle()
     val setlists by viewModel.setlists.collectAsStateWithLifecycle()
     val player by viewModel.player.collectAsStateWithLifecycle()
+    val arrangement by viewModel.arrangementState.collectAsStateWithLifecycle()
     val outputs by viewModel.outputs.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val importState by viewModel.importState.collectAsStateWithLifecycle()
     val guidePackState by viewModel.guidePackState.collectAsStateWithLifecycle()
-    val nativeGuideState by viewModel.nativeGuideState.collectAsStateWithLifecycle()
     val sessionRecoveryState by viewModel.sessionRecoveryState.collectAsStateWithLifecycle()
     val backupState by viewModel.backupState.collectAsStateWithLifecycle()
     val libraryActionState by viewModel.libraryActionState.collectAsStateWithLifecycle()
@@ -124,27 +124,27 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onStartLive = { viewModel.startSelectedSetlistLive(); screen = MainScreen.PLAYER },
                 modifier = contentModifier,
             )
-            MainScreen.PLAYER -> PlayerScreen(
+            MainScreen.PLAYER -> LiveWorkspaceScreen(
                 state = player,
-                nativeGuide = nativeGuideState,
+                arrangement = arrangement,
                 setlistLive = setlistLiveState,
                 onPlayPause = viewModel::playPause,
                 onStop = viewModel::stop,
                 onStopAll = viewModel::stopAll,
                 onSeek = viewModel::seekTo,
-                onLoop = viewModel::toggleLoop,
-                onExitLoop = viewModel::exitLoop,
-                onSection = viewModel::selectSection,
-                onEditSections = { sectionEditorOpen = true },
-                onPlaySectionWithCountIn = viewModel::playCurrentSectionWithCountIn,
-                onCountInBars = viewModel::setCountInBars,
                 onMaster = viewModel::setMaster,
                 onClick = viewModel::setClick,
                 onGuide = viewModel::setGuide,
-                onNativeGuideLanguage = viewModel::setSongNativeGuideLanguage,
-                onReanalyzeNativeGuide = viewModel::reanalyzeCurrentNativeGuide,
-                onClickSubdivision = viewModel::setClickSubdivision,
-                onClickRoute = viewModel::setClickRoute,
+                onTrackVolume = viewModel::setTrackVolume,
+                onTrackMute = viewModel::setTrackMute,
+                onTrackSolo = viewModel::setTrackSolo,
+                onArrangementStart = viewModel::startArrangement,
+                onArrangementStop = viewModel::stopArrangement,
+                onArrangementExitLoop = viewModel::exitArrangementLoop,
+                onArrangementNode = viewModel::selectArrangementNode,
+                onArrangementMove = viewModel::moveArrangementNode,
+                onArrangementRepeat = viewModel::setArrangementRepeat,
+                onArrangementPreRoll = viewModel::setArrangementPreRoll,
                 onSetlistPrevious = viewModel::setlistLivePrevious,
                 onSetlistNext = viewModel::setlistLiveNext,
                 onExitSetlistLive = viewModel::exitSetlistLive,
