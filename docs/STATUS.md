@@ -1,4 +1,4 @@
-# Implementation status — 0.2.0-alpha05
+# Implementation status — 0.2.0-alpha05.1
 
 ## Implemented in source
 
@@ -50,22 +50,25 @@
 - Native Click output route: `L`, `L+R` or `R`.
 - Deterministic milliseconds ↔ bar/beat conversion.
 - Beat/bar snapping and Player musical-position readout.
-- Quantized live section jumps can request the next bar boundary with a minimum decoder-preparation lead.
-- If a tap is too close to the immediate bar boundary, StageGrid queues the following bar rather than forcing an unsafe last-millisecond path replacement.
+- Musical Grid remains authoritative for section editing/snapping, Click timing, count-in and bar/beat display.
 - Click subdivision/route and section count-in preferences persisted with DataStore.
 
-### Sections and live navigation
+### Sections and live navigation — alpha05.1
 
 - `song.json` section import.
 - Visual/manual Section Editor with friendly playhead actions plus optional precise bar/beat editing.
 - Edit Sections remains visible directly in the Player while stopped with a valid grid.
 - Section loop / Exit Loop.
-- Live section changes queue to a musical bar when a valid grid exists, with section-boundary fallback otherwise.
-- Loop and quantized-jump path changes use the double-buffered native handoff while transport is active.
+- A manual live section selection queues to the **explicit end marker of the current section**, not to an internal bar line.
+- The requested destination enters at its own explicit section start marker.
+- Internal Musical Grid bar boundaries no longer shorten a manual section merely because the next bar occurs before the authored section end.
+- If the controller observes that the current section end is already behind the native/UI position, it falls back to the requested destination immediately instead of scheduling against a stale boundary.
+- Loop and section-jump path changes use the double-buffered native handoff while transport is active.
 - Native 1- or 2-bar count-in/pre-roll.
 - Virtual negative-time count-in for sections that start at song frame zero.
 - Imported stems are gated during count-in and enter together at the target frame.
 - Persisted Guide events can recover automatic sections after BPM/grid metadata becomes available, while preserving manually edited section maps.
+- JVM coverage verifies that a manual transition waits for the current section end and ignores internal bar lines.
 
 ### Native Guide
 
@@ -98,6 +101,7 @@
 ## Implemented, but not yet claimed as stage-validated
 
 - Double-buffered Loop/jump handoff is implemented and compiled in CI, but a broad physical-device/high-track-count stress matrix is still required before claiming glitch-free stage qualification.
+- A manual section change no longer moves to a later bar for preparation safety. An extremely late tap can therefore miss the inactive-bank safe preparation window; stale audio is rejected rather than applied after the authored section boundary.
 - Native Guide recognition is designed for Guide stems assembled from cues matching the installed sample pack. It is not generic speech-to-text for arbitrary spoken recordings.
 - Native Guide events are persisted structurally, but the rendered Guide still follows the original timeline. Arrangement-aware relocation/synthesis of the spoken pre-section cue after arbitrary live ReOrder is not complete.
 - Guide fingerprint caching is currently in-memory; after a full process restart the first Guide analysis may pay template preparation cost again.
@@ -130,4 +134,4 @@ These are architectural extension points, not fake buttons.
 
 ## Qualification status
 
-StageGrid `0.2.0-alpha05` is a development alpha, not a stage-ready 1.0 release. CI validates unit tests and debug assembly, but final qualification still requires representative physical Android devices, high track counts, USB reconnect/routing tests, live path stress tests, import-performance profiling and crash/session-recovery validation.
+StageGrid `0.2.0-alpha05.1` is a development alpha, not a stage-ready 1.0 release. CI validates unit tests and debug assembly, but final qualification still requires representative physical Android devices, high track counts, USB reconnect/routing tests, live path stress tests, import-performance profiling and crash/session-recovery validation.
