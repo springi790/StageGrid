@@ -30,9 +30,7 @@ import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.model.TrackType
 import dev.stagegrid.session.PerformanceSessionStore
 import dev.stagegrid.settings.AppSettingsRepository
-import java.io.BufferedInputStream
 import java.io.File
-import java.io.FileInputStream
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -238,7 +236,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     private fun backupOperationAllowed(): Boolean {
         val p = player.value
         val nativeBusy = nativeGuideState.value.rendering || nativeGuideState.value.reanalyzing
-        val busy = p.isPlaying || p.isCountingIn || importState.value.running || nativeBusy || backupState.value.running
+        val busy = p.isPlaying || p.isCountingIn || p.crossfadeInProgress || importState.value.running || nativeBusy || backupState.value.running
         if (!busy) return true
         _backupState.value = BackupUiState(error = "Stop playback and wait for current processing to finish before backup or restore.")
         return false
@@ -391,7 +389,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun deleteSong(song: SongEntity) {
         val guideBusy = nativeGuideState.value.rendering || nativeGuideState.value.reanalyzing
-        val busy = player.value.isPlaying || player.value.isCountingIn || importState.value.running ||
+        val busy = player.value.isPlaying || player.value.isCountingIn || player.value.crossfadeInProgress || importState.value.running ||
             backupState.value.running || guideBusy || _libraryActionState.value.deletingSongId != null
         if (busy) {
             _libraryActionState.value = LibraryActionUiState(error = "Stop playback and wait for current processing to finish before deleting a multitrack.")
@@ -676,15 +674,21 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setlistLiveNext() {
         val live = _setlistLiveState.value
-        if (!live.active) return
+        if (!live.active || player.value.crossfadeInProgress) return
         val bundle = _selectedSetlist.value ?: return
-        val next = SetlistLiveNavigation.nextIndex(live.currentIndex, bundle.songs.size) ?: return
-        loadSetlistLiveIndex(next)
+        val nextIndex = SetlistLiveNavigation.nextIndex(live.currentIndex, bundle.songs.size) ?: return
+        val target = bundle.songs.getOrNull(nextIndex) ?: return
+
+        if (live.nextReady && player.value.preloadedSongId == target.id) {
+            promoteSetlistLiveIndex(bundle, nextIndex)
+        } else {
+            loadSetlistLiveIndex(nextIndex)
+        }
     }
 
     fun setlistLivePrevious() {
         val live = _setlistLiveState.value
-        if (!live.active) return
+        if (!live.active || player.value.crossfadeInProgress) return
         val bundle = _selectedSetlist.value ?: return
         val previous = SetlistLiveNavigation.previousIndex(live.currentIndex, bundle.songs.size) ?: return
         loadSetlistLiveIndex(previous)
@@ -692,13 +696,36 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun exitSetlistLive() {
         setlistPreloadSerial.incrementAndGet()
+        app.audio.clearPreloadedSong()
         _setlistLiveState.value = SetlistLiveUiState()
+    }
+
+    private fun promoteSetlistLiveIndex(bundle: SetlistBundle, index: Int) {
+        val target = bundle.songs.getOrNull(index) ?: return
+        val serial = setlistPreloadSerial.incrementAndGet()
+        _setlistLiveState.value = buildSetlistLiveState(bundle, index).copy(preloadingNext = false, nextReady = false)
+        app.audio.promotePreloadedSong(SETLIST_CROSSFADE_MS)
+        viewModelScope.launch {
+            val deadline = System.currentTimeMillis() + SETLIST_PROMOTE_TIMEOUT_MS
+            while (System.currentTimeMillis() < deadline && player.value.song?.id != target.id && !player.value.errorMessage.orEmpty().contains("promot", ignoreCase = true)) {
+                delay(40)
+            }
+            if (serial != setlistPreloadSerial.get()) return@launch
+            if (player.value.song?.id == target.id) {
+                refreshNativeGuideState(target.id)
+                scheduleNextSongPreload(bundle, index)
+            } else {
+                _setlistLiveState.value = _setlistLiveState.value.copy(error = "Crossfade handoff failed. Loading the song normally.")
+                loadSetlistLiveIndex(index)
+            }
+        }
     }
 
     private fun loadSetlistLiveIndex(index: Int) {
         val bundle = _selectedSetlist.value ?: return
         val target = bundle.songs.getOrNull(index) ?: return
         setlistPreloadSerial.incrementAndGet()
+        app.audio.clearPreloadedSong()
         _setlistLiveState.value = buildSetlistLiveState(bundle, index)
         val unloadCurrent = player.value.song?.id != null && player.value.song?.id != target.id
         loadSongInternal(target.id, unloadCurrent = unloadCurrent)
@@ -720,48 +747,43 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun scheduleNextSongPreload(bundle: SetlistBundle, currentIndex: Int) {
+        val currentSong = bundle.songs.getOrNull(currentIndex) ?: return
         val next = bundle.songs.getOrNull(currentIndex + 1)
         val serial = setlistPreloadSerial.incrementAndGet()
         if (next == null) {
+            app.audio.clearPreloadedSong()
             _setlistLiveState.value = _setlistLiveState.value.copy(preloadingNext = false, nextReady = false)
             return
         }
         _setlistLiveState.value = _setlistLiveState.value.copy(preloadingNext = true, nextReady = false)
         viewModelScope.launch {
-            delay(SETLIST_PRELOAD_DELAY_MS)
-            val ready = withContext(Dispatchers.IO) { warmNextSong(next.id) }
+            val loadDeadline = System.currentTimeMillis() + SETLIST_CURRENT_LOAD_TIMEOUT_MS
+            while (System.currentTimeMillis() < loadDeadline && (player.value.song?.id != currentSong.id || player.value.engineState == EngineState.LOADING)) {
+                if (serial != setlistPreloadSerial.get()) return@launch
+                delay(60)
+            }
             if (serial != setlistPreloadSerial.get()) return@launch
+            if (player.value.song?.id != currentSong.id) return@launch
+            delay(SETLIST_PRELOAD_DELAY_MS)
+            if (serial != setlistPreloadSerial.get()) return@launch
+
+            app.audio.preloadSong(next.id)
+            val deadline = System.currentTimeMillis() + SETLIST_PRELOAD_TIMEOUT_MS
+            while (System.currentTimeMillis() < deadline && player.value.preloadedSongId != next.id) {
+                if (serial != setlistPreloadSerial.get()) return@launch
+                if (player.value.errorMessage?.contains("preload", ignoreCase = true) == true) break
+                delay(60)
+            }
+            if (serial != setlistPreloadSerial.get()) return@launch
+            val ready = player.value.preloadedSongId == next.id
             val current = _setlistLiveState.value
-            if (!current.active || current.nextSongTitle != next.title) return@launch
+            if (!current.active || current.currentIndex != currentIndex) return@launch
             _setlistLiveState.value = current.copy(
                 preloadingNext = false,
                 nextReady = ready,
-                error = if (ready) null else "The next song could not be prepared. It can still be loaded normally.",
+                error = if (ready) null else "The next song could not be fully preloaded. It can still be loaded normally.",
             )
         }
-    }
-
-    private suspend fun warmNextSong(songId: String): Boolean {
-        val bundle = app.repository.getSongBundle(songId) ?: return false
-        if (bundle.tracks.isEmpty()) return false
-        val buffer = ByteArray(SETLIST_PRELOAD_BUFFER_BYTES)
-        for (track in bundle.tracks) {
-            val file = File(track.filePath)
-            if (!file.isFile || file.length() <= 44L) return false
-            try {
-                BufferedInputStream(FileInputStream(file), SETLIST_PRELOAD_BUFFER_BYTES).use { input ->
-                    var remaining = SETLIST_PRELOAD_BYTES_PER_TRACK
-                    while (remaining > 0) {
-                        val read = input.read(buffer, 0, minOf(buffer.size, remaining))
-                        if (read <= 0) break
-                        remaining -= read
-                    }
-                }
-            } catch (_: Throwable) {
-                return false
-            }
-        }
-        return true
     }
 
     private suspend fun restorePreviousSession() {
@@ -780,6 +802,8 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         app.audio.setMasterVolume(snapshot.masterVolume)
 
         var recoveredSetlistName: String? = null
+        var recoveredBundle: SetlistBundle? = null
+        var recoveredIndex = -1
         if (snapshot.setlistActive && snapshot.setlistId != null) {
             val bundle = withContext(Dispatchers.IO) { app.repository.getSetlistBundle(snapshot.setlistId) }
             if (bundle != null) {
@@ -788,7 +812,8 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
                 if (currentIndex >= 0) {
                     _setlistLiveState.value = buildSetlistLiveState(bundle, currentIndex)
                     recoveredSetlistName = bundle.setlist.name
-                    scheduleNextSongPreload(bundle, currentIndex)
+                    recoveredBundle = bundle
+                    recoveredIndex = currentIndex
                 }
             }
         }
@@ -796,6 +821,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         withContext(Dispatchers.IO) { recoverNativeGuideSections(song) }
         refreshNativeGuideState(song.id)
         app.audio.loadSong(song.id, snapshot.positionMs)
+        if (recoveredBundle != null && recoveredIndex >= 0) scheduleNextSongPreload(recoveredBundle, recoveredIndex)
         _sessionRecoveryState.value = SessionRecoveryUiState(
             recovered = true,
             songTitle = song.title,
@@ -806,7 +832,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     private suspend fun persistCurrentSession() {
         val p = player.value
         val song = p.song ?: return
-        if (p.engineState == EngineState.LOADING || p.engineState == EngineState.ERROR) return
+        if (p.engineState == EngineState.LOADING || p.engineState == EngineState.ERROR || p.crossfadeInProgress) return
         val live = _setlistLiveState.value
         val snapshot = PerformanceSessionStore.Snapshot(
             songId = song.id,
@@ -838,8 +864,10 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
             0xFF5B8CFF, 0xFF2FBF9F, 0xFF9C6CFF, 0xFFF39C55, 0xFFE85D75, 0xFF4FB6E9,
         )
         private const val SESSION_SNAPSHOT_INTERVAL_MS = 1_000L
-        private const val SETLIST_PRELOAD_DELAY_MS = 450L
-        private const val SETLIST_PRELOAD_BYTES_PER_TRACK = 512 * 1024
-        private const val SETLIST_PRELOAD_BUFFER_BYTES = 64 * 1024
+        private const val SETLIST_PRELOAD_DELAY_MS = 300L
+        private const val SETLIST_PRELOAD_TIMEOUT_MS = 8_000L
+        private const val SETLIST_CURRENT_LOAD_TIMEOUT_MS = 8_000L
+        private const val SETLIST_PROMOTE_TIMEOUT_MS = 4_000L
+        private const val SETLIST_CROSSFADE_MS = 700
     }
 }
