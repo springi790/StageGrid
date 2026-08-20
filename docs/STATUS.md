@@ -1,4 +1,4 @@
-# Implementation status — 0.2.0-alpha06
+# Implementation status — 0.2.0-alpha07
 
 ## Implemented in source
 
@@ -9,6 +9,11 @@
 - Linked document-provider folder browsing, including Google Drive when exposed by Android.
 - WAV playback plus one-time MP3 → PCM WAV normalization.
 - Import percentage/stage reporting, metadata editing and Native Guide analysis/reconstruction.
+- Confirmed local multitrack deletion from Library.
+- A loaded song is unloaded before deletion so native WAV readers no longer hold its files.
+- Song files are first staged outside the live library path; if Room deletion fails, StageGrid attempts to restore the staged folder.
+- Room foreign-key cascades remove the deleted song's tracks, sections and setlist references.
+- External `.stagebackup` files are not modified by local-song deletion.
 
 ### Portable backup / restore — alpha06
 
@@ -40,6 +45,7 @@
 - Manual section choices wait for the explicit `endMs` of the current section.
 - Destination enters at its explicit `startMs`.
 - Section Loop / Exit Loop and native 1/2-bar count-in.
+- Player copy now describes a queued manual change as waiting for the current section to end rather than the superseded next-bar policy.
 
 ### Native Guide — alpha06 arrangement layer
 
@@ -53,11 +59,22 @@
 - Short cue PCM is loaded/resampled off the realtime thread and mixed against the native master timeline.
 - JVM coverage exists for arrangement cue timing and section-boundary policy.
 
+### Setlist Live — alpha07
+
+- A selected non-empty setlist can enter **Setlist Live** mode.
+- Player shows setlist name, current song, next song, position in setlist, Previous/Next and Exit Setlist controls.
+- NEXT/PREV stop and unload the current native song graph before loading the destination song when changing songs.
+- Destination songs are loaded stopped; StageGrid does not auto-emit audio after a NEXT/PREV action.
+- The next song receives a bounded warm preload after current-song loading begins: StageGrid reads the first 512 KiB of each local normalized track into the operating-system file cache.
+- Warm-preload work runs on an IO dispatcher and does not create a second native decoder graph.
+- Player reports whether next-song warm preload is running or ready.
+- Deterministic unit coverage exists for initial/current/previous/next setlist index policy.
+
 ### UX / live operation
 
 - Simplified Player/Mixer terminology and routing presets.
 - Foreground service, MediaSession, audio focus, LIVE mode and Performance Lock.
-- Basic local setlists.
+- Local setlists plus alpha07 Setlist Live navigation.
 - Spanish and English UI strings.
 
 ## Implemented, but not yet stage-qualified
@@ -68,6 +85,8 @@
 - Backup/restore is a manual snapshot workflow, not continuous Drive synchronization.
 - Guide recognition is sample-pack matching, not arbitrary speech-to-text.
 - Guide fingerprint cache is currently in-memory per app process.
+- Setlist alpha07 preload is OS file-cache warming, not gapless dual-engine preload/crossfade.
+- Local deletion staging/rollback needs physical-device validation under low-storage and forced-failure conditions.
 - USB device selection exists, but arbitrary multichannel routing is not implemented.
 
 ## Deliberately not exposed as finished
@@ -75,7 +94,7 @@
 - Full arbitrary arrangement graph with relocation of all Guide/count/dynamic events.
 - In-place Guide audio re-analysis after changing/installing a pack.
 - Persistent on-disk Guide fingerprint cache.
-- Setlist Live NEXT/PREV + next-song preload.
+- Gapless/overlapped next-song decoder graph and crossfade transitions.
 - Persisted/restorable in-progress performance session.
 - Waveform cache/editor.
 - AAC/M4A/FLAC/OGG expansion.
@@ -87,4 +106,4 @@
 
 ## Qualification status
 
-StageGrid `0.2.0-alpha06` is a development alpha. CI validates unit tests and debug assembly; stage qualification still requires physical Android devices, high stem counts, repeated section/Loop stress, USB reconnect/routing tests, backup/restore testing against real Drive/local providers, low-storage failure testing and crash/session-recovery validation.
+StageGrid `0.2.0-alpha07` is a development alpha. CI validates unit tests and debug assembly; stage qualification still requires physical Android devices, high stem counts, repeated section/Loop stress, USB reconnect/routing tests, Setlist Live NEXT/PREV and warm-preload validation, safe-deletion failure/low-storage tests, backup/restore testing against real Drive/local providers and crash/session-recovery validation.
