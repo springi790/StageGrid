@@ -121,7 +121,7 @@ object NativeGuideRenderer {
         sectionProposals: List<GuideCueAnalyzer.SectionProposal>,
     ) {
         val root = JSONObject()
-            .put("version", 1)
+            .put("version", 2)
             .put("detectedLanguage", analysis.dominantLanguage ?: JSONObject.NULL)
             .put("outputLanguage", outputLanguage ?: JSONObject.NULL)
             .put("candidateCount", analysis.candidateCount)
@@ -146,7 +146,24 @@ object NativeGuideRenderer {
                     .put("confidence", section.confidence.toDouble()),
             )
         }
-        root.put("cues", cues).put("sections", sections)
+        val diagnostics = JSONArray()
+        analysis.diagnostics.forEach { diagnostic ->
+            diagnostics.put(
+                JSONObject()
+                    .put("cueMs", diagnostic.cueMs)
+                    .put("bestKey", diagnostic.bestKey ?: JSONObject.NULL)
+                    .put("bestKind", diagnostic.bestKind?.name ?: JSONObject.NULL)
+                    .put("bestLanguage", diagnostic.bestLanguage ?: JSONObject.NULL)
+                    .put("bestScore", diagnostic.bestScore.toDouble())
+                    .put("secondKey", diagnostic.secondKey ?: JSONObject.NULL)
+                    .put("secondScore", diagnostic.secondScore.toDouble())
+                    .put("accepted", diagnostic.accepted)
+                    .put("reason", diagnostic.reason),
+            )
+        }
+        root.put("cues", cues)
+            .put("sections", sections)
+            .put("diagnostics", diagnostics)
         file.parentFile?.mkdirs()
         file.writeText(root.toString(2))
     }
