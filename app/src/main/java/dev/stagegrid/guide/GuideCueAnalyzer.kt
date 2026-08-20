@@ -69,6 +69,8 @@ object GuideCueAnalyzer {
     private const val RECOVERY_HIGH_SCORE = 0.90f
     private const val DEDUPE_WINDOW_MS = 180L
     private const val MAX_CANDIDATES = 2_400
+    private const val INTRA_PHRASE_MERGE_WINDOWS = 24 // 240 ms: syllable gaps, not separate Guide calls.
+    private const val CONTINUOUS_ACTIVITY_WINDOWS = 35 // 350 ms before local-onset recovery is allowed.
 
     @Volatile
     private var templateCache: TemplateCache? = null
@@ -201,10 +203,10 @@ object GuideCueAnalyzer {
             val semantic = "${template.sample.kind.name}:${template.sample.key}"
             val previous = semanticScores[semantic]
             if (previous == null || match.score > previous) semanticScores[semantic] = match.score
-            if (best == null || match.score > best!!.score) best = match
+            val currentBest = best
+            if (currentBest == null || match.score > currentBest.score) best = match
         }
-        val chosen = best
-        if (chosen == null) return Evaluation(candidate, null, -1f)
+        val chosen = best ?: return Evaluation(candidate, null, -1f)
         val chosenSemantic = "${chosen.template.sample.kind.name}:${chosen.template.sample.key}"
         var second = -1f
         for ((semantic, score) in semanticScores) {
@@ -361,21 +363,31 @@ object GuideCueAnalyzer {
         val floorCount = max(1, sorted.size / 5)
         val noise = sorted.take(floorCount).average().toFloat()
 
-        // Two activity thresholds avoid a loud phrase hiding quieter cues elsewhere in the stem.
+        // A Guide phrase often contains 50-200 ms gaps between syllables. Treat those as one
+        // candidate region; otherwise an internal syllable can be mistaken for a new cue.
         val strongThreshold = max(0.0025f, max(noise * 4.0f, peak * 0.045f))
         val relaxedThreshold = max(0.0015f, max(noise * 2.2f, peak * 0.012f))
         val candidates = linkedSetOf<Int>()
-        candidates += runStarts(envelope, strongThreshold, mergeGapWindows = 10)
-        candidates += runStarts(envelope, relaxedThreshold, mergeGapWindows = 6)
+        candidates += runStarts(envelope, strongThreshold, mergeGapWindows = INTRA_PHRASE_MERGE_WINDOWS)
+        candidates += runStarts(envelope, relaxedThreshold, mergeGapWindows = INTRA_PHRASE_MERGE_WINDOWS)
 
-        // Compressed Guides sometimes never return fully below threshold between two calls. Detect
-        // local energy attacks as additional candidate onsets in those long active regions.
+        // Local attack recovery is only useful when compression/noise has kept the Guide above the
+        // relaxed floor for a sustained period. If there was a recent quiet gap, runStarts already
+        // represents the phrase and adding each syllable would create false duplicate matches.
         val minimumRise = max(noise * 0.60f, peak * 0.0025f)
+        var lastBelowRelaxed = -CONTINUOUS_ACTIVITY_WINDOWS
         for (i in 3 until envelope.size - 2) {
+            if (envelope[i - 1] < relaxedThreshold) lastBelowRelaxed = i - 1
             val before = (envelope[i - 3] + envelope[i - 2] + envelope[i - 1]) / 3f
             val current = (envelope[i] + envelope[i + 1] + envelope[i + 2]) / 3f
             val ratio = current / (before + max(0.00001f, noise * 0.20f))
-            if (current >= relaxedThreshold && current - before >= minimumRise && ratio >= 1.30f) {
+            val sustainedActivity = i - lastBelowRelaxed >= CONTINUOUS_ACTIVITY_WINDOWS
+            if (
+                sustainedActivity &&
+                current >= relaxedThreshold &&
+                current - before >= minimumRise &&
+                ratio >= 1.30f
+            ) {
                 candidates += i
             }
         }
