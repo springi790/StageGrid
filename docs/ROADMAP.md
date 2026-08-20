@@ -27,16 +27,17 @@ Delivered in source: local import/library, shared-clock Oboe stereo engine, WAV 
 - simplified section editing based on the playhead, with precise bar/beat editing kept optional;
 - clearer visual hierarchy and contextual explanations.
 
-### 0.2.0-alpha03 — quantized sections + count-in
+### 0.2.0-alpha03 — initial section scheduling + native count-in
 
-- live section jumps queue to the **next musical bar boundary** when a valid Musical Grid exists;
-- fallback to the current section boundary when a valid grid is unavailable;
+- introduced live section scheduling against the Musical Grid;
+- initial behavior queued to the next musical bar when possible;
 - selectable section count-in: off, 1 bar or 2 bars;
 - sample-clock count-in generated in the native engine rather than with UI timers/coroutines;
 - virtual negative-time pre-roll allows count-in even for a section beginning at the start of the song;
 - imported stems are gated during count-in and enter together at the target frame;
-- count-in choice is persisted in DataStore;
-- Player clearly shows the queued next-bar section and active count-in target.
+- count-in choice is persisted in DataStore.
+
+The initial next-bar policy was later superseded by alpha05.1: **manual section choices now finish the authored current section before jumping.**
 
 ### 0.2.0-alpha04 — native Guide recognition + automatic section proposals
 
@@ -80,22 +81,55 @@ Delivered in source: local import/library, shared-clock Oboe stereo engine, WAV 
 - atomically hand all tracks to the prepared bank from the realtime callback only after every track reports the same ready generation;
 - reject a replacement if it misses the conservative point where old and new paths could first diverge;
 - expose successful path swaps, missed safe windows and pending-path state through native diagnostics;
-- give quantized section taps a 180 ms preparation margin; when the immediate bar line is too close, queue the following bar instead of forcing an unsafe last-millisecond handoff;
-- keep generated native Guide audio in the same shared-clock bank handoff as every other stem.
+- introduced a temporary preparation-aware next-bar policy for very late taps;
+- keep generated native Guide audio in the same shared-clock bank handoff as every other stem;
+- harden rapid successive path changes so a bank already claimed by the callback cannot be rewritten concurrently.
 
-The native Guide event sidecar remains the foundation for the later arrangement-aware Guide engine. Alpha05 keeps the already-rendered Guide audio synchronized through the same timeline path as the stems, but it does not yet synthesize/move a spoken pre-section cue when an arbitrary future ReOrder changes where that cue should occur.
+### 0.2.0-alpha05.1 — manual section-boundary transitions
+
+- manual section selection waits for the **explicit `endMs` of the current section** instead of an internal bar boundary;
+- destination enters at its explicit `startMs`;
+- the Musical Grid remains authoritative for section authoring/snapping, Click, count-in and bar/beat display, but no longer shortens a manually selected transition;
+- the alpha05 double-buffered path engine still prepares and hands all stems over together;
+- stale UI observations after an already-passed boundary fall back to the requested destination rather than scheduling an obsolete transition.
+
+### 0.2.0-alpha06 — portable backup/restore + first arrangement-aware Guide layer
+
+Portable disaster-recovery backup:
+
+- create a self-contained `.stagebackup` through Android Storage Access Framework;
+- allow the user to choose a local folder, compatible removable/USB storage, Google Drive when exposed as a DocumentsProvider, or another writable document provider;
+- include local song audio, normalized stems, metadata, sections, mixer state persisted with tracks, setlists/order, Native Guide sidecars/generated files and the currently installed user-supplied Guide pack;
+- store song-relative paths instead of device-specific app-private absolute paths;
+- record byte size + SHA-256 for every payload file;
+- stage and validate the complete archive before installing restored data;
+- merge/replace matching stable IDs while preserving unrelated local library records;
+- expose backup/restore percentage, stage and current detail;
+- unload native song decoders before restore replaces private WAV files;
+- keep this as an explicit snapshot workflow rather than silently introducing background cloud synchronization.
+
+First arrangement-aware Native Guide layer:
+
+- keep alpha05.1 section-boundary transition semantics;
+- resolve a manually selected destination section back to its canonical persisted Guide cue key;
+- preload/resample the selected spoken section sample outside the realtime callback;
+- announce the chosen target approximately one bar before the current section end when the choice is early enough;
+- move a late choice shortly after the tap only when a useful spoken-cue window still exists;
+- skip an extremely late spoken cue instead of cutting it or destabilizing the transition;
+- temporarily suppress the fixed rendered Guide around the replacement section-name call to avoid conflicting spoken section names;
+- mix the prepared replacement cue on the same native master timeline as stems and Click.
 
 ### Remaining 0.2 work
 
-- arrangement-aware relocation/synthesis of native Guide events after live section reorder/path changes;
+- expand arrangement-aware Guide handling from the selected **section-name call** to count/dynamic cues and complete arbitrary live arrangement paths;
 - re-analyze an already imported song against a newly installed Guide pack without requiring a fresh song import;
 - persistent on-disk Guide fingerprint cache/index if physical-device profiling shows first-analysis preparation remains significant;
 - setlist live NEXT/PREV song transport and next-song preload;
 - persisted/restorable performance session without auto-emitting audio after a crash;
-- first-run onboarding for import, Click/Guide, routing and sections;
+- first-run onboarding for import, Click/Guide, routing, sections and backup/restore;
 - additional accessibility/large-touch-target pass for live use;
-- physical-device stress validation of double-buffered loops/jumps/count-in/native Guides under high track counts;
-- physical-device import profiling to identify the next highest-cost stages after the alpha04.2 optimizations.
+- physical-device stress validation of double-buffered loops/jumps/count-in/arrangement-aware Guides under high track counts;
+- physical-device import profiling and real-provider backup/restore validation, including Drive and low-storage/failure scenarios.
 
 ## 0.3 — expanded decoder/cache layer
 
@@ -119,6 +153,7 @@ The native Guide event sidecar remains the foundation for the later arrangement-
 - bar-aware loops, finite/infinite loop state, exit-loop-at-boundary;
 - live reorder and pre-roll;
 - native Guide events attached to arrangement/section nodes rather than a fixed rendered timeline;
+- full count/dynamic cue relocation across virtual paths;
 - gapless next-song transition/crossfade architecture.
 
 ## 0.6 — DSP
@@ -143,12 +178,12 @@ The native Guide event sidecar remains the foundation for the later arrangement-
 
 ## 0.9 — portable projects and remote
 
-- `.stagepack` export/import;
-- library backup;
+- `.stagepack` project export/import for deliberate project interchange beyond disaster-recovery backup;
+- optional richer backup history/provider-management workflows if they prove useful after alpha06 field testing;
 - LAN HOST/REMOTE pairing with PIN and trusted-device list.
 
 ## 1.0 qualification gate
 
-Do not call the project stage-ready until the acceptance test, synchronization test, USB routing test, crash/reconnect test and representative 16/32-track device stress matrix all pass on physical hardware.
+Do not call the project stage-ready until the acceptance test, synchronization test, USB routing test, crash/reconnect test, backup/restore recovery test and representative 16/32-track device stress matrix all pass on physical hardware.
 
-The 1.0 usability gate also requires that a new user can import a song, start playback, enable/disable Click and Guide, choose a common stereo routing preset, and navigate sections without needing to understand internal audio-engineering terminology.
+The 1.0 usability gate also requires that a new user can import a song, start playback, enable/disable Click and Guide, choose a common stereo routing preset, navigate sections, create a backup and restore it without needing to understand internal audio-engineering terminology.
