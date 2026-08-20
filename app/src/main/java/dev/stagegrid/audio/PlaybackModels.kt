@@ -1,5 +1,6 @@
 package dev.stagegrid.audio
 
+import dev.stagegrid.model.OutputBus
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.model.StereoRoute
@@ -25,6 +26,7 @@ data class PlayerState(
     val guideEnabled: Boolean = true,
     val clickSubdivision: ClickSubdivision = ClickSubdivision.QUARTER,
     val clickRoute: StereoRoute = StereoRoute.BOTH,
+    val clickBus: OutputBus = OutputBus.OUT_1_2,
     val masterVolume: Float = 1f,
     val loopSectionId: String? = null,
     val queuedSectionId: String? = null,
@@ -33,6 +35,10 @@ data class PlayerState(
     val countInRemainingMs: Long = 0L,
     val countInTargetSectionId: String? = null,
     val selectedOutputDeviceId: Int? = null,
+    val requestedOutputChannels: Int = 2,
+    val outputChannelCount: Int = 2,
+    val outputFallback: Boolean = false,
+    val outputNotice: String? = null,
     val errorMessage: String? = null,
 ) {
     val isPlaying: Boolean get() = engineState == EngineState.PLAYING
