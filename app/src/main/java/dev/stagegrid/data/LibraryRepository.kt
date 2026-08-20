@@ -22,6 +22,18 @@ class LibraryRepository(private val db: StageGridDatabase) {
     val songs: Flow<List<SongEntity>> = db.songDao().observeAll()
     val setlists: Flow<List<SetlistEntity>> = db.setlistDao().observeAll()
 
+    @Volatile
+    private var sectionMutationListener: (suspend (String) -> Unit)? = null
+
+    /**
+     * Called only for explicit single-section edits/deletes through saveSection/deleteSection.
+     * Bulk import/recovery replacements intentionally bypass this hook so automatic analysis does
+     * not masquerade as a musician-authored section map.
+     */
+    fun setSectionMutationListener(listener: suspend (String) -> Unit) {
+        sectionMutationListener = listener
+    }
+
     suspend fun getSong(songId: String): SongEntity? = db.songDao().get(songId)
 
     suspend fun getSongBundle(songId: String): SongBundle? = db.withTransaction {
@@ -65,7 +77,12 @@ class LibraryRepository(private val db: StageGridDatabase) {
     suspend fun updateSong(song: SongEntity) = db.songDao().update(song)
     suspend fun updateTrack(track: TrackEntity) = db.trackDao().update(track)
     suspend fun saveTrack(track: TrackEntity) = db.trackDao().insertAll(listOf(track))
-    suspend fun saveSection(section: SectionEntity) = db.sectionDao().insert(section)
+
+    suspend fun saveSection(section: SectionEntity) {
+        db.sectionDao().insert(section)
+        notifyManualSectionMutation(section.songId)
+    }
+
     suspend fun getSections(songId: String): List<SectionEntity> = db.sectionDao().getForSong(songId)
 
     suspend fun replacePlaceholderSections(
@@ -98,7 +115,11 @@ class LibraryRepository(private val db: StageGridDatabase) {
         true
     }
 
-    suspend fun deleteSection(section: SectionEntity) = db.sectionDao().delete(section)
+    suspend fun deleteSection(section: SectionEntity) {
+        db.sectionDao().delete(section)
+        notifyManualSectionMutation(section.songId)
+    }
+
     suspend fun deleteSong(song: SongEntity) = db.songDao().delete(song)
 
     suspend fun createSetlist(name: String): SetlistEntity {
@@ -132,5 +153,10 @@ class LibraryRepository(private val db: StageGridDatabase) {
                 lastPlayedAtEpochMs = System.currentTimeMillis(),
             ),
         )
+    }
+
+    private suspend fun notifyManualSectionMutation(songId: String) {
+        val listener = sectionMutationListener ?: return
+        runCatching { listener(songId) }
     }
 }
