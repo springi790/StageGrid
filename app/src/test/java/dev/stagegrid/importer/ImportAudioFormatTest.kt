@@ -7,15 +7,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImportAudioFormatTest {
-    @Test fun recognizesPlayable03FormatsCaseInsensitively() {
+    @Test fun recognizes03FormatsCaseInsensitively() {
         assertEquals(ImportAudioFormat.WAV, ImportAudioFormat.fromFileName("Drums.WAV"))
         assertEquals(ImportAudioFormat.MP3, ImportAudioFormat.fromFileName("Bass.Mp3"))
         assertEquals(ImportAudioFormat.M4A, ImportAudioFormat.fromFileName("Guide.M4A"))
         assertEquals(ImportAudioFormat.AAC, ImportAudioFormat.fromFileName("Click.AaC"))
+        assertEquals(ImportAudioFormat.FLAC, ImportAudioFormat.fromFileName("Keys.FLaC"))
+        assertEquals(ImportAudioFormat.OGG, ImportAudioFormat.fromFileName("Vox.OgG"))
     }
 
-    @Test fun compressedPlatformFormatsNormalizeToWav() {
-        listOf(ImportAudioFormat.MP3, ImportAudioFormat.M4A, ImportAudioFormat.AAC).forEach { format ->
+    @Test fun everyNonWavFormatUsesImportTimeNormalization() {
+        ImportAudioFormat.entries.filter { it != ImportAudioFormat.WAV }.forEach { format ->
             assertTrue(format.playable)
             assertTrue(format.normalizeToWav)
         }
@@ -23,11 +25,10 @@ class ImportAudioFormatTest {
         assertFalse(ImportAudioFormat.WAV.normalizeToWav)
     }
 
-    @Test fun flacAndOggRemainDetectedButNotPromotedToPlayableYet() {
-        assertEquals(ImportAudioFormat.FLAC, ImportAudioFormat.fromFileName("Keys.flac"))
-        assertEquals(ImportAudioFormat.OGG, ImportAudioFormat.fromFileName("Vox.ogg"))
-        assertFalse(ImportAudioFormat.FLAC.playable)
-        assertFalse(ImportAudioFormat.OGG.playable)
+    @Test fun detectedAndPlayableSetsCoverAll03Formats() {
+        val expected = setOf("wav", "mp3", "m4a", "aac", "flac", "ogg")
+        assertEquals(expected, ImportAudioFormat.detectedExtensions)
+        assertEquals(expected, ImportAudioFormat.playableExtensions)
     }
 
     @Test fun unrelatedFilesAreIgnored() {
