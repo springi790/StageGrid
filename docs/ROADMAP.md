@@ -1,121 +1,127 @@
 # StageGrid technical roadmap
 
-This roadmap separates implemented source from future product intent.
-
-Product rule for every milestone: **the basic live-performance workflow must remain understandable without requiring audio-engineering terminology.**
-
-## Accelerated development policy
-
-To reduce project overhead, feature versions may collapse several internal alpha steps into one **final integration alpha**. The integration build still implements the milestone scope and documents the physical-device validation that remains. Skipping intermediate tags never means skipping qualification gates.
+StageGrid uses an accelerated alpha policy: when practical, a feature version is implemented directly as its final integration alpha. Intermediate alpha tags can be skipped, but validation gates are never skipped.
 
 ## Delivered foundation
 
-### 0.1 — shared-clock MVP
+### 0.1–0.2
 
-Delivered: local library/import, WAV playback, compressed-source normalization foundation, one Oboe transport clock, mixer, foreground playback, MediaSession, diagnostics, Native Click and stereo `L / L+R / R` routing.
+Shared-clock native multitrack playback, Room library, import, mixer, Native Click, Musical Grid, sections, Native Guide, live section transitions, Setlist Live, session recovery and portable `.stagebackup`.
 
-### 0.2 — live workflow / sections / Native Guide
+### 0.3 — media/cache layer — FEATURE COMPLETE
 
-Delivered through `0.2.0-alpha10.2`: Musical Grid, editable sections, native count-in, Native Guide recognition/reconstruction/reanalysis, double-buffered section/Loop paths, `.stagebackup`, Setlist Live, stopped session recovery and recognition hardening.
+Delivered as `0.3.0-alpha05`:
 
-### 0.3 — decoder / waveform / storage layer — DELIVERED AS `0.3.0-alpha05`
+- WAV/MP3/M4A/AAC/FLAC/OGG import boundary;
+- non-WAV normalization to playback WAV;
+- waveform peak cache and UI;
+- storage/cache manager.
 
-Delivered:
+### 0.4 — multichannel USB routing — FEATURE COMPLETE IN SOURCE
 
-- WAV/MP3/M4A/AAC/FLAC/OGG import policy;
-- non-WAV normalization through Android `MediaExtractor` / `MediaCodec` before realtime playback;
-- versioned absolute-timeline waveform peak cache;
-- Player and Section Editor waveform UI;
-- storage accounting and safe regenerable-cache cleanup.
+Delivered as `0.4.0-alpha05`:
 
-Release: `0.3.0-alpha05` / `versionCode 23`.
+- 2/4/6/8-channel output negotiation;
+- logical stereo-pair output buses;
+- routing matrix and presets;
+- custom routing;
+- output test tone;
+- disconnect/fallback/reconnect handling;
+- persistent Room/backup routing state.
 
-## 0.4 — multichannel USB routing — FEATURE COMPLETE IN ALPHA
+**Physical USB qualification remains deferred** until representative multichannel hardware is available.
 
-### 0.4.0-alpha01–alpha05 — collapsed integration sprint — DELIVERED AS `0.4.0-alpha05`
+## 0.5 — arrangement engine + Live Workspace — FEATURE COMPLETE IN ALPHA
 
-Implemented source scope:
+Delivered as `0.5.0-alpha05` / `versionCode 33`.
 
-- USB/output devices expose advertised channel capability and StageGrid's preferred 2/4/6/8-channel request;
-- Oboe output negotiation attempts the requested even channel count and safely falls back through lower counts to stereo;
-- actual and requested channel counts are exposed separately in diagnostics;
-- one realtime output matrix supports up to eight physical channels without file I/O or heap allocation in the audio callback;
-- persistent stereo-pair buses: `1/2`, `3/4`, `5/6`, `7/8`;
-- existing `L / L+R / R` routing remains the route **inside** the selected pair, so mono and stereo assignments share one model;
-- unavailable buses fold safely to `1/2` rather than silently muting a track;
-- per-track bus assignment persists through Room schema v3;
-- generated Native Click has its own persistent output bus in DataStore;
-- Native Guide and dynamic arrangement Guide cues follow the Guide track's bus + route;
-- Mixer provides stereo, 4-out, 6-out and 8-out presets plus custom per-track bus/side routing;
-- Settings displays device capability, negotiated stream channels and fallback state;
-- a bounded low-level per-channel output-test tone is available from Settings;
-- selected-interface loss falls back to Android stereo without automatically resuming playback;
-- preferred USB interface is restored when it returns, including best-effort matching when Android assigns a new device ID;
-- `.stagebackup` keeps the existing v1 container while optionally storing `outputBus`; older backups restore to bus `1/2` and new backups preserve 0.4 routing.
+### Virtual arrangement
 
-Release: `0.4.0-alpha05` / `versionCode 28`.
+- persistent per-song `arrangement.json` sidecar;
+- stable arrangement nodes referencing authored sections;
+- live reorder without rewriting WAV files;
+- finite repeat and infinite repeat;
+- Exit at authored boundary;
+- 0/1/2-bar pre-roll on stopped launches;
+- existing synchronized section/loop engine remains authoritative;
+- existing destination Guide phrase preparation remains available for section transitions.
 
-### 0.4 qualification gate
+### Real dual-song preload
 
-Physical hardware still decides what Android/AAudio actually exposes. Before treating 0.4 as stable, verify:
+- second native engine/deck;
+- full next-song WAV reader/decoder-worker preparation;
+- mixer/Click/Guide/output state applied before promotion;
+- Setlist Live `nextReady` represents a real prepared deck rather than filesystem-cache warming;
+- playing handoff uses a bounded master-gain crossfade;
+- stopped/paused handoff remains silent;
+- fallback to normal safe loading when dual-stream preparation is unavailable.
 
-- at least one true 4-output and one true 8-output USB interface where available;
-- reported versus negotiated channel counts and physical channel order;
-- every output with the low-level test tone at a safe monitor/interface level;
-- 4-out and 8-out presets plus custom bus routing;
-- routing persistence after song reload/app restart and `.stagebackup` restore;
-- interface unplug/replug while stopped and while playing;
-- safe stereo fallback and manual Play requirement after a live disconnect;
-- high-track-count playback/section transitions while multichannel output is active;
-- underrun/callback-load behavior compared with stereo.
+### Live Workspace UX
 
-No further feature alpha is planned for 0.4 unless physical testing exposes a release-blocking defect.
+- performance-first Player replacement;
+- responsive phone and tablet layouts;
+- phone bottom sheets for Quick Mix, Arrangement and Setlist;
+- persistent tablet side workspace;
+- large transport and visible NOW/NEXT/QUEUED states;
+- fast arrangement-node selection;
+- Quick Mix volume/mute/solo;
+- Performance Lock hides administration/Advanced surfaces;
+- legacy detailed Player retained as Advanced for section editing, Native Guide and detailed Click/count-in controls.
 
-## 0.5 — full arrangement engine — NEXT FEATURE VERSION
+### 0.5 qualification gate
 
-Complete milestone scope:
+Without an external interface, validate now:
 
-- virtual arrangement graph independent of fixed WAV order;
-- bar-aware finite/infinite loops and exit-loop-at-boundary;
-- live reorder and pre-roll;
-- Guide events attached to arrangement nodes;
-- full count/dynamic relocation across arbitrary virtual paths;
-- true dual-song preload;
-- gapless handoff and crossfade architecture.
+- phone/tablet responsive layout;
+- Play/Pause/Stop/Stop All;
+- arrangement reorder persistence;
+- finite and infinite repeat;
+- Exit at boundary;
+- stopped pre-roll;
+- Setlist next-song preload;
+- crossfade on built-in stereo audio;
+- stopped Next remains silent;
+- Advanced tools still work;
+- arrangement survives app restart and `.stagebackup` round trip;
+- ordinary stereo playback remains stable.
 
-Qualification focus: repeated live edits, loops/exits, transition determinism, memory pressure and dual-song loading.
+When USB hardware is available, add the outstanding 0.4 matrix plus dual-deck behavior through the external interface.
 
-## 0.6 — DSP
+## 0.6 — DSP — NEXT
+
+Planned complete milestone scope:
 
 - tempo/time-stretch processor abstraction;
 - pitch-shift processor abstraction;
-- production library selection based on license/performance/device support;
-- latency compensation across the shared stem clock;
-- bypass/failure behavior that cannot desynchronize stems.
+- production DSP library selection based on license, quality and Android performance;
+- shared-timeline latency compensation across stems;
+- synchronization-safe enable/disable/bypass;
+- parameter changes without restarting independent track clocks;
+- CPU/thermal/underrun diagnostics under DSP load.
 
 ## 0.7 — MIDI
 
 - Android MIDI USB/BLE discovery;
 - MIDI Learn/mapping;
 - timeline MIDI cues;
-- MIDI Clock tied to authoritative transport state;
-- safe reconnect/device-loss behavior.
+- MIDI Clock tied to authoritative transport;
+- reconnect/device-loss handling.
 
 ## 0.8 — pads, automation, timecode
 
 - pad player;
 - volume/pan/mute/bus automation;
-- automation tied to the shared timeline/arrangement model;
-- SMPTE/LTC output with an explicit main-output safety guard.
+- automation tied to arrangement/timeline state;
+- SMPTE/LTC output with strict routing safety.
 
 ## 0.9 — portable projects + remote
 
-- `.stagepack` project interchange beyond disaster-recovery `.stagebackup`;
-- richer backup/provider workflows where field use justifies them;
-- LAN HOST/REMOTE pairing and trusted-device controls;
-- tablet-oriented split workspace;
-- local-first authority when remote connectivity disappears.
+- `.stagepack` project interchange;
+- richer portable project workflows;
+- LAN HOST/REMOTE pairing;
+- tablet/phone remote workspace;
+- local engine remains authoritative through network loss.
 
 ## 1.0 qualification gate
 
-CI success alone is not stage qualification. A 1.0 designation requires representative physical-hardware acceptance for synchronization, prolonged/high-track-count load, USB routing/reconnect, process death, backup recovery and every enabled 0.4–0.9 subsystem.
+1.0 requires physical acceptance for synchronization, high-track-count load, prolonged live use, USB routing/reconnect, dual-deck transitions, DSP, MIDI, automation/timecode, process recovery and project portability. CI success alone is never stage qualification.
