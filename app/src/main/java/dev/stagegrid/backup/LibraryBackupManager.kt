@@ -208,8 +208,6 @@ class LibraryBackupManager(
                 }
         }
 
-        // Keep the currently installed user-supplied Guide pack with the library backup so a new
-        // device can still change Guide languages without requiring the user to find that ZIP again.
         val guideRoot = File(context.filesDir, "guide-packs/current")
         if (guideRoot.isDirectory) {
             guideRoot.walkTopDown().filter { it.isFile }.forEach { file ->
@@ -297,6 +295,7 @@ class LibraryBackupManager(
         .put("solo", track.solo)
         .put("pan", track.pan.toDouble())
         .put("outputRoute", track.outputRoute)
+        .put("outputBus", track.outputBus)
 
     private fun sectionToJson(section: SectionEntity): JSONObject = JSONObject()
         .put("id", section.id)
@@ -478,6 +477,7 @@ class LibraryBackupManager(
                         solo = item.optBoolean("solo", false),
                         pan = item.optDouble("pan", 0.0).toFloat(),
                         outputRoute = item.optString("outputRoute", "BOTH"),
+                        outputBus = item.optInt("outputBus", 0).coerceIn(0, 3),
                     ),
                 )
             }
