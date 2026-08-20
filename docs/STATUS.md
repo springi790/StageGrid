@@ -41,9 +41,10 @@ This document describes what exists in source. Planned work is listed separately
 - BPM/time-signature/grid-offset model.
 - Bar/beat display and snap utilities.
 - Visual/manual Section Editor.
-- Automatic Guide-derived section proposals.
+- Experimental automatic Guide-derived section proposals.
 - Section Loop / Exit Loop.
 - Manual section choices wait for the current explicit `endMs` and enter the requested section at its explicit `startMs`.
+- Explicit single-section edits/deletes are treated as musician-authored structure and trigger Native Guide SECTION cue regeneration.
 
 ### Native Guide foundation
 
@@ -53,13 +54,17 @@ This document describes what exists in source. Planned work is listed separately
 - `native-guide-events.json` sidecar.
 - App-generated `StageGrid Native Guide.wav` on the shared playback clock.
 - Original imported Guide retained muted after successful reconstruction.
-- Automatic editable section proposals and delayed recovery after BPM is supplied.
+- Experimental automatic editable section proposals and delayed recovery after BPM is supplied.
+- Manual section map → authoritative Native Guide SECTION cues.
+- Manual SECTION cue generation can create a Native Guide track even when automatic recognition produced no useful SECTION events.
+- Manual cue naming understands common Spanish/English names and shorthand and preserves available COUNT/DYNAMIC events from prior analysis.
+- Manual sidecars are marked with `sectionCueSource = manual` and `automaticRecognition = experimental`.
 - Per-song output-language switching without stem reimport/reanalysis.
-- In-place reanalysis from the retained original Guide without reconverting other stems.
+- In-place experimental reanalysis from the retained original Guide without reconverting other stems.
 - Persistent energy-fingerprint cache.
 - Arrangement-aware relocation of the selected destination's original lead phrase containing SECTION/COUNT/DYNAMIC calls.
 
-### Alpha10.1 / alpha10.2 recognition hardening
+### Alpha10.1 / alpha10.2 recognition hardening (experimental)
 
 - Phase-robust per-channel energy envelope.
 - Strong + relaxed candidate discovery for uneven Guide gain.
@@ -70,7 +75,7 @@ This document describes what exists in source. Planned work is listed separately
 - When source language is confidently detected, full matching is restricted to that language.
 - Spanish alpha recognition thresholds/path preserved after field feedback showed it reliable.
 
-### Alpha10.3 English Guide structure hardening
+### Alpha10.3 English Guide structure hardening (experimental)
 
 - English alone receives an additional decimated multi-band acoustic fingerprint after source-language detection.
 - The acoustic fingerprint keeps the 10 ms timeline while describing total energy plus four coarse relative speech-band energies.
@@ -82,6 +87,8 @@ This document describes what exists in source. Planned work is listed separately
 - Candidate-level diagnostics are persisted in Native Guide sidecar v2: best key, second key, scores, accepted/rejected state and rejection reason.
 - Existing sidecar v1 files remain readable; missing diagnostics simply produce an empty diagnostic list.
 - JVM tests cover English cues with identical amplitude envelopes but different acoustic content, plus repeated generic Verse numbering.
+
+Automatic Guide recognition is intentionally an experimental aid. It is no longer a prerequisite for a usable section/Guide workflow because manual sections now generate the reliable SECTION cue map.
 
 ### Performance-session recovery
 
@@ -104,10 +111,12 @@ This document describes what exists in source. Planned work is listed separately
 - Foreground service and MediaSession/notification controls.
 - Audio focus handling.
 - LIVE keep-screen-on and Performance Lock.
+- Automatic Guide/reanalysis UI explicitly labels recognition as experimental.
 - Spanish and English UI resources for current exposed functionality.
 
 ## Implemented but not yet stage-qualified
 
+- Manual section → Native Guide cue regeneration across a broad range of section naming styles and physical devices.
 - Alpha10.3 English acoustic discrimination across a broad real-world set of Guide voices/encodes.
 - COUNT recognition quality, especially short spoken numbers.
 - High-stem-count double-buffered Loop/section transitions on representative physical phones/tablets.
@@ -121,6 +130,7 @@ This document describes what exists in source. Planned work is listed separately
 ## Deliberately not finished
 
 - General-purpose speech-to-text Guide recognition.
+- Production-qualified automatic Guide recognition; current recognition remains experimental.
 - Full arbitrary virtual arrangement graph.
 - Global relocation of every Guide event across arbitrary arrangement nodes.
 - Gapless dual-song decoder graph/crossfade.
@@ -135,14 +145,14 @@ This document describes what exists in source. Planned work is listed separately
 
 ## Beta readiness
 
-`0.2.0-alpha10.3` remains a pre-beta field-feedback build because English SECTION recognition exposed a release-blocking defect in alpha10.1/alpha10.2.
+`0.2.0-alpha10.3` no longer treats imperfect automatic English Guide recognition as a beta blocker. Automatic recognition is explicitly experimental, while manual sections provide the authoritative/reliable SECTION cue workflow.
 
-If representative failing English songs stop collapsing into false short labels while previously-good Spanish songs remain stable, the next planned release is `0.2.0-beta01`.
+The next planned release can therefore be `0.2.0-beta01` once this manual-section cue fallback and the existing core live workflows pass normal field feedback.
 
-Beta01 should focus on onboarding, accessibility, recoverable errors, user-facing recognition diagnostics and COUNT-specific polish rather than another large audio subsystem.
+Beta01 should focus on onboarding, accessibility, recoverable errors, clearer experimental-feature presentation, user-facing Guide diagnostics and COUNT-specific polish rather than another large audio subsystem.
 
 Beta02 should focus on qualification/stability: high-track-count stress, repeated live transitions, process death, backup/restore failure cases, Setlist Live and USB stereo behavior.
 
 ## Qualification status
 
-A successful CI build is not equivalent to stage qualification. Stable 0.2 requires representative physical Android hardware and prolonged live-use validation of synchronization, Guide behavior, backups, section transitions, Setlist Live and recovery safety.
+A successful CI build is not equivalent to stage qualification. Stable 0.2 requires representative physical Android hardware and prolonged live-use validation of synchronization, manual/experimental Guide behavior, backups, section transitions, Setlist Live and recovery safety.
