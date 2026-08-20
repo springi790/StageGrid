@@ -2,7 +2,7 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Stems, Native Click, Native Guide and the musical timeline share one real-time audio clock instead of independent Android media players.
 
-> **Current release: `0.2.0-alpha10.3` — English Guide cue discrimination hardening.**
+> **Current release: `0.2.0-alpha10.3` — English Guide hardening + manual section cues.**
 >
 > App version: `versionCode 19`, `versionName 0.2.0-alpha10.3`.
 
@@ -12,11 +12,25 @@ StageGrid is a native Android, local-first multitrack player for live performanc
 
 ## New in 0.2.0-alpha10.3
 
-Physical-device feedback showed an English-specific recognition failure where different calls could collapse into repeated short labels such as `Vamp`, while Spanish recognition remained reliable. Alpha10.3 changes the English classifier instead of globally changing sensitivity again.
+Physical-device feedback showed an English-specific recognition failure where different calls could collapse into repeated short labels such as `Vamp`, while Spanish recognition remained reliable. Alpha10.3 changes the English classifier instead of globally changing sensitivity again, but automatic Guide recognition is now explicitly treated as an **experimental aid rather than a required workflow**.
 
-### English acoustic second-stage matcher
+### Manual sections are authoritative for Guide SECTION cues
 
-Candidate discovery still uses the proven phase-robust 10 ms energy envelope. When the source Guide is confidently detected as English, StageGrid now performs a second-stage acoustic comparison using a lightweight decimated multi-band fingerprint.
+When the musician creates, renames, moves or deletes a section through the section editor, StageGrid now rebuilds the Native Guide SECTION calls from that manual section map. A section cue is scheduled approximately one musical bar before the section start when a valid grid exists (or with a conservative time lead when no valid grid exists).
+
+The manual path:
+
+- works even if automatic Guide recognition found no useful SECTION cues;
+- can create `StageGrid Native Guide.wav` from an installed Guide pack when no Native Guide track existed yet;
+- preserves already available COUNT / DYNAMIC events while replacing automatic SECTION events with the manual structure;
+- maps common Spanish/English section names and shorthand such as `Verso 1`, `Verse 1`, `V1`, `C2`, `In2`, `Puente`, `P`, `Vp`, `Intro` and `Final` to installed cue samples when available;
+- marks `native-guide-events.json` with `sectionCueSource = manual` so later systems know the musician-authored section map is authoritative.
+
+This provides a reliable fallback: automatic recognition can be tested and improved without blocking normal live preparation.
+
+### English acoustic second-stage matcher (experimental)
+
+Candidate discovery still uses the proven phase-robust 10 ms energy envelope. When the source Guide is confidently detected as English, StageGrid performs a second-stage acoustic comparison using a lightweight decimated multi-band fingerprint.
 
 The English score combines:
 
@@ -75,12 +89,13 @@ StageGrid does not bundle third-party Guide audio. A user-supplied/licensed samp
 Implemented:
 
 - Spanish, English, French and Portuguese pack layouts when present;
-- offline sample/fingerprint recognition;
+- experimental offline sample/fingerprint recognition;
 - SECTION / COUNT / DYNAMIC events;
 - `native-guide-events.json` structured sidecar;
 - generated `StageGrid Native Guide.wav` on the same playback clock;
 - original Guide retained muted as a reference after successful reconstruction;
-- automatic editable section proposals;
+- automatic editable section proposals (experimental recognition path);
+- manual section → Native Guide SECTION cue generation as the reliable fallback path;
 - delayed section recovery when BPM is entered after import;
 - per-song Native Guide output-language switching;
 - Guide reanalysis without reimporting/reconverting the other stems;
@@ -88,7 +103,7 @@ Implemented:
 - arrangement-aware relocation of a destination lead phrase containing SECTION/COUNT/DYNAMIC calls;
 - English-only acoustic discrimination and anti-collapse protection in alpha10.3.
 
-Recognition remains **sample/template matching, not general-purpose speech-to-text**.
+Automatic recognition remains **experimental sample/template matching, not general-purpose speech-to-text**. A musician can prepare the complete section map manually without depending on recognition.
 
 ### Setlist Live
 
@@ -138,9 +153,11 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## Known limitations of alpha10.3
 
+- Automatic Guide recognition is explicitly **experimental**. Manual sections are the reliable path and now generate their own SECTION cues.
 - English acoustic matching still depends on the installed cue sample pack being acoustically related enough to the source Guide voice; it is not arbitrary speech recognition.
 - Alpha10.3 deliberately favors precision over inventing a SECTION label. A very uncertain English call may be omitted instead of shown incorrectly.
 - COUNT cues are short and remain a dedicated beta-polish target; SECTION recognition must not be destabilized merely to increase count recall.
+- A custom manual section name that has no equivalent SECTION sample in the installed Guide pack cannot produce spoken audio until a compatible sample/key exists.
 - Recognition diagnostics are persisted in the Guide sidecar; final user-facing diagnostic presentation/export is beta polish.
 - Full arbitrary virtual arrangement graphs remain planned for 0.5.
 - Setlist preload is not gapless dual-engine preload/crossfade.
@@ -154,7 +171,7 @@ See [`docs/STATUS.md`](docs/STATUS.md) for the exact source boundary and [`docs/
 
 ### 0.2.0-alpha10.3
 
-**English Guide structure hardening** — English-only multi-band acoustic second-stage matching, ambiguous short-label penalty, anti-collapse guard, persisted recognition diagnostics and generic Verse numbering.
+**Guide fallback + English recognition hardening** — manual section maps now generate authoritative Native Guide SECTION cues; automatic recognition is explicitly experimental; English-only multi-band acoustic second-stage matching, ambiguous short-label penalty, anti-collapse guard, persisted recognition diagnostics and generic Verse numbering remain available for continued testing.
 
 ### 0.2.0-alpha10.2
 
