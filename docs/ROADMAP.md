@@ -91,19 +91,26 @@ Delivered after English false-positive feedback:
 - stricter English ambiguity margin;
 - removal of an expensive second full rejected-candidate pass.
 
-### alpha10.3 — English acoustic cue discrimination
+### alpha10.3 — reliable manual Guide fallback + experimental English recognition
 
 Current pre-beta candidate:
 
-- English-only second-stage multi-band acoustic fingerprint;
-- combine temporal energy shape with coarse speech-band movement;
+- manual section edits/deletes become the authoritative SECTION map for Native Guide;
+- automatically generate a spoken SECTION cue approximately one bar before each manually-defined section when an installed cue sample exists;
+- create a Native Guide track from manual sections even when automatic recognition found no usable SECTION calls;
+- preserve available COUNT/DYNAMIC cues while replacing automatic SECTION cues with the musician-authored map;
+- common Spanish/English names and shorthand map to installed Guide keys;
+- mark manual Guide provenance in the sidecar;
+- automatic recognition is explicitly experimental and no longer a prerequisite for the live workflow;
+- English-only second-stage multi-band acoustic fingerprint remains available for experimentation;
+- temporal energy shape + coarse speech-band movement;
 - ambiguity penalty for short English SECTION labels such as Vamp/Rap/Tag/Solo;
 - anti-collapse guard when one short label dominates a song implausibly;
 - persisted candidate-level recognition diagnostics;
 - repeated generic Verse numbering by occurrence;
 - regression tests where English cues share the same energy shape but have different acoustic content.
 
-**Beta gate:** representative English songs that previously collapsed to `Vamp`/`Rap` must improve without regressing songs whose Spanish Guides already recognize correctly. COUNT polish is not allowed to destabilize SECTION recognition.
+**Beta gate:** the manual section → Native Guide cue path and the existing live workflows must be stable on representative devices. Imperfect automatic recognition is not a beta blocker because it is now explicitly experimental. Automatic recognition can continue improving during beta without destabilizing the manual workflow.
 
 ## 0.2 beta plan
 
@@ -114,8 +121,10 @@ Planned:
 - first-run onboarding for import, Click/Guide, routing, sections, Setlist Live and backup/restore;
 - accessibility / large-touch-target / contrast / small-screen checks;
 - clearer recoverable errors and progress/cancellation behavior;
+- clearly separate reliable manual Guide preparation from experimental automatic recognition in UX;
 - user-facing recognition diagnostic summary/export using the alpha10.3 sidecar diagnostics;
 - dedicated COUNT recognition policy and polish;
+- manual cue naming/fallback polish from physical-device feedback;
 - fixes from physical-device feedback;
 - no major new audio architecture unless testing exposes a blocker.
 
@@ -125,6 +134,7 @@ Planned:
 
 - representative 16/32+ stem stress tests;
 - repeated Loop/manual-section/dynamic-Guide tests;
+- manual section edit → Native Guide regeneration tests;
 - process-death/session-recovery tests;
 - Setlist Live NEXT/PREV/warm-preload tests;
 - real local/Drive-provider backup + restore validation;
@@ -134,7 +144,7 @@ Planned:
 
 ### 0.2.0 stable gate
 
-Do not mark 0.2 stable until the core stereo live workflow, backups, section transitions, Native Guide behavior, Setlist Live and safe session recovery pass the physical-device qualification matrix.
+Do not mark 0.2 stable until the core stereo live workflow, backups, section transitions, manual Native Guide preparation, Setlist Live and safe session recovery pass the physical-device qualification matrix. Experimental automatic Guide recognition may remain explicitly labeled experimental if its precision is not yet production-qualified.
 
 ## 0.3 — expanded decoder/cache layer
 
