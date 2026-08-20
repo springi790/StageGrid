@@ -2,7 +2,7 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Stems, native Click, Guide and the musical timeline share one real-time audio clock instead of independent Android media players.
 
-> **Current release: `0.2.0-alpha05` — Double-buffered live path changes.**
+> **Current release: `0.2.0-alpha05.1` — Manual section changes exit at section boundaries.**
 >
 > StageGrid is under active development. Only functionality with a real implementation is presented as available; planned modules live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -12,15 +12,40 @@ StageGrid is a native Android, local-first multitrack player for live performanc
 
 Common actions remain visible while technical controls such as grid offsets and manual routing stay behind optional advanced controls.
 
-## New in 0.2.0-alpha05
+## New in 0.2.0-alpha05.1
 
-This alpha hardens the part of the native audio engine used when Loop or a quantized section jump changes the future playback path while audio is already running.
+Manual section selection is now **section-quantized rather than bar-quantized**.
+
+If the current section starts at bar 16 and ends at bar 20, selecting another section while bar 16, 17, 18 or 19 is playing does not cut the current section at the next bar line. StageGrid queues the selected destination for the current section's explicit end marker.
+
+```text
+CURRENT SECTION
+bar 16 ─ bar 17 ─ bar 18 ─ bar 19 ─ bar 20
+                    │
+                    └─ user selects Chorus
+                                      │
+                                      ▼
+                         finish current section
+                                      │
+                                      ▼
+                           Chorus section start
+```
+
+The Musical Grid still controls section authoring/snapping, Click, count-in and bar/beat display. It no longer overrides the musical end of a manually selected section transition.
+
+The alpha05 double-buffered native path engine remains responsible for preparing the destination without clearing the bank currently feeding Oboe. If the UI observes that the current section boundary has already passed, the requested destination becomes immediate instead of scheduling against a stale boundary.
+
+App version: `0.2.0-alpha05.1` (`versionCode 11`).
+
+## Double-buffered live path engine
+
+The alpha05 engine hardening remains active when Loop or a section jump changes the future playback path while audio is already running.
 
 ### Double-buffered path preparation
 
 Previous builds rebuilt the decoder look-ahead when a live path changed. That was logically correct, but clearing the current buffers while Oboe was still consuming them could create an underrun window on a slower device or a song with many stems.
 
-Alpha05 gives every track two decoder banks:
+Every track now has two decoder banks:
 
 ```text
 ACTIVE BANK
@@ -44,25 +69,9 @@ The inactive bank starts from the same master timeline position as the active ba
 
 The callback does not open files, seek WAV readers, allocate a new arrangement, wait on a mutex or ask Room/UI to do work. Decoder preparation stays on the existing background decoder threads.
 
-### Safer last-moment section taps
-
-A quantized section request now asks the Musical Grid for a bar boundary that leaves a small preparation window for the inactive bank.
-
-If the next bar is only a few milliseconds away, StageGrid waits for the following bar instead of forcing an unsafe last-millisecond decoder rebuild:
-
-```text
-User taps Chorus
-        │
-        ├─ next bar has enough preparation time → Chorus there
-        │
-        └─ next bar is too close → queue following bar
-```
-
-The current preparation lead is 180 ms. This does not change the musical destination; it only prevents a very late tap from trading timing safety for a potential glitch.
-
 ### Path diagnostics
 
-Native diagnostics now expose:
+Native diagnostics expose:
 
 - successful prepared-bank swaps;
 - missed safe preparation windows;
@@ -75,8 +84,6 @@ A missed safe window is cancelled rather than activating a stale prepared path a
 `StageGrid Native Guide.wav` is a normal shared-clock stem, so it participates in the same double-buffered bank handoff and remains synchronized with the other audio tracks through loops and timeline jumps.
 
 This is **not yet** the later arrangement-aware Guide engine. If a live reorder requires a new spoken cue to be moved into a different pre-section bar, StageGrid still needs the upcoming event-relocation layer to synthesize/reposition that cue from `native-guide-events.json`.
-
-App version: `0.2.0-alpha05` (`versionCode 10`).
 
 ## Native Guide pipeline
 
@@ -135,7 +142,9 @@ Player
   ├─ Change native Guide language
   ├─ Section count-in
   ├─ Section Loop
-  └─ Quantized section changes
+  └─ Manual section change
+             ↓
+       current section end
              ↓
        inactive path bank
              ↓
@@ -226,7 +235,7 @@ BPM + time signature + grid offset
                 ↓
          bar / beat position
                 ↓
- sections / snapping / queued jumps / count-in / Guide proposals
+ sections / snapping / count-in / Guide proposals
 ```
 
 Implemented:
@@ -240,8 +249,8 @@ Implemented:
 - automatic section proposals from recognized native Guide cues;
 - delayed section recovery from persisted Guide events when BPM is supplied later;
 - Section Loop / Exit Loop;
-- next-bar quantized section changes;
-- preparation-aware bar selection for very late section taps;
+- manual section changes queued for the explicit end of the current section;
+- section destinations enter at their explicit start marker;
 - 1- or 2-bar native count-in.
 
 **Edit sections remains a first-class Player action.** Automatic recovery only replaces the untouched `Full Song` fallback, so manual section work is protected.
@@ -309,13 +318,14 @@ Then build normally.
 
 GitHub Actions runs unit tests and `assembleDebug` for development pull requests before changes are merged into `main`.
 
-Coverage includes areas such as stem classification, WAV parsing, Musical Grid conversion/snapping, preparation-aware quantized boundaries, native Guide recognition/section inference, Room behavior, JNI/native loading and shared-clock native compilation.
+Coverage includes areas such as stem classification, WAV parsing, Musical Grid conversion/snapping, manual section-boundary transition policy, native Guide recognition/section inference, Room behavior, JNI/native loading and shared-clock native compilation.
 
-## Known limitations of 0.2.0-alpha05
+## Known limitations of 0.2.0-alpha05.1
 
 Still pending:
 
 - double-buffered path handoff is implemented, but representative physical-device stress testing with 16/32+ active stems is still required before calling it stage-qualified;
+- extremely late manual section requests can still miss the safe inactive-bank preparation window rather than activating stale audio after the section boundary;
 - the generated Guide WAV follows the original timeline; native Guide **event relocation** for arbitrary live ReOrder is still pending;
 - in-place Guide **audio re-analysis** for songs imported before a Guide pack was installed/changed is still pending;
 - the Guide fingerprint cache is currently in-memory; after a full app-process restart the first Guide analysis may pay the template preparation cost again;
@@ -335,16 +345,26 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Release history
 
+### 0.2.0-alpha05.1
+
+**Manual section-boundary transition hotfix**
+
+- manual section selection no longer jumps at the next internal bar line;
+- the current section finishes at its explicit `endMs` marker;
+- the requested section enters at its explicit `startMs` marker;
+- the double-buffered path engine still prepares and hands off all stems together;
+- stale UI observations after an already-passed section boundary fall back to the requested section immediately;
+- JVM tests cover the section-boundary policy.
+
 ### 0.2.0-alpha05
 
 **Double-buffered live path hardening**
 
 - two decoder banks per track;
-- background preparation of Loop/quantized-jump paths without clearing the bank currently feeding Oboe;
+- background preparation of Loop/section-jump paths without clearing the bank currently feeding Oboe;
 - synchronized all-track bank activation in the realtime callback;
 - elapsed-output-frame alignment before prepared-bank activation;
 - safe-window rejection for stale late swaps;
-- preparation-aware next-bar selection with a 180 ms lead;
 - native diagnostics for path swaps, misses and pending state.
 
 ### 0.2.0-alpha04.2
@@ -386,7 +406,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 **Quantized sections + native count-in**
 
-- next-bar live section changes;
+- initial next-bar live section changes;
 - 1/2-bar section count-in;
 - native sample-clock pre-roll;
 - synchronized stem entry.
