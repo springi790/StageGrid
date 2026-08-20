@@ -30,26 +30,33 @@ public:
     void setTrackSolo(int index, bool solo);
     void setTrackPan(int index, float pan);
     void setTrackOutputRoute(int index, int route);
+    void setTrackOutputBus(int index, int bus);
     void setMasterVolume(float volume);
     void setClickEnabled(bool enabled);
     void setGuideEnabled(bool enabled);
     void setClickVolume(float volume);
     void setClickSubdivision(int subdivisionsPerBeat);
     void setClickRoute(int route);
+    void setClickOutputBus(int bus);
     void setLoop(bool enabled, int64_t startMs, int64_t endMs);
     void scheduleJump(int64_t atMs, int64_t targetMs, bool disableLoopAfterJump);
     void clearScheduledJump();
-    bool scheduleGuideCue(const std::vector<float>& monoSamples, int64_t atMs, int64_t suppressUntilMs, int route, float volume);
+    bool scheduleGuideCue(const std::vector<float>& monoSamples, int64_t atMs, int64_t suppressUntilMs, int route, int bus, float volume);
     void clearGuideCue() noexcept;
     bool prepareCountIn(int64_t targetMs, int bars);
     int64_t countInRemainingMs() const;
-    bool setOutputDevice(int32_t deviceId);
+    bool setOutputDevice(int32_t deviceId, int requestedChannels);
+    bool startOutputTest(int channelIndex, int durationMs);
 
     int64_t positionMs() const;
     int64_t durationMs() const;
     bool isPlaying() const noexcept { return playing_.load(std::memory_order_acquire); }
     int sampleRate() const noexcept { return outputSampleRate_.load(std::memory_order_acquire); }
     int framesPerBurst() const noexcept { return framesPerBurst_.load(std::memory_order_acquire); }
+    int outputChannelCount() const noexcept { return outputChannelCount_.load(std::memory_order_acquire); }
+    int requestedOutputChannelCount() const noexcept { return requestedOutputChannelCount_.load(std::memory_order_acquire); }
+    bool multichannelFallback() const noexcept { return multichannelFallback_.load(std::memory_order_acquire); }
+    int outputDeviceId() const noexcept { return outputDeviceId_.load(std::memory_order_acquire); }
     int64_t underruns() const noexcept { return underruns_.load(std::memory_order_acquire); }
     float cpuLoad() const noexcept { return cpuLoad_.load(std::memory_order_acquire); }
     int loadedTracks() const noexcept { return static_cast<int>(tracks_.size()); }
@@ -88,6 +95,7 @@ private:
         int64_t startFrame{0};
         int64_t suppressUntilFrame{0};
         int route{BOTH};
+        int bus{0};
         float volume{1.0f};
         std::atomic<bool> consumed{false};
     };
@@ -108,6 +116,7 @@ private:
         std::atomic<float> volume{1.0f};
         std::atomic<float> pan{0.0f};
         std::atomic<int> outputRoute{BOTH};
+        std::atomic<int> outputBus{0};
         std::atomic<bool> mute{false};
         std::atomic<bool> solo{false};
         std::atomic<bool> alive{true};
@@ -115,6 +124,7 @@ private:
     };
 
     bool openStreamLocked();
+    bool tryOpenStreamLocked(int channelCount, oboe::SharingMode sharingMode);
     void closeStreamLocked();
     void startDecoderThreads();
     void stopDecoderThreads();
@@ -133,6 +143,9 @@ private:
     int64_t msToFrames(int64_t ms) const noexcept;
     int64_t framesToMs(int64_t frames) const noexcept;
     float generatedClickSample(int64_t timelineFrame) const noexcept;
+    int normalizedBus(int bus, int channelCount) const noexcept;
+    void routeStereoPair(std::array<float, 8> &mix, int channelCount, int bus, int route, float l, float r, float pan, float volume) const noexcept;
+    void routeMono(std::array<float, 8> &mix, int channelCount, int bus, int route, float sample) const noexcept;
     void setLastError(std::string message);
 
     mutable std::mutex controlMutex_;
@@ -142,6 +155,9 @@ private:
     std::atomic<int32_t> outputSampleRate_{48000};
     std::atomic<int32_t> framesPerBurst_{0};
     std::atomic<int32_t> outputDeviceId_{oboe::kUnspecified};
+    std::atomic<int32_t> requestedOutputChannelCount_{2};
+    std::atomic<int32_t> outputChannelCount_{2};
+    std::atomic<bool> multichannelFallback_{false};
     std::atomic<bool> playing_{false};
     std::atomic<bool> streamStarted_{false};
     std::atomic<int64_t> playheadFrame_{0};
@@ -152,10 +168,15 @@ private:
     std::atomic<float> clickVolume_{0.75f};
     std::atomic<int> clickSubdivision_{1};
     std::atomic<int> clickRoute_{BOTH};
+    std::atomic<int> clickOutputBus_{0};
     std::atomic<double> bpm_{0.0};
     std::atomic<int> beatsPerBar_{4};
     std::atomic<int64_t> gridOffsetFrame_{0};
     std::atomic<int64_t> trackGateUntilFrame_{-1};
+
+    std::atomic<int> outputTestChannel_{-1};
+    std::atomic<int64_t> outputTestRemainingFrames_{0};
+    std::atomic<int64_t> outputTestFrame_{0};
 
     // Dynamic section-call PCM is built on a background thread and published as an immutable cue.
     // Ownership handoff hardening is tracked separately from the callback's audio rendering logic.
