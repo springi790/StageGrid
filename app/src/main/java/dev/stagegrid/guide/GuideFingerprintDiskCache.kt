@@ -25,26 +25,35 @@ internal object GuideFingerprintDiskCache {
         if (!file.isFile) return null
         return runCatching {
             DataInputStream(BufferedInputStream(FileInputStream(file), 128 * 1024)).use { input ->
-                if (input.readInt() != MAGIC) return@use null
-                if (input.readInt() != VERSION) return@use null
-                if (input.readLong() != expectedSignature) return@use null
+                if (input.readInt() != MAGIC) return@runCatching null
+                if (input.readInt() != VERSION) return@runCatching null
+                if (input.readLong() != expectedSignature) return@runCatching null
                 val count = input.readInt()
-                if (count !in 1..MAX_ENTRIES) return@use null
-                buildList(count) {
-                    repeat(count) {
-                        val language = input.readUTF()
-                        val key = input.readUTF()
-                        val kind = CueKind.entries.getOrNull(input.readInt()) ?: return@use null
-                        val absolutePath = input.readUTF()
-                        val fileLength = input.readLong()
-                        val lastModified = input.readLong()
-                        val trim = input.readInt()
-                        val size = input.readInt()
-                        if (size !in 4..MAX_FINGERPRINT_WINDOWS) return@use null
-                        val fp = FloatArray(size) { input.readFloat() }
-                        add(Entry(language, key, kind, absolutePath, fileLength, lastModified, trim, fp))
-                    }
+                if (count !in 1..MAX_ENTRIES) return@runCatching null
+                val entries = ArrayList<Entry>(count)
+                repeat(count) {
+                    val language = input.readUTF()
+                    val key = input.readUTF()
+                    val kind = CueKind.entries.getOrNull(input.readInt()) ?: return@runCatching null
+                    val absolutePath = input.readUTF()
+                    val fileLength = input.readLong()
+                    val lastModified = input.readLong()
+                    val trim = input.readInt()
+                    val size = input.readInt()
+                    if (size !in 4..MAX_FINGERPRINT_WINDOWS) return@runCatching null
+                    val fingerprint = FloatArray(size) { input.readFloat() }
+                    entries += Entry(
+                        language = language,
+                        key = key,
+                        kind = kind,
+                        absolutePath = absolutePath,
+                        fileLength = fileLength,
+                        lastModified = lastModified,
+                        trimStartWindows = trim,
+                        fingerprint = fingerprint,
+                    )
                 }
+                entries
             }
         }.getOrNull()
     }
