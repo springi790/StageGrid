@@ -1,0 +1,8 @@
+result: failure
+ref: refs/heads/feature/0.5.0-alpha05
+sha: 7a3239eb856912fe6d3d3fc1ebd28803acacc06d
+java_setup: success
+debug_signing: success
+android_sdk_setup: success
+android_sdk_install: success
+gradle_build: failure
