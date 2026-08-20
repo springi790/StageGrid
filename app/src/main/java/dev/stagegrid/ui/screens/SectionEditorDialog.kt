@@ -38,11 +38,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import dev.stagegrid.R
+import dev.stagegrid.model.SectionEntity
+import dev.stagegrid.model.SongEntity
 import dev.stagegrid.music.GridSnap
 import dev.stagegrid.music.MusicalGrid
 import dev.stagegrid.music.MusicalPosition
-import dev.stagegrid.model.SectionEntity
-import dev.stagegrid.model.SongEntity
+import dev.stagegrid.ui.components.SongWaveformOverview
 import java.util.UUID
 import kotlin.math.roundToLong
 
@@ -119,6 +120,13 @@ fun SectionEditorDialog(
                             )
                         }
                     }
+
+                    SongWaveformOverview(
+                        songId = song.id,
+                        positionMs = positionMs,
+                        durationMs = safeDuration,
+                        sections = sections,
+                    )
 
                     if (isPlaying) {
                         Text(stringResource(R.string.section_editor_playback_warning), color = MaterialTheme.colorScheme.tertiary)
