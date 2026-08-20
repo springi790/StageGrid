@@ -14,8 +14,9 @@ import kotlin.math.sqrt
 /**
  * Offline Guide recognizer for sample-based Guide stems.
  *
- * Fingerprints are kept in memory and, when configured by the application, persisted on disk so a
- * process restart does not need to rebuild hundreds of cue templates before the next analysis.
+ * Alpha10.1 hardens candidate discovery for uneven gain/compression, uses phase-robust energy
+ * fingerprints, widens timing tolerance and performs a conservative second pass once the source
+ * language can be inferred. Fingerprints remain cached in memory/on disk.
  */
 object GuideCueAnalyzer {
     data class DetectedCue(
@@ -52,10 +53,24 @@ object GuideCueAnalyzer {
 
     private data class Match(val template: Template, val score: Float, val activeStart: Int)
 
+    private data class Evaluation(
+        val candidate: Int,
+        val best: Match?,
+        val secondSemanticScore: Float,
+    )
+
     private const val WINDOW_MS = 10
-    private const val SEARCH_RADIUS_WINDOWS = 12 // +/-120 ms
-    private const val MIN_SCORE = 0.82f
-    private const val MIN_MARGIN = 0.055f
+    private const val SEARCH_RADIUS_WINDOWS = 24 // +/-240 ms tolerates encoder/segment onset drift.
+    private const val PRIMARY_MIN_SCORE = 0.80f
+    private const val PRIMARY_MIN_MARGIN = 0.040f
+    private const val PRIMARY_HIGH_SCORE = 0.94f
+    private const val RECOVERY_MIN_SCORE = 0.76f
+    private const val RECOVERY_MIN_MARGIN = 0.055f
+    private const val RECOVERY_HIGH_SCORE = 0.90f
+    private const val DEDUPE_WINDOW_MS = 180L
+    private const val MAX_CANDIDATES = 2_400
+    private const val INTRA_PHRASE_MERGE_WINDOWS = 24 // 240 ms: syllable gaps, not separate Guide calls.
+    private const val CONTINUOUS_ACTIVITY_WINDOWS = 35 // 350 ms before local-onset recovery is allowed.
 
     @Volatile
     private var templateCache: TemplateCache? = null
@@ -71,7 +86,6 @@ object GuideCueAnalyzer {
         templateCache = null
     }
 
-    /** Prepares the installed pack once so the first song analysis does not rebuild every sample fingerprint. */
     fun prepare(samples: List<GuideSample>): Int = templatesFor(samples).size
 
     fun analyze(
@@ -81,7 +95,9 @@ object GuideCueAnalyzer {
     ): Result {
         if (samples.isEmpty()) return Result(emptyList(), null, 0)
         onProgress?.invoke(0.02f)
-        val guideEnvelope = GuideAudio.rmsEnvelope(guideFile, WINDOW_MS)
+
+        val guideEnvelope = runCatching { GuideFingerprintEnvelope.read(guideFile, WINDOW_MS) }
+            .getOrElse { return Result(emptyList(), null, 0) }
         if (guideEnvelope.size < 8) return Result(emptyList(), null, 0)
         val guideLog = FloatArray(guideEnvelope.size) { i -> compress(guideEnvelope[i]) }
         val candidates = findCandidates(guideEnvelope)
@@ -93,49 +109,35 @@ object GuideCueAnalyzer {
         onProgress?.invoke(0.18f)
 
         val accepted = mutableListOf<DetectedCue>()
-        for ((candidateIndex, candidate) in candidates.withIndex()) {
-            var best: Match? = null
-            var secondScore = -1f
-            for (template in templates) {
-                val match = bestMatchAround(guideLog, candidate, template) ?: continue
-                val currentBest = best
-                if (currentBest == null || match.score > currentBest.score) {
-                    if (currentBest != null) secondScore = max(secondScore, currentBest.score)
-                    best = match
-                } else {
-                    secondScore = max(secondScore, match.score)
-                }
-            }
-            val chosen = best
-            if (chosen != null) {
-                val margin = chosen.score - secondScore
-                if (chosen.score >= MIN_SCORE && (margin >= MIN_MARGIN || chosen.score >= 0.96f)) {
-                    val sampleStartWindow = chosen.activeStart - chosen.template.trimStartWindows
-                    val cueMs = (sampleStartWindow.coerceAtLeast(0) * WINDOW_MS).toLong()
-                    accepted += DetectedCue(
-                        key = chosen.template.sample.key,
-                        kind = chosen.template.sample.kind,
-                        language = chosen.template.sample.language,
-                        cueMs = cueMs,
-                        confidence = chosen.score.coerceIn(0f, 1f),
-                    )
-                }
-            }
-            if (candidateIndex % maxOf(1, candidates.size / 30) == 0 || candidateIndex == candidates.lastIndex) {
-                onProgress?.invoke(0.18f + 0.80f * ((candidateIndex + 1f) / candidates.size.toFloat()))
+        val rejected = mutableListOf<Evaluation>()
+        candidates.forEachIndexed { index, candidate ->
+            val evaluation = evaluateCandidate(guideLog, candidate, templates)
+            val cue = evaluation.toCue(PRIMARY_MIN_SCORE, PRIMARY_MIN_MARGIN, PRIMARY_HIGH_SCORE)
+            if (cue != null) accepted += cue else rejected += evaluation
+            if (index % maxOf(1, candidates.size / 30) == 0 || index == candidates.lastIndex) {
+                onProgress?.invoke(0.18f + 0.62f * ((index + 1f) / candidates.size.toFloat()))
             }
         }
 
-        val deduped = accepted.sortedBy { it.cueMs }.fold(mutableListOf<DetectedCue>()) { out, cue ->
-            val previous = out.lastOrNull()
-            if (previous != null && cue.cueMs - previous.cueMs < 140L) {
-                if (cue.confidence > previous.confidence) out[out.lastIndex] = cue
-            } else {
-                out += cue
+        // Once a Guide language is clear, re-check only rejected candidates against that language.
+        // This removes cross-language lookalikes from the margin calculation without globally
+        // lowering thresholds and creating false positives.
+        val languageHint = dominantLanguage(accepted) ?: inferLanguageFromRejected(rejected)
+        if (languageHint != null && rejected.isNotEmpty()) {
+            val languageTemplates = templates.filter { it.sample.language == languageHint }
+            if (languageTemplates.isNotEmpty()) {
+                rejected.forEachIndexed { index, prior ->
+                    val evaluation = evaluateCandidate(guideLog, prior.candidate, languageTemplates)
+                    evaluation.toCue(RECOVERY_MIN_SCORE, RECOVERY_MIN_MARGIN, RECOVERY_HIGH_SCORE)?.let(accepted::add)
+                    if (index % maxOf(1, rejected.size / 20) == 0 || index == rejected.lastIndex) {
+                        onProgress?.invoke(0.80f + 0.18f * ((index + 1f) / rejected.size.toFloat()))
+                    }
+                }
             }
-            out
         }
-        val dominant = deduped.groupingBy { it.language }.eachCount().maxByOrNull { it.value }?.key
+
+        val deduped = dedupe(accepted)
+        val dominant = dominantLanguage(deduped)
         onProgress?.invoke(1f)
         return Result(deduped, dominant, candidates.size)
     }
@@ -177,6 +179,67 @@ object GuideCueAnalyzer {
             }
         }
         return unique
+    }
+
+    private fun Evaluation.toCue(minScore: Float, minMargin: Float, highScore: Float): DetectedCue? {
+        val chosen = best ?: return null
+        val margin = chosen.score - secondSemanticScore
+        if (chosen.score < minScore || (margin < minMargin && chosen.score < highScore)) return null
+        val sampleStartWindow = chosen.activeStart - chosen.template.trimStartWindows
+        return DetectedCue(
+            key = chosen.template.sample.key,
+            kind = chosen.template.sample.kind,
+            language = chosen.template.sample.language,
+            cueMs = sampleStartWindow.coerceAtLeast(0) * WINDOW_MS.toLong(),
+            confidence = chosen.score.coerceIn(0f, 1f),
+        )
+    }
+
+    private fun evaluateCandidate(guide: FloatArray, candidate: Int, templates: List<Template>): Evaluation {
+        var best: Match? = null
+        val semanticScores = HashMap<String, Float>()
+        for (template in templates) {
+            val match = bestMatchAround(guide, candidate, template) ?: continue
+            val semantic = "${template.sample.kind.name}:${template.sample.key}"
+            val previous = semanticScores[semantic]
+            if (previous == null || match.score > previous) semanticScores[semantic] = match.score
+            val currentBest = best
+            if (currentBest == null || match.score > currentBest.score) best = match
+        }
+        val chosen = best ?: return Evaluation(candidate, null, -1f)
+        val chosenSemantic = "${chosen.template.sample.kind.name}:${chosen.template.sample.key}"
+        var second = -1f
+        for ((semantic, score) in semanticScores) {
+            if (semantic != chosenSemantic && score > second) second = score
+        }
+        return Evaluation(candidate, chosen, second)
+    }
+
+    private fun inferLanguageFromRejected(rejected: List<Evaluation>): String? {
+        val plausible = rejected.mapNotNull { evaluation ->
+            evaluation.best?.takeIf { it.score >= 0.70f }
+        }
+        if (plausible.isEmpty()) return null
+        val byLanguage = plausible.groupBy { it.template.sample.language }
+        val bestGroup = byLanguage.maxByOrNull { (_, matches) -> matches.sumOf { it.score.toDouble() } } ?: return null
+        val matches = bestGroup.value
+        return bestGroup.key.takeIf { matches.size >= 2 || matches.any { it.score >= 0.88f } }
+    }
+
+    private fun dominantLanguage(cues: List<DetectedCue>): String? =
+        cues.groupingBy { it.language }.eachCount().maxByOrNull { it.value }?.key
+
+    private fun dedupe(cues: List<DetectedCue>): List<DetectedCue> {
+        val out = mutableListOf<DetectedCue>()
+        for (cue in cues.sortedBy { it.cueMs }) {
+            val nearbyIndex = out.indexOfLast { cue.cueMs - it.cueMs < DEDUPE_WINDOW_MS }
+            if (nearbyIndex >= 0) {
+                if (cue.confidence > out[nearbyIndex].confidence) out[nearbyIndex] = cue
+            } else {
+                out += cue
+            }
+        }
+        return out
     }
 
     private fun templatesFor(samples: List<GuideSample>): List<Template> {
@@ -245,15 +308,15 @@ object GuideCueAnalyzer {
     }
 
     private fun buildTemplate(sample: GuideSample): Template? {
-        val envelope = runCatching { GuideAudio.rmsEnvelope(sample.file, WINDOW_MS) }.getOrNull() ?: return null
+        val envelope = runCatching { GuideFingerprintEnvelope.read(sample.file, WINDOW_MS) }.getOrNull() ?: return null
         if (envelope.size < 4) return null
         val peak = envelope.maxOrNull() ?: return null
-        if (peak < 0.003f) return null
-        val threshold = max(0.003f, peak * 0.06f)
+        if (peak < 0.002f) return null
+        val threshold = max(0.002f, peak * 0.045f)
         val first = envelope.indexOfFirst { it >= threshold }.takeIf { it >= 0 } ?: return null
         val last = envelope.indexOfLast { it >= threshold }.takeIf { it >= first } ?: return null
-        val start = (first - 2).coerceAtLeast(0)
-        val endExclusive = (last + 3).coerceAtMost(envelope.size)
+        val start = (first - 3).coerceAtLeast(0)
+        val endExclusive = (last + 4).coerceAtMost(envelope.size)
         val compressed = FloatArray(endExclusive - start) { i -> compress(envelope[start + i]) }
         normalizeInPlace(compressed)
         if (compressed.size < 4) return null
@@ -262,6 +325,7 @@ object GuideCueAnalyzer {
 
     private fun bestMatchAround(guide: FloatArray, candidate: Int, template: Template): Match? {
         val n = template.fingerprint.size
+        if (guide.size < n) return null
         var bestScore = -1f
         var bestStart = -1
         val from = (candidate - SEARCH_RADIUS_WINDOWS).coerceAtLeast(0)
@@ -294,12 +358,45 @@ object GuideCueAnalyzer {
 
     private fun findCandidates(envelope: FloatArray): List<Int> {
         val peak = envelope.maxOrNull() ?: return emptyList()
-        if (peak < 0.004f) return emptyList()
+        if (peak < 0.0015f) return emptyList()
         val sorted = envelope.sorted()
         val floorCount = max(1, sorted.size / 5)
         val noise = sorted.take(floorCount).average().toFloat()
-        val threshold = max(0.004f, max(noise * 5f, peak * 0.055f))
 
+        // A Guide phrase often contains 50-200 ms gaps between syllables. Treat those as one
+        // candidate region; otherwise an internal syllable can be mistaken for a new cue.
+        val strongThreshold = max(0.0025f, max(noise * 4.0f, peak * 0.045f))
+        val relaxedThreshold = max(0.0015f, max(noise * 2.2f, peak * 0.012f))
+        val candidates = linkedSetOf<Int>()
+        candidates += runStarts(envelope, strongThreshold, mergeGapWindows = INTRA_PHRASE_MERGE_WINDOWS)
+        candidates += runStarts(envelope, relaxedThreshold, mergeGapWindows = INTRA_PHRASE_MERGE_WINDOWS)
+
+        // Local attack recovery is only useful when compression/noise has kept the Guide above the
+        // relaxed floor for a sustained period. If there was a recent quiet gap, runStarts already
+        // represents the phrase and adding each syllable would create false duplicate matches.
+        val minimumRise = max(noise * 0.60f, peak * 0.0025f)
+        var lastBelowRelaxed = -CONTINUOUS_ACTIVITY_WINDOWS
+        for (i in 3 until envelope.size - 2) {
+            if (envelope[i - 1] < relaxedThreshold) lastBelowRelaxed = i - 1
+            val before = (envelope[i - 3] + envelope[i - 2] + envelope[i - 1]) / 3f
+            val current = (envelope[i] + envelope[i + 1] + envelope[i + 2]) / 3f
+            val ratio = current / (before + max(0.00001f, noise * 0.20f))
+            val sustainedActivity = i - lastBelowRelaxed >= CONTINUOUS_ACTIVITY_WINDOWS
+            if (
+                sustainedActivity &&
+                current >= relaxedThreshold &&
+                current - before >= minimumRise &&
+                ratio >= 1.30f
+            ) {
+                candidates += i
+            }
+        }
+
+        if (candidates.isEmpty()) return emptyList()
+        return candidates.sorted().take(MAX_CANDIDATES)
+    }
+
+    private fun runStarts(envelope: FloatArray, threshold: Float, mergeGapWindows: Int): List<Int> {
         val runs = mutableListOf<IntRange>()
         var i = 0
         while (i < envelope.size) {
@@ -312,17 +409,16 @@ object GuideCueAnalyzer {
             runs += start until i
         }
         if (runs.isEmpty()) return emptyList()
-
         val merged = mutableListOf<IntRange>()
         for (run in runs) {
             val previous = merged.lastOrNull()
-            if (previous != null && run.first - previous.last <= 12) {
+            if (previous != null && run.first - previous.last <= mergeGapWindows) {
                 merged[merged.lastIndex] = previous.first..run.last
             } else {
                 merged += run
             }
         }
-        return merged.filter { it.last - it.first + 1 >= 3 }.map { it.first }
+        return merged.filter { it.last - it.first + 1 >= 2 }.map { it.first }
     }
 
     private fun compress(value: Float): Float = ln(1.0 + value.coerceAtLeast(0f) * 50.0).toFloat()

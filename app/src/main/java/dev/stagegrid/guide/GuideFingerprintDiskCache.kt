@@ -89,7 +89,8 @@ internal object GuideFingerprintDiskCache {
     }
 
     private const val MAGIC = 0x53474650 // SGFP
-    private const val VERSION = 1
+    // v2 fingerprints use phase-robust per-channel energy rather than a stereo average.
+    private const val VERSION = 2
     private const val MAX_ENTRIES = 4_096
     private const val MAX_FINGERPRINT_WINDOWS = 10_000
 }
