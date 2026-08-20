@@ -1,0 +1,21 @@
+<resources>
+    <string name="delete_song">Eliminar</string>
+    <string name="delete_song_title">Eliminar multitrack</string>
+    <string name="delete_song_message">¿Eliminar "%1$s" de este dispositivo?</string>
+    <string name="delete_song_files_note">Se eliminarán sus pistas locales, secciones y archivos de Guía de StageGrid. Las copias de seguridad guardadas fuera de la app no se modifican.</string>
+    <string name="delete_song_confirm">Eliminar definitivamente</string>
+    <string name="delete_song_error_title">No se pudo eliminar</string>
+    <string name="setlist_live_start">Iniciar modo Setlist</string>
+    <string name="setlist_live_title">Setlist en vivo</string>
+    <string name="setlist_live_song_position">Canción %1$d de %2$d</string>
+    <string name="setlist_live_current">Actual</string>
+    <string name="setlist_live_next_song">Siguiente canción</string>
+    <string name="setlist_live_previous">Anterior</string>
+    <string name="setlist_live_next">Siguiente</string>
+    <string name="setlist_live_exit">Salir de Setlist</string>
+    <string name="setlist_live_next_ready">Siguiente canción preparada</string>
+    <string name="setlist_live_next_preparing">Preparando siguiente canción…</string>
+    <string name="setlist_live_no_next">Esta es la última canción</string>
+    <string name="setlist_live_empty">Añade al menos una canción antes de iniciar el modo Setlist.</string>
+    <string name="setlist_live_transport_note">Al cambiar de canción, StageGrid detiene la canción actual y carga la siguiente sin reproducirla automáticamente.</string>
+</resources>
