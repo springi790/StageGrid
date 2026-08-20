@@ -43,4 +43,24 @@ class ArrangementRuntimeTest {
         val moved = ArrangementRuntime.move(graph, "c", -2)
         assertEquals(listOf("c", "a", "b"), moved.nodes.map { it.id })
     }
+
+    @Test fun stoppedArrangementStartsFromFirstEditedNode() {
+        val edited = ArrangementRuntime.move(graph, "c", -2)
+        val start = ArrangementRuntime.startingNode(
+            graph = edited,
+            currentSectionId = "s1",
+            isPlaying = false,
+        )
+        assertEquals("c", start?.id)
+    }
+
+    @Test fun enablingWhileAlreadyPlayingKeepsCurrentMusicalSection() {
+        val edited = ArrangementRuntime.move(graph, "c", -2)
+        val start = ArrangementRuntime.startingNode(
+            graph = edited,
+            currentSectionId = "s1",
+            isPlaying = true,
+        )
+        assertEquals("a", start?.id)
+    }
 }
