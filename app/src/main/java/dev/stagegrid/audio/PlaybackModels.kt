@@ -39,10 +39,14 @@ data class PlayerState(
     val outputChannelCount: Int = 2,
     val outputFallback: Boolean = false,
     val outputNotice: String? = null,
+    val preloadedSongId: String? = null,
+    val preloadedSongTitle: String? = null,
+    val crossfadeInProgress: Boolean = false,
     val errorMessage: String? = null,
 ) {
     val isPlaying: Boolean get() = engineState == EngineState.PLAYING
     val isCountingIn: Boolean get() = countInRemainingMs > 0L
+    val hasPreloadedSong: Boolean get() = preloadedSongId != null
     val currentSection: SectionEntity?
         get() = sections.lastOrNull { positionMs >= it.startMs && positionMs < it.endMs }
             ?: sections.lastOrNull { positionMs >= it.startMs }
