@@ -29,38 +29,54 @@ Verified:
 - infinite repeat remains active without Exit;
 - infinite repeat advances when Exit is requested;
 - final node reports completion;
-- live reorder preserves stable node IDs and the new order.
+- live reorder preserves stable node IDs and the new order;
+- repeat values clamp to the supported 1..16 range;
+- pre-roll values clamp to 0..2 bars.
 
 During this validation a real defect was found: moved nodes retained their old numeric `order`, causing graph normalization to undo the move. `ArrangementRuntime.move()` was corrected to renumber the list before normalization.
 
 Final executable result:
 
 ```text
-arrangement runtime PASS
+StageGrid 0.5 arrangement runtime checks: PASS
 ```
+
+### Arrangement state/sidecar hardening — source review PASS
+
+The runtime integration was reviewed for transport and persistence hazards. Fixes applied during the review:
+
+- activating Arrangement while stopped no longer queues/seeks the next 1x node automatically;
+- the active node is armed when normal playback actually begins, or after its count-in finishes;
+- a node-specific pre-roll restores the previous session-wide count-in preference immediately after the launch captures its own bar count;
+- Player state is collected sequentially instead of with `collectLatest`, preventing an 80 ms transport tick from cancelling `arrangement.json` initialization;
+- malformed sidecars with duplicate node IDs are rejected and recovered from authored sections rather than reaching Compose with duplicate lazy-list keys.
+
+These are source-policy/static checks; boundary timing still requires real playback on Android.
 
 ### Compose API review — PASS for reviewed API assumptions
 
-The Live Workspace was reviewed against current Android Compose API behavior:
+The Live Workspace was reviewed against the Compose API assumptions used by the project:
 
 - responsive `BoxWithConstraints` is used for the phone/tablet split;
 - `Modifier.weight()` is used only inside RowScope/ColumnScope;
-- the invalid explicit top-level `foundation.layout.weight` import is not retained;
+- no invalid explicit top-level `foundation.layout.weight` import is retained;
 - Material3 bottom-sheet usage is explicitly opted into where required by the dependency version.
 
 This is API/static review, not a full Android compilation claim.
 
-### Transport-safety review — PASS at source-policy level
+### Dual-deck transport-safety review — source policy PASS
 
 The dual-deck promotion path was reviewed so that:
 
 - playing current song → standby starts muted and crossfades;
 - paused/stopped current song → standby is promoted silently and remains stopped;
+- a stopped/paused promotion does not request audio focus or start the foreground playback service merely because Next was pressed;
+- PlayerState publishes `READY`/`PAUSED` immediately for a silent promotion instead of briefly claiming `PLAYING`;
 - standby master is restored to the current user master level;
 - old deck is paused/unloaded after promotion;
 - failed preload/promotion does not remove the normal Setlist load fallback.
 
-Physical audio behavior still requires a device.
+Physical dual-stream behavior still requires a device.
 
 ## GitHub Actions / APK
 
@@ -117,6 +133,13 @@ With Performance Lock disabled:
 
 Enable Performance Lock and confirm Advanced/Library/Setlists disappear from stage navigation while Live Workspace, Mixer and Settings remain.
 
+### Arrangement activation safety
+
+1. Stop playback on a normal 1x arrangement node.
+2. Press **Start Arrangement**.
+3. Confirm the playhead does not jump to the next node merely from arming Arrangement.
+4. Press Play and confirm the next node is only queued for the authored boundary once playback begins.
+
 ### Arrangement persistence
 
 1. Load a song with at least three authored sections.
@@ -143,10 +166,12 @@ Enable Performance Lock and confirm Advanced/Library/Setlists disappear from sta
 ### Pre-roll
 
 1. Stop playback.
-2. Configure an arrangement node with 1 or 2 bars pre-roll.
-3. Select/start that node.
-4. Confirm Click count-in occurs before imported stems enter.
-5. Confirm the destination begins at the intended section boundary.
+2. Note the existing Advanced count-in setting.
+3. Configure an arrangement node with 1 or 2 bars pre-roll.
+4. Select/start that node.
+5. Confirm Click count-in occurs before imported stems enter.
+6. Confirm the destination begins at the intended section boundary.
+7. Return to Advanced and confirm the previous general count-in setting was not overwritten by the node pre-roll.
 
 ### Real Setlist preload / crossfade
 
@@ -164,7 +189,7 @@ Then test the safety case:
 1. stop/pause the current song;
 2. wait for next preload;
 3. press Next;
-4. confirm the next song becomes current **without starting audio automatically**.
+4. confirm the next song becomes current **without starting audio automatically** and without a transient PLAYING state.
 
 If the phone cannot keep two low-latency streams open, StageGrid may report preload failure and use the normal safe loading path. Record the phone model and error rather than treating that as proof of an arrangement failure.
 
