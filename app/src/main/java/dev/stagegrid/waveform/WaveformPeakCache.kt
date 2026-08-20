@@ -9,8 +9,6 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
-import kotlin.math.abs
-import kotlin.math.max
 
 /**
  * Regenerable waveform overview cache.
@@ -79,48 +77,31 @@ object WaveformPeakCache {
     }
 
     fun generate(files: List<File>, targetBuckets: Int = DEFAULT_BUCKETS): PeakData {
+        require(files.isNotEmpty()) { "Waveform generation requires at least one WAV" }
         require(targetBuckets in 64..16_384) { "Waveform bucket count is outside the supported range" }
         val infos = files.map { file -> file to parseWav(file) }
-        val maxDurationMs = infos.maxOf { (_, info) ->
-            ((info.frameCount * 1000L) / info.sampleRate.coerceAtLeast(1)).coerceAtLeast(1L)
+        val maxDurationUs = infos.maxOf { (_, info) ->
+            ((info.frameCount * 1_000_000L) / info.sampleRate.coerceAtLeast(1)).coerceAtLeast(1L)
         }
-        val globalMin = FloatArray(targetBuckets) { 1f }
-        val globalMax = FloatArray(targetBuckets) { -1f }
-        val touched = BooleanArray(targetBuckets)
+        val globalMin = FloatArray(targetBuckets)
+        val globalMax = FloatArray(targetBuckets)
 
         infos.forEach { (file, info) ->
-            val localMin = FloatArray(targetBuckets) { 1f }
-            val localMax = FloatArray(targetBuckets) { -1f }
-            val localTouched = BooleanArray(targetBuckets)
-            scan(file, info, targetBuckets, localMin, localMax, localTouched)
-            for (bucket in 0 until targetBuckets) {
-                if (!localTouched[bucket]) continue
-                touched[bucket] = true
-                // Use the loudest absolute excursion across stems so the overview remains useful
-                // without summing stems and creating artificial clipping.
-                if (abs(localMin[bucket]) > abs(globalMin[bucket].takeIf { globalMin[bucket] != 1f || touched[bucket] } ?: 0f)) {
-                    globalMin[bucket] = localMin[bucket]
-                } else if (globalMin[bucket] == 1f) {
-                    globalMin[bucket] = localMin[bucket]
-                }
-                if (abs(localMax[bucket]) > abs(globalMax[bucket].takeIf { globalMax[bucket] != -1f || touched[bucket] } ?: 0f)) {
-                    globalMax[bucket] = localMax[bucket]
-                } else if (globalMax[bucket] == -1f) {
-                    globalMax[bucket] = localMax[bucket]
-                }
-            }
+            scan(
+                file = file,
+                info = info,
+                buckets = targetBuckets,
+                globalDurationUs = maxDurationUs,
+                mins = globalMin,
+                maxs = globalMax,
+            )
         }
 
-        for (bucket in 0 until targetBuckets) {
-            if (!touched[bucket]) {
-                globalMin[bucket] = 0f
-                globalMax[bucket] = 0f
-            } else {
-                if (globalMin[bucket] > 0f) globalMin[bucket] = 0f
-                if (globalMax[bucket] < 0f) globalMax[bucket] = 0f
-            }
-        }
-        return PeakData(maxDurationMs, globalMin, globalMax)
+        return PeakData(
+            durationMs = (maxDurationUs / 1000L).coerceAtLeast(1L),
+            min = globalMin,
+            max = globalMax,
+        )
     }
 
     fun clear(songRoot: File): Long {
@@ -217,9 +198,9 @@ object WaveformPeakCache {
         file: File,
         info: WavInfo,
         buckets: Int,
+        globalDurationUs: Long,
         mins: FloatArray,
         maxs: FloatArray,
-        touched: BooleanArray,
     ) {
         val framesPerChunk = 4096
         val buffer = ByteArray(framesPerChunk * info.blockAlign)
@@ -235,15 +216,12 @@ object WaveformPeakCache {
                 var offset = 0
                 repeat(completeFrames) {
                     val sample = decodeMonoFrame(buffer, offset, info)
-                    val bucket = ((frameIndex * buckets) / max(1L, info.frameCount)).toInt().coerceIn(0, buckets - 1)
-                    if (!touched[bucket]) {
-                        mins[bucket] = sample
-                        maxs[bucket] = sample
-                        touched[bucket] = true
-                    } else {
-                        if (sample < mins[bucket]) mins[bucket] = sample
-                        if (sample > maxs[bucket]) maxs[bucket] = sample
-                    }
+                    val timeUs = (frameIndex * 1_000_000L) / info.sampleRate.coerceAtLeast(1)
+                    val bucket = ((timeUs * buckets) / globalDurationUs.coerceAtLeast(1L))
+                        .toInt()
+                        .coerceIn(0, buckets - 1)
+                    if (sample < mins[bucket]) mins[bucket] = sample
+                    if (sample > maxs[bucket]) maxs[bucket] = sample
                     frameIndex++
                     offset += info.blockAlign
                 }
