@@ -2,31 +2,43 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Stems, Native Click, Native Guide and the musical timeline share one real-time audio clock instead of independent Android media players.
 
-> **Current release: `0.2.0-alpha10` — beta-readiness sprint.**
+> **Current release: `0.2.0-alpha10.1` — recognition hardening before beta.**
 >
-> This release combines the planned alpha08, alpha09 and alpha10 work so physical-device feedback can move directly toward `0.2.0-beta01`.
+> This hotfix keeps the alpha10 beta-readiness feature set and specifically improves Guide cue recognition and musical-grid start detection based on physical-device feedback.
 
 ## Product principle
 
 **A musician should be able to use the basic live workflow without understanding audio-engineering terminology.** Common performance actions stay visible; technical controls remain progressively disclosed.
 
-## New in 0.2.0-alpha10
+## New in 0.2.0-alpha10.1
 
-### Alpha08 layer — safe performance-session recovery
+### More tolerant Native Guide recognition
 
-StageGrid now stores a small, versioned performance-session snapshot while a song is loaded. The snapshot includes the loaded song, approximate transport position, Click/Guide state, Click subdivision/route, count-in choice, master volume and active Setlist Live context.
+The recognizer no longer depends on one global activity threshold. It now combines strong and relaxed activity passes plus local onset detection, so one loud Guide phrase is less likely to hide quieter calls later in the same stem.
 
-The snapshot is written through a temporary file, flushed to storage and then replaced so a process death during a write is less likely to leave an unusable session file.
+Fingerprint comparison now has a wider timing search window and a conservative language-aware recovery pass. Once the source Guide language is clear, rejected candidates can be checked again against that language only, reducing cross-language lookalikes in the confidence-margin calculation without globally accepting weak matches.
 
-On a later app start StageGrid validates that the referenced song/setlist still exists, restores the available context and loads the song at the latest saved position.
+Guide fingerprint energy is now calculated per channel before channel averaging. This avoids stereo phase cancellation causing an otherwise valid Guide to appear nearly silent to the recognizer. The persistent fingerprint-cache format was bumped so old envelopes are rebuilt automatically.
 
-**Recovered sessions never auto-play.** A session that was producing audio before Android killed the process comes back in a stopped/ready state and requires an explicit Play action.
+### More reliable Musical Grid start
 
-The position is a recovery aid, not a sample-exact crash-resume mechanism: snapshots are currently refreshed approximately once per second.
+`ClickGridAnalyzer` no longer blindly trusts the first strong transient. It collects candidate Click onsets and prefers the beginning of a stable periodic pulse train. An isolated spike/noise transient before the real Click can therefore be rejected as the grid origin.
 
-### Alpha09 layer — in-place Native Guide reanalysis + persistent fingerprints
+If no stable pulse train is available, the analyzer still falls back to the first valid Click candidate rather than failing the import.
 
-A retained original Guide track can now be analyzed again from Player after installing or replacing a Guide sample pack.
+App version: `0.2.0-alpha10.1` (`versionCode 17`).
+
+## Included alpha10 beta-readiness work
+
+### Safe performance-session recovery
+
+StageGrid stores a small, versioned performance-session snapshot while a song is loaded. The snapshot includes the loaded song, approximate transport position, Click/Guide state, Click subdivision/route, count-in choice, master volume and active Setlist Live context.
+
+On a later app start StageGrid validates that the referenced song/setlist still exists, restores the available context and loads the song at the latest saved position. **Recovered sessions never auto-play.**
+
+### In-place Native Guide reanalysis + persistent fingerprints
+
+A retained original Guide track can be analyzed again from Player after installing or replacing a Guide sample pack without reimporting/reconverting the multitrack stems.
 
 ```text
 Imported song already on device
@@ -44,23 +56,11 @@ regenerate StageGrid Native Guide.wav
 refresh untouched automatic sections when safe
 ```
 
-This does **not** reimport or reconvert the multitrack stems.
+If a section was renamed, resized, reordered or recolored manually, the user-authored section map is protected rather than silently replaced.
 
-Reanalysis has visible percentage progress. If the song still has its untouched automatically generated section map, StageGrid can refresh it from the new recognition result. If a section was renamed, resized, reordered or recolored manually, the user-authored section map is protected rather than silently replaced.
+### Arrangement-aware section + count + dynamic Guide phrases
 
-Guide sample fingerprints are also persisted in app-private storage. The cache is keyed to the installed sample-pack signature and validates sample identity, size and modification time. Replacing/restoring the Guide pack invalidates the in-memory index and a mismatching on-disk cache is rebuilt.
-
-### Alpha10 layer — arrangement-aware section + count + dynamic Guide phrases
-
-The alpha06 arrangement layer could replace the spoken **destination section name** during a manual section change. Alpha10 expands that behavior.
-
-For a selected destination, StageGrid inspects the recognized Guide events that originally occurred during that section's lead bar and can relocate a phrase containing:
-
-- the destination SECTION call;
-- recognized COUNT calls;
-- recognized DYNAMIC calls.
-
-Example:
+For a selected destination, StageGrid can relocate a phrase from that section's original lead bar containing SECTION, COUNT and DYNAMIC calls.
 
 ```text
 Original lead into CHORUS
@@ -71,20 +71,14 @@ VERSE is playing
       ↓
 user selects CHORUS
       ↓
-StageGrid prepares the destination Guide phrase off-thread
-      ↓
-"Chorus" → "2" → "3" → "All in"
+StageGrid prepares destination Guide phrase off-thread
       ↓
 current VERSE reaches its authored end marker
       ↓
 all stems jump together to CHORUS start
 ```
 
-Cue WAV files are opened, decoded/resampled and mixed into an immutable short mono buffer **outside the realtime callback**. The callback only mixes already-prepared PCM on the master timeline. If a late choice does not leave enough room for an entire spoken sample, that sample is skipped rather than cut mid-word.
-
-This is a substantial step toward arrangement-aware Guides, but it is **not the full arbitrary arrangement graph planned for 0.5**. Alpha10 relocates a destination phrase derived from the destination section's original lead bar; it does not yet turn every event in the whole song into a free-form virtual arrangement node.
-
-App version: `0.2.0-alpha10` (`versionCode 16`).
+Cue WAV files are opened, decoded/resampled and mixed into an immutable short mono buffer outside the realtime callback. If a late choice does not leave room for an entire spoken sample, that sample is skipped rather than cut mid-word.
 
 ## Current live workflow
 
@@ -191,14 +185,15 @@ Recognition is sample/template matching, **not general-purpose speech-to-text**.
 Implemented Native Guide behavior:
 
 - local cue-pack installation;
-- offline recognition;
+- phase-robust fingerprint envelope and adaptive candidate discovery;
+- offline recognition with language-aware recovery pass;
 - structured event sidecar;
 - generated Native Guide WAV on the same shared playback clock;
 - original Guide retained muted as a reference after successful reconstruction;
 - automatic editable section proposals;
 - delayed section recovery when BPM is supplied after import;
 - per-song output-language switching without stem reimport/reanalysis;
-- alpha10 in-place reanalysis from the retained original Guide;
+- in-place reanalysis from the retained original Guide;
 - persistent Guide fingerprint cache;
 - arrangement-aware relocation of a destination lead-bar phrase containing section/count/dynamic cues when matching samples exist.
 
@@ -208,20 +203,13 @@ A selected non-empty setlist can enter Setlist Live mode. Player shows current s
 
 NEXT/PREV stop and unload the previous native song before loading the destination in a stopped state. StageGrid does not auto-play merely because the setlist was advanced.
 
-The next song receives a bounded warm preload: StageGrid reads the beginning of each normalized next-song track into the Android/Linux filesystem cache on an IO dispatcher. This can reduce startup latency but is **not** a second native decoder graph, gapless transition or crossfade.
+The next song receives a bounded warm preload into the Android/Linux filesystem cache. This can reduce startup latency but is **not** a second native decoder graph, gapless transition or crossfade.
 
 ## Portable backup and restore
 
 Settings can create a self-contained `.stagebackup` through Android SAF. The destination can be a local folder, compatible removable storage, Google Drive when exposed as a DocumentsProvider, or another writable provider.
 
-A backup includes:
-
-- app-private song directories and normalized audio;
-- song/track/mixer metadata;
-- sections;
-- setlists and order;
-- `native-guide-events.json` and generated Guide files;
-- the currently installed user-supplied Guide pack.
+A backup includes app-private song directories/audio, song/track/mixer metadata, sections, setlists/order, Native Guide sidecars/generated files and the currently installed user-supplied Guide pack.
 
 Every payload file is declared with byte size + SHA-256. Restore stages and validates the complete archive before installing it, rebuilds device-specific app-private paths and preserves unrelated local library records.
 
@@ -273,15 +261,17 @@ git pull
 
 GitHub Actions runs `testDebugUnitTest` and `assembleDebug` before release PRs are merged into `main`.
 
-Coverage includes stem classification, WAV parsing, Musical Grid conversion/snapping, manual section-boundary policy, Native Guide recognition/section inference, Guide arrangement timing/sequence selection, setlist navigation and native/JNI compilation.
+Coverage includes stem classification, WAV parsing, Musical Grid conversion/snapping, manual section-boundary policy, Native Guide recognition/section inference, quiet anti-phase Guide recognition, Click stable-train selection, Guide arrangement timing/sequence selection, setlist navigation and native/JNI compilation.
 
 Physical-device qualification is still required before StageGrid is considered stage-ready.
 
-## Known limitations of 0.2.0-alpha10
+## Known limitations of 0.2.0-alpha10.1
 
+- Guide recognition remains sample/template matching: a Guide generated from a substantially different voice/sample library can still fail or produce low confidence.
+- The new relaxed candidate pass is deliberately conservative; unusual Guides that continuously contain other audio may still need further profiling with a representative failing Guide stem.
 - Session recovery is approximately as recent as the latest periodic snapshot and always returns stopped; it is not sample-exact crash continuation.
 - Guide reanalysis requires that the retained original Guide audio still exists locally.
-- Arrangement-aware alpha10 Guide relocation derives section/count/dynamic calls from the destination's original lead bar; a complete arbitrary virtual arrangement graph is still planned for 0.5.
+- Arrangement-aware Guide relocation derives section/count/dynamic calls from the destination's original lead bar; a complete arbitrary virtual arrangement graph remains planned for 0.5.
 - Extremely late live section choices can intentionally omit cues that cannot fit completely before the transition.
 - Physical-device/high-track-count stress validation remains required for double-buffered transitions and dynamic Guide phrases.
 - Setlist preload warms the OS file cache; it is not gapless dual-engine preload/crossfade.
@@ -294,16 +284,13 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/STATUS.md`](docs/STATUS.md).
 
 ## Release history
 
+### 0.2.0-alpha10.1
+
+**Recognition hardening before beta** — adaptive Guide candidate discovery, phase-robust fingerprints, language-aware recovery matching, wider timing tolerance and stable Click-train grid anchoring.
+
 ### 0.2.0-alpha10
 
-**Beta-readiness sprint: session recovery + Guide reanalysis/cache + richer dynamic Guide phrases**
-
-- includes planned alpha08/alpha09/alpha10 work in one integration sprint;
-- safe stopped session recovery;
-- persistent Guide fingerprint cache;
-- in-place Native Guide reanalysis without stem reimport;
-- manual section-map protection during reanalysis;
-- arrangement-aware section/count/dynamic destination phrases.
+**Beta-readiness sprint: session recovery + Guide reanalysis/cache + richer dynamic Guide phrases** — includes planned alpha08/alpha09/alpha10 work in one integration sprint.
 
 ### 0.2.0-alpha07
 
