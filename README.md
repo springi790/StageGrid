@@ -2,7 +2,7 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Stems, Native Click, Native Guide and the musical timeline share one real-time audio clock instead of independent Android media players.
 
-> **Current release: `0.2.0-alpha10.3` — English Guide hardening + manual section cues.**
+> **Current release: `0.2.0-alpha10.3` — manual Guide fallback + experimental recognition.**
 >
 > App version: `versionCode 19`, `versionName 0.2.0-alpha10.3`.
 
@@ -12,25 +12,31 @@ StageGrid is a native Android, local-first multitrack player for live performanc
 
 ## New in 0.2.0-alpha10.3
 
-Physical-device feedback showed an English-specific recognition failure where different calls could collapse into repeated short labels such as `Vamp`, while Spanish recognition remained reliable. Alpha10.3 changes the English classifier instead of globally changing sensitivity again, but automatic Guide recognition is now explicitly treated as an **experimental aid rather than a required workflow**.
+Physical-device feedback showed an English-specific recognition failure where different calls could collapse into repeated short labels such as `Vamp`, while Spanish recognition remained reliable. Alpha10.3 keeps the English hardening work for continued testing, but automatic Guide recognition is now explicitly treated as an **experimental opt-in aid rather than a required import step**.
+
+### Automatic Guide recognition no longer runs during import
+
+Import now keeps the original Guide reference and finishes without spending time trying to infer spoken cues automatically. If a song contains manifest sections, those are used; otherwise the song starts with the normal `Full Song` placeholder.
+
+The musician can later choose **Automatic recognition (experimental)** from Player if desired. This reduces import time and prevents an uncertain English recognizer from creating a misleading section map by default.
 
 ### Manual sections are authoritative for Guide SECTION cues
 
-When the musician creates, renames, moves or deletes a section through the section editor, StageGrid now rebuilds the Native Guide SECTION calls from that manual section map. A section cue is scheduled approximately one musical bar before the section start when a valid grid exists (or with a conservative time lead when no valid grid exists).
+When the musician creates, renames, moves or deletes a section through the section editor, StageGrid rebuilds the Native Guide SECTION calls from that manual section map. A section cue is scheduled approximately one musical bar before the section start when a valid grid exists (or with a conservative time lead when no valid grid exists).
 
 The manual path:
 
-- works even if automatic Guide recognition found no useful SECTION cues;
+- works even if automatic Guide recognition was never run or found no useful SECTION cues;
 - can create `StageGrid Native Guide.wav` from an installed Guide pack when no Native Guide track existed yet;
 - preserves already available COUNT / DYNAMIC events while replacing automatic SECTION events with the manual structure;
 - maps common Spanish/English section names and shorthand such as `Verso 1`, `Verse 1`, `V1`, `C2`, `In2`, `Puente`, `P`, `Vp`, `Intro` and `Final` to installed cue samples when available;
-- marks `native-guide-events.json` with `sectionCueSource = manual` so later systems know the musician-authored section map is authoritative.
+- marks `native-guide-events.json` with `sectionCueSource = manual` and `automaticRecognition = experimental` so later systems know the musician-authored section map is authoritative.
 
-This provides a reliable fallback: automatic recognition can be tested and improved without blocking normal live preparation.
+This is the reliable preparation workflow. Automatic recognition can continue improving without blocking normal live use or the move to beta.
 
 ### English acoustic second-stage matcher (experimental)
 
-Candidate discovery still uses the proven phase-robust 10 ms energy envelope. When the source Guide is confidently detected as English, StageGrid performs a second-stage acoustic comparison using a lightweight decimated multi-band fingerprint.
+Candidate discovery uses the phase-robust 10 ms energy envelope. When the source Guide is confidently detected as English, StageGrid performs a second-stage acoustic comparison using a lightweight decimated multi-band fingerprint.
 
 The English score combines:
 
@@ -41,15 +47,15 @@ The English score combines:
 
 This gives the matcher information that `RMS` shape alone does not contain, making short English calls such as `Verse`, `Vamp`, `Rap`, `Tag` and `Solo` easier to distinguish.
 
-Spanish and other installed languages keep the alpha10.2 envelope path. The English acoustic pass is intentionally isolated so a correction for English does not destabilize Spanish recognition that already works well in physical-device testing.
+Spanish and other installed languages keep the alpha10.2 envelope path. The English acoustic pass is intentionally isolated so English experimentation does not destabilize Spanish recognition that already works well in physical-device testing.
 
 ### Anti-collapse safety guard
 
-`Vamp`, `Rap`, `Tag` and `Solo` are no longer allowed to become convenient low-confidence defaults. If most recognized SECTION events in an English song collapse into one of those labels, StageGrid discards weak repetitions and preserves only high-confidence occurrences rather than generating an obviously misleading section map.
+`Vamp`, `Rap`, `Tag` and `Solo` are not allowed to become convenient low-confidence defaults. If most recognized SECTION events in an English song collapse into one of those labels, StageGrid discards weak repetitions rather than generating an obviously misleading section map.
 
 ### Better section naming and recognition diagnostics
 
-Repeated generic `Verse` calls can now be numbered by occurrence (`Verse 1`, `Verse 2`, ... / `Verso 1`, `Verso 2`, ...) when the source sample did not already include an explicit number.
+Repeated generic `Verse` calls can be numbered by occurrence (`Verse 1`, `Verse 2`, ... / `Verso 1`, `Verso 2`, ...) when the source sample did not already include an explicit number.
 
 Recognition diagnostics are persisted in `native-guide-events.json` alongside the accepted cues. Each diagnostic records the best candidate, runner-up, confidence, acceptance state and rejection reason. This gives future field feedback a concrete way to distinguish “candidate not found” from “candidate found but ambiguous” without repeatedly guessing global thresholds.
 
@@ -63,6 +69,7 @@ Recognition diagnostics are persisted in `native-guide-events.json` alongside th
 - Local/offline app-private playback storage.
 - WAV playback and one-time MP3 → PCM WAV normalization.
 - Import percentage, current pipeline stage and file detail.
+- Import does **not** run experimental Guide recognition automatically.
 - Safe local multitrack deletion with staged rollback around database deletion.
 - Linked document-provider folders, including Google Drive when exposed through Android SAF.
 
@@ -89,21 +96,21 @@ StageGrid does not bundle third-party Guide audio. A user-supplied/licensed samp
 Implemented:
 
 - Spanish, English, French and Portuguese pack layouts when present;
-- experimental offline sample/fingerprint recognition;
+- experimental offline sample/fingerprint recognition available on demand;
 - SECTION / COUNT / DYNAMIC events;
 - `native-guide-events.json` structured sidecar;
 - generated `StageGrid Native Guide.wav` on the same playback clock;
-- original Guide retained muted as a reference after successful reconstruction;
-- automatic editable section proposals (experimental recognition path);
-- manual section → Native Guide SECTION cue generation as the reliable fallback path;
-- delayed section recovery when BPM is entered after import;
+- original Guide retained as a reference;
+- experimental automatic editable section proposals only when recognition is explicitly requested;
+- manual section → Native Guide SECTION cue generation as the reliable path;
+- delayed section recovery when BPM is entered after an experimental analysis;
 - per-song Native Guide output-language switching;
 - Guide reanalysis without reimporting/reconverting the other stems;
 - persistent energy-fingerprint cache;
 - arrangement-aware relocation of a destination lead phrase containing SECTION/COUNT/DYNAMIC calls;
 - English-only acoustic discrimination and anti-collapse protection in alpha10.3.
 
-Automatic recognition remains **experimental sample/template matching, not general-purpose speech-to-text**. A musician can prepare the complete section map manually without depending on recognition.
+Automatic recognition remains **experimental sample/template matching, not general-purpose speech-to-text**. A musician can prepare the section map and spoken SECTION cues manually without depending on recognition.
 
 ### Setlist Live
 
@@ -153,10 +160,10 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## Known limitations of alpha10.3
 
-- Automatic Guide recognition is explicitly **experimental**. Manual sections are the reliable path and now generate their own SECTION cues.
+- Automatic Guide recognition is explicitly **experimental** and opt-in. Manual sections are the reliable path and generate their own SECTION cues.
 - English acoustic matching still depends on the installed cue sample pack being acoustically related enough to the source Guide voice; it is not arbitrary speech recognition.
 - Alpha10.3 deliberately favors precision over inventing a SECTION label. A very uncertain English call may be omitted instead of shown incorrectly.
-- COUNT cues are short and remain a dedicated beta-polish target; SECTION recognition must not be destabilized merely to increase count recall.
+- COUNT cues are short and remain a dedicated beta-polish target.
 - A custom manual section name that has no equivalent SECTION sample in the installed Guide pack cannot produce spoken audio until a compatible sample/key exists.
 - Recognition diagnostics are persisted in the Guide sidecar; final user-facing diagnostic presentation/export is beta polish.
 - Full arbitrary virtual arrangement graphs remain planned for 0.5.
@@ -171,7 +178,7 @@ See [`docs/STATUS.md`](docs/STATUS.md) for the exact source boundary and [`docs/
 
 ### 0.2.0-alpha10.3
 
-**Guide fallback + English recognition hardening** — manual section maps now generate authoritative Native Guide SECTION cues; automatic recognition is explicitly experimental; English-only multi-band acoustic second-stage matching, ambiguous short-label penalty, anti-collapse guard, persisted recognition diagnostics and generic Verse numbering remain available for continued testing.
+**Manual Guide fallback + experimental recognition** — import no longer runs recognition automatically; manual section maps generate authoritative Native Guide SECTION cues; English-only multi-band acoustic matching, anti-collapse protection and diagnostics remain available as an experimental opt-in tool.
 
 ### 0.2.0-alpha10.2
 
