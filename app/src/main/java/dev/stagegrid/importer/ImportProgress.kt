@@ -4,7 +4,11 @@ enum class ImportStage {
     PREPARING,
     COPYING,
     PROCESSING_TRACK,
-    DECODING_COMPRESSED_AUDIO,
+    /**
+     * Legacy enum name retained for UI/source compatibility. In 0.3 this stage covers every
+     * Android-platform compressed source normalized during import (MP3, M4A and AAC).
+     */
+    DECODING_MP3,
     ANALYZING_CLICK,
     ANALYZING_GUIDE,
     RENDERING_GUIDE,
