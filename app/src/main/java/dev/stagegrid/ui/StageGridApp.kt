@@ -81,6 +81,8 @@ fun StageGridApp(viewModel: StageGridViewModel) {
 
     val availableScreens = if (settings.performanceLock) listOf(MainScreen.PLAYER, MainScreen.MIXER, MainScreen.SETTINGS) else MainScreen.entries.toList()
     LaunchedEffect(settings.performanceLock) { if (screen !in availableScreens) screen = MainScreen.PLAYER }
+    LaunchedEffect(settings.clickBus) { viewModel.applyPersistedClickBus(settings.clickBus) }
+    LaunchedEffect(outputs) { viewModel.handleOutputDevicesChanged(outputs) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
@@ -155,7 +157,9 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onSolo = viewModel::setTrackSolo,
                 onPan = viewModel::setTrackPan,
                 onOutputRoute = viewModel::setTrackOutputRoute,
+                onOutputBus = { index, bus -> viewModel.setTrackOutputBus(index, bus) },
                 onClickRoute = viewModel::setClickRoute,
+                onClickBus = { bus -> viewModel.setClickBus(bus) },
                 modifier = contentModifier,
             )
             MainScreen.SETTINGS -> SettingsScreen(
@@ -166,7 +170,8 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 diagnosticsProvider = viewModel::diagnostics,
                 onLiveMode = viewModel::setLiveMode,
                 onPerformanceLock = viewModel::setPerformanceLock,
-                onOutput = viewModel::setOutputDevice,
+                onOutput = { id, channels -> viewModel.setMultichannelOutputDevice(id, channels) },
+                onTestOutput = { channel -> viewModel.testOutputChannel(channel) },
                 onInstallGuidePack = { guidePackLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
                 onNativeGuideLanguage = viewModel::setNativeGuideLanguage,
                 onCreateBackup = { backupFolderLauncher.launch(null) },
