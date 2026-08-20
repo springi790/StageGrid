@@ -23,12 +23,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v5
+      - name: Setup Java
+        id: java_setup
+        continue-on-error: true
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Prepare stable debug signing key
+        id: debug_signing
+        continue-on-error: true
         shell: bash
         run: |
           base64 --decode ci/stagegrid-debug.keystore.b64 > app/stagegrid-debug.keystore
@@ -38,26 +43,35 @@ jobs:
             -alias stagegrid-debug >/dev/null
 
       - name: Setup Android SDK
+        id: android_sdk_setup
+        continue-on-error: true
         uses: android-actions/setup-android@v4
         with:
           packages: ''
           log-accepted-android-sdk-licenses: false
 
       - name: Install Android SDK packages
+        id: android_sdk_install
+        if: steps.android_sdk_setup.outcome == 'success'
+        continue-on-error: true
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          PLATFORM_PACKAGE="$(sdkmanager --list --channel=3 | awk '$1 == "platforms;android-37.0" || $1 == "platforms;android-37" { print $1; exit }')"
-          if [ -z "$PLATFORM_PACKAGE" ]; then
-            echo "Android 17/API 37 platform package was not found by sdkmanager."
-            sdkmanager --list --channel=3 | grep -E 'platforms;android-3[67]|build-tools;37' || true
-            exit 1
-          fi
-          echo "Installing $PLATFORM_PACKAGE"
-          sdkmanager --channel=3 "$PLATFORM_PACKAGE" "build-tools;37.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+          set -o pipefail
+          {
+            yes | sdkmanager --licenses >/dev/null || true
+            PLATFORM_PACKAGE="$(sdkmanager --list --channel=3 | awk '$1 == "platforms;android-37.0" || $1 == "platforms;android-37" { print $1; exit }')"
+            if [ -z "$PLATFORM_PACKAGE" ]; then
+              echo "Android 17/API 37 platform package was not found by sdkmanager."
+              sdkmanager --list --channel=3 | grep -E 'platforms;android-3[67]|build-tools;37' || true
+              exit 1
+            fi
+            echo "Installing $PLATFORM_PACKAGE"
+            sdkmanager --channel=3 "$PLATFORM_PACKAGE" "build-tools;37.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+          } 2>&1 | tee ci-sdk-install.log
 
       - name: Unit tests and debug APK
         id: gradle_build
+        if: steps.java_setup.outcome == 'success' && steps.debug_signing.outcome == 'success' && steps.android_sdk_setup.outcome == 'success' && steps.android_sdk_install.outcome == 'success'
         continue-on-error: true
         shell: bash
         run: |
@@ -65,16 +79,29 @@ jobs:
           set -o pipefail
           ./gradlew testDebugUnitTest assembleDebug --stacktrace 2>&1 | tee ci-gradle-build.log
 
-      - name: Save Gradle failure diagnostic
-        if: steps.gradle_build.outcome == 'failure' && github.event_name == 'push'
+      - name: Save CI failure diagnostic
+        if: always() && github.event_name == 'push' && (steps.java_setup.outcome == 'failure' || steps.debug_signing.outcome == 'failure' || steps.android_sdk_setup.outcome == 'failure' || steps.android_sdk_install.outcome == 'failure' || steps.gradle_build.outcome == 'failure')
         shell: bash
         run: |
           {
             echo "StageGrid Android CI failure"
             echo "ref: $GITHUB_REF"
             echo "sha: $GITHUB_SHA"
+            echo "java_setup: ${{ steps.java_setup.outcome }}"
+            echo "debug_signing: ${{ steps.debug_signing.outcome }}"
+            echo "android_sdk_setup: ${{ steps.android_sdk_setup.outcome }}"
+            echo "android_sdk_install: ${{ steps.android_sdk_install.outcome }}"
+            echo "gradle_build: ${{ steps.gradle_build.outcome }}"
             echo
-            tail -n 450 ci-gradle-build.log
+            if [ -f ci-sdk-install.log ]; then
+              echo "===== SDK INSTALL LOG ====="
+              tail -n 220 ci-sdk-install.log
+              echo
+            fi
+            if [ -f ci-gradle-build.log ]; then
+              echo "===== GRADLE LOG ====="
+              tail -n 500 ci-gradle-build.log
+            fi
           } > ci/last-build-failure.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -82,8 +109,8 @@ jobs:
           git commit -m "ci: capture build failure [skip ci]" || true
           git push || true
 
-      - name: Fail job when Gradle failed
-        if: steps.gradle_build.outcome == 'failure'
+      - name: Fail job when a required stage failed
+        if: always() && (steps.java_setup.outcome == 'failure' || steps.debug_signing.outcome == 'failure' || steps.android_sdk_setup.outcome == 'failure' || steps.android_sdk_install.outcome == 'failure' || steps.gradle_build.outcome == 'failure')
         shell: bash
         run: exit 1
 
