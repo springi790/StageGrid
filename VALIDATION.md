@@ -1,8 +1,8 @@
-# StageGrid 0.1.3 validation record
+# StageGrid validation record
 
-This file distinguishes checks that were actually executed for this source package from checks that still require an Android toolchain/device.
+This file distinguishes checks that were actually executed for this source package from checks that still require a complete Android toolchain/device.
 
-## Executed in the delivery environment
+## Previously executed foundation checks
 
 - `tools/run-native-selftest.sh` — **PASS**
   - PCM16 WAV read path
@@ -13,15 +13,60 @@ This file distinguishes checks that were actually executed for this source packa
   - 48 kHz mono format verified
   - expected impulse at 30 seconds verified in every file
 - C++ native engine/JNI syntax compilation against minimal Oboe/JNI/Android-log API stubs — **PASS** during implementation.
-- Android resource XML/manifest parse — **PASS**
-- Spanish/default vs English string-key parity — **PASS**
-- `R.string` reference coverage — **PASS**
-- duplicate Kotlin import scan — **PASS**
-- unfinished-marker source scan — **PASS**
+- Android resource XML/manifest parse — **PASS** in the recorded foundation validation.
+- Spanish/default vs English string-key parity — **PASS** in the recorded foundation validation.
+- `R.string` reference coverage — **PASS** in the recorded foundation validation.
+- duplicate Kotlin import scan — **PASS** in the recorded foundation validation.
+- unfinished-marker source scan — **PASS** in the recorded foundation validation.
 
-## Not executable in this delivery environment
+## 0.3.0-alpha01 validation executed in the current implementation environment
 
-The host used to create this package does not contain an Android SDK/NDK installation or a local Gradle distribution, and its shell cannot download Maven/Gradle dependencies. Therefore the following commands were **not** claimed as executed here:
+### Import format policy — PASS
+
+`ImportAudioFormat.kt` was compiled with the locally available Kotlin compiler and executable checks verified:
+
+- case-insensitive M4A recognition;
+- case-insensitive AAC recognition;
+- MP3/M4A/AAC are playable and require normalization;
+- FLAC remains detected but not playable;
+- detected extension set is exactly `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`.
+
+The executable check completed with:
+
+```text
+ImportAudioFormat checks: PASS
+```
+
+### Shared platform decoder static type/syntax check — PASS
+
+`PlatformAudioToWavDecoder.kt` was compiled with `kotlinc` against minimal stubs for:
+
+- `android.media.AudioFormat`;
+- `android.media.MediaCodec`;
+- `android.media.MediaExtractor`;
+- `android.media.MediaFormat`;
+- `WavMetadataReader`.
+
+The compile completed successfully. Only unused-parameter warnings from the intentionally minimal stubs were emitted.
+
+This check validates Kotlin syntax/type usage for the new decoder implementation. It does **not** claim that a real Android codec stack decoded MP3/M4A/AAC media.
+
+## Physical Android decoder validation still required for 0.3.0-alpha01
+
+Representative device tests must cover:
+
+- MP3 import regression;
+- M4A/AAC-LC import through typical Android codec stacks;
+- different M4A metadata/container layouts;
+- common raw/ADTS AAC sources where supported by `MediaExtractor`;
+- encoder delay/padding trimming and stem alignment;
+- malformed/unsupported compressed input cleanup;
+- long files and near-RIFF-limit normalized output;
+- Click/Guide analysis against normalized M4A/AAC stems.
+
+## Full Android build status in this implementation environment
+
+The current host does not provide the complete Android SDK/NDK/Gradle dependency environment used by StageGrid CI, so the following commands are **not** claimed as executed here:
 
 ```bash
 ./gradlew testDebugUnitTest
@@ -29,21 +74,15 @@ The host used to create this package does not contain an Android SDK/NDK install
 ./gradlew assembleDebug
 ```
 
-No APK is included or described as compiled. The repository includes a pinned Gradle bootstrap and GitHub Actions workflow so these checks can run in a normal Android development environment with network access.
+No APK is described as compiled by this environment. The repository includes a GitHub Actions workflow that runs `testDebugUnitTest` and `assembleDebug` for pull requests and the protected release flow.
 
-## Hardware qualification still required
+## Historical MP3 importer validation
 
-Even after a successful Android build, stage readiness requires physical-device tests for long-run underruns/drift, USB reconnect behavior, output-device latency and 16/32-stem stress. See `docs/TESTING.md` and `docs/STATUS.md`.
+- The original `Mp3ToWavDecoder.kt` was syntax/type-checked against minimal Android media API stubs during the 0.1.2 implementation.
+- MP3 decoding used Android `MediaExtractor` + `MediaCodec` only during import and wrote a standard 16-bit PCM RIFF/WAV cache before the native engine saw the track.
+- In 0.3.0-alpha01 that API is retained as a compatibility facade over the shared `PlatformAudioToWavDecoder`.
 
-## MP3 importer validation added in 0.1.2
-
-- `Mp3ToWavDecoder.kt` was syntax/type-checked locally against minimal Android media API stubs with `kotlinc`.
-- The existing native core self-test still passes after the MP3 importer changes.
-- MP3 decoding uses Android `MediaExtractor` + `MediaCodec` only during import and writes a standard 16-bit PCM RIFF/WAV cache before the native engine sees the track.
-- A physical Android decode test still needs to be run on the target device/Android Studio build; this container does not provide an Android runtime/SDK codec stack.
-
-
-## Native click / stereo routing checks added in 0.1.3
+## Native click / stereo routing historical checks
 
 - `ClickGridAnalyzer.kt` compiled on the host with `kotlinc` — **PASS**.
 - Synthetic 48 kHz PCM test with a click transient at 123 ms — **PASS**; detected offset: 123 ms.
@@ -51,9 +90,11 @@ Even after a successful Android build, stage readiness requires physical-device 
 - Default/English string-resource parity after the new controls — **PASS**.
 - `R.string` coverage after the new controls — **PASS**.
 - Room schema version increased to 2 with a 1→2 migration adding `songs.gridOffsetMs` and `tracks.outputRoute`.
-- Full Android `compileDebugKotlin` / `assembleDebug` still requires Android Studio/SDK on the target development machine and is not claimed as executed in this container.
 
+## Hardware qualification still required
+
+Even after a successful Android build, stage readiness requires physical-device tests for long-run underruns/drift, USB reconnect behavior, output-device latency, compressed-import timing and 16/32-stem stress. See `docs/TESTING.md` and `docs/STATUS.md`.
 
 ## Windows Gradle bootstrap
 
-`gradlew.bat` prefers `curl.exe -fL` with retries on Windows and falls back to PowerShell only when curl is unavailable. The downloaded Gradle 9.5.1 archive is still SHA-256 verified before extraction.
+`gradlew.bat` prefers `curl.exe -fL` with retries on Windows and falls back to PowerShell only when curl is unavailable. The downloaded Gradle 9.5.1 archive is SHA-256 verified before extraction.
