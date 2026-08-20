@@ -47,6 +47,9 @@ fun SettingsScreen(
     onOutput: (Int) -> Unit,
     onInstallGuidePack: () -> Unit,
     onNativeGuideLanguage: (String) -> Unit,
+    onCreateBackup: () -> Unit,
+    onRestoreBackup: () -> Unit,
+    backupBusy: Boolean,
     modifier: Modifier = Modifier,
 ) {
     var diagnostics by remember { mutableStateOf(diagnosticsProvider()) }
@@ -130,6 +133,32 @@ fun SettingsScreen(
                         )
                     }
                     Text(stringResource(R.string.native_guide_import_note), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            Text(stringResource(R.string.backup_restore_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(stringResource(R.string.backup_restore_description), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.backup_restore_contents), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onCreateBackup,
+                            enabled = !backupBusy,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(stringResource(R.string.backup_create_button))
+                        }
+                        OutlinedButton(
+                            onClick = onRestoreBackup,
+                            enabled = !backupBusy,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(stringResource(R.string.backup_restore_button))
+                        }
+                    }
+                    Text(stringResource(R.string.backup_restore_provider_note), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
