@@ -15,6 +15,7 @@ import dev.stagegrid.guide.GuideCueLoader
 import dev.stagegrid.guide.GuidePackManager
 import dev.stagegrid.guide.NativeGuideEventStore
 import dev.stagegrid.guide.NativeGuideRenderer
+import dev.stagegrid.model.OutputBus
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.model.TrackEntity
@@ -46,6 +47,9 @@ class AudioEngineController(
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
     private val guideCueRequestSerial = AtomicLong(0L)
+    private var preferredOutputDeviceId: Int? = null
+    private var preferredOutputChannels: Int = 2
+    private var outputSwitchInProgress = false
 
     private val focusRequest: AudioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
         .setAudioAttributes(
@@ -124,10 +128,12 @@ class AudioEngineController(
                 native.setTrackSolo(index, track.solo)
                 native.setTrackPan(index, track.pan)
                 native.setTrackOutputRoute(index, StereoRoute.fromStorage(track.outputRoute))
+                native.setTrackOutputBus(index, OutputBus.fromStorage(track.outputBus))
             }
             val previous = _state.value
             native.setClickSubdivision(previous.clickSubdivision.subdivisionsPerBeat)
             native.setClickRoute(previous.clickRoute)
+            native.setClickOutputBus(previous.clickBus)
             native.setClickEnabled(previous.clickEnabled)
             native.setGuideEnabled(previous.guideEnabled)
             native.setMasterVolume(previous.masterVolume)
@@ -136,6 +142,7 @@ class AudioEngineController(
             if (recoveredPosition > 0L) {
                 withContext(Dispatchers.Default) { native.seekToMs(recoveredPosition) }
             }
+            val diagnostics = native.diagnostics()
             _state.value = PlayerState(
                 engineState = EngineState.READY,
                 song = bundle.song,
@@ -147,9 +154,14 @@ class AudioEngineController(
                 guideEnabled = previous.guideEnabled,
                 clickSubdivision = previous.clickSubdivision,
                 clickRoute = previous.clickRoute,
+                clickBus = previous.clickBus,
                 countInBars = previous.countInBars,
                 masterVolume = previous.masterVolume,
                 selectedOutputDeviceId = previous.selectedOutputDeviceId,
+                requestedOutputChannels = diagnostics.requestedOutputChannelCount,
+                outputChannelCount = diagnostics.outputChannelCount,
+                outputFallback = diagnostics.multichannelFallback,
+                outputNotice = previous.outputNotice,
             )
         }
     }
@@ -211,9 +223,14 @@ class AudioEngineController(
             guideEnabled = previous.guideEnabled,
             clickSubdivision = previous.clickSubdivision,
             clickRoute = previous.clickRoute,
+            clickBus = previous.clickBus,
             countInBars = previous.countInBars,
             masterVolume = previous.masterVolume,
             selectedOutputDeviceId = previous.selectedOutputDeviceId,
+            requestedOutputChannels = previous.requestedOutputChannels,
+            outputChannelCount = previous.outputChannelCount,
+            outputFallback = previous.outputFallback,
+            outputNotice = previous.outputNotice,
         )
     }
 
@@ -267,6 +284,11 @@ class AudioEngineController(
         updateTrack(index) { it.copy(outputRoute = route.name) }
     }
 
+    fun setTrackOutputBus(index: Int, bus: OutputBus) {
+        native.setTrackOutputBus(index, bus)
+        updateTrack(index) { it.copy(outputBus = bus.nativeCode) }
+    }
+
     private fun updateTrack(index: Int, transform: (TrackEntity) -> TrackEntity) {
         val old = _state.value.tracks.getOrNull(index) ?: return
         val updated = transform(old)
@@ -300,6 +322,11 @@ class AudioEngineController(
     fun setClickRoute(route: StereoRoute) {
         native.setClickRoute(route)
         _state.update { it.copy(clickRoute = route) }
+    }
+
+    fun setClickOutputBus(bus: OutputBus) {
+        native.setClickOutputBus(bus)
+        _state.update { it.copy(clickBus = bus) }
     }
 
     fun setCountInBars(bars: Int) {
@@ -390,11 +417,6 @@ class AudioEngineController(
         prepareArrangementGuideCue(current, section, jumpAt, requestSerial)
     }
 
-    /**
-     * Alpha10: rebuilds the complete Guide phrase from the destination's original lead bar.
-     * Section, count and dynamic cue samples are loaded/resampled off the realtime thread and mixed
-     * into one immutable mono buffer before publication to the native callback.
-     */
     private fun prepareArrangementGuideCue(
         snapshot: PlayerState,
         targetSection: SectionEntity,
@@ -454,7 +476,6 @@ class AudioEngineController(
                     ?: continue
                 val offsetFrames = (sourceCue.offsetMs * sampleRate.toLong() / 1000L).toInt()
                 if (offsetFrames < 0 || offsetFrames >= totalFrames) continue
-                // Never cut a spoken cue just to make a late transition fit.
                 if (offsetFrames + pcm.size > totalFrames) continue
                 for (i in pcm.indices) {
                     val index = offsetFrames + i
@@ -469,6 +490,7 @@ class AudioEngineController(
                 atMs = cueAt,
                 suppressUntilMs = sectionBoundaryMs,
                 route = StereoRoute.fromStorage(guideTrack.outputRoute),
+                bus = OutputBus.fromStorage(guideTrack.outputBus),
                 volume = guideTrack.volume,
             )
         }
@@ -480,14 +502,77 @@ class AudioEngineController(
         _state.update { it.copy(loopSectionId = null, queuedSectionId = null, queuedJumpAtMs = null) }
     }
 
-    fun setOutputDevice(deviceId: Int) {
+    fun setOutputDevice(deviceId: Int, requestedChannels: Int) {
+        preferredOutputDeviceId = deviceId
+        preferredOutputChannels = normalizeChannels(requestedChannels)
+        switchOutputDevice(deviceId, preferredOutputChannels, selectedIdAfter = deviceId, notice = null)
+    }
+
+    fun handleOutputDevicesChanged(devices: List<AudioDeviceManager.OutputDevice>) {
+        if (outputSwitchInProgress) return
+        val currentId = _state.value.selectedOutputDeviceId
+        if (currentId != null && devices.none { it.id == currentId }) {
+            switchOutputDevice(
+                deviceId = DEFAULT_OUTPUT_DEVICE,
+                requestedChannels = 2,
+                selectedIdAfter = null,
+                notice = "Selected audio interface disconnected. StageGrid fell back to the Android stereo output.",
+            )
+            return
+        }
+        val desiredId = preferredOutputDeviceId ?: return
+        if (currentId == null) {
+            val reconnected = devices.firstOrNull { it.id == desiredId } ?: return
+            preferredOutputChannels = reconnected.preferredStageGridChannels
+            switchOutputDevice(
+                deviceId = desiredId,
+                requestedChannels = preferredOutputChannels,
+                selectedIdAfter = desiredId,
+                notice = "Audio interface reconnected. StageGrid restored the preferred output automatically.",
+            )
+        }
+    }
+
+    private fun switchOutputDevice(
+        deviceId: Int,
+        requestedChannels: Int,
+        selectedIdAfter: Int?,
+        notice: String?,
+    ) {
+        if (outputSwitchInProgress) return
+        outputSwitchInProgress = true
         cancelArrangementGuideCue()
         scope.launch {
-            val ok = withContext(Dispatchers.Default) { native.setOutputDevice(deviceId) }
-            _state.update {
-                if (ok) it.copy(selectedOutputDeviceId = deviceId, errorMessage = null)
-                else it.copy(errorMessage = native.diagnostics().lastError)
+            try {
+                val ok = withContext(Dispatchers.Default) { native.setOutputDevice(deviceId, requestedChannels) }
+                val diagnostics = native.diagnostics()
+                _state.update {
+                    if (ok) {
+                        val fallbackNotice = if (diagnostics.multichannelFallback && diagnostics.requestedOutputChannelCount > diagnostics.outputChannelCount) {
+                            "Requested ${diagnostics.requestedOutputChannelCount} outputs, but Android opened ${diagnostics.outputChannelCount}. Routing was safely folded to available buses."
+                        } else null
+                        it.copy(
+                            selectedOutputDeviceId = selectedIdAfter,
+                            requestedOutputChannels = diagnostics.requestedOutputChannelCount,
+                            outputChannelCount = diagnostics.outputChannelCount,
+                            outputFallback = diagnostics.multichannelFallback,
+                            outputNotice = notice ?: fallbackNotice,
+                            errorMessage = null,
+                        )
+                    } else {
+                        it.copy(errorMessage = diagnostics.lastError.ifBlank { "The selected audio output could not be opened." })
+                    }
+                }
+            } finally {
+                outputSwitchInProgress = false
             }
+        }
+    }
+
+    fun testOutputChannel(channelIndex: Int) {
+        scope.launch {
+            val ok = withContext(Dispatchers.Default) { native.startOutputTest(channelIndex) }
+            if (!ok) _state.update { it.copy(errorMessage = native.diagnostics().lastError) }
         }
     }
 
@@ -512,9 +597,17 @@ class AudioEngineController(
         native.clearGuideCue()
     }
 
+    private fun normalizeChannels(value: Int): Int = when {
+        value >= 8 -> 8
+        value >= 6 -> 6
+        value >= 4 -> 4
+        else -> 2
+    }
+
     private companion object {
         const val GUIDE_PUBLISH_LEAD_MS = 90L
         const val GUIDE_MINIMUM_USEFUL_WINDOW_MS = 350L
         const val MAX_DYNAMIC_GUIDE_FRAMES = 48_000 * 12
+        const val DEFAULT_OUTPUT_DEVICE = 0
     }
 }
