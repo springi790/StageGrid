@@ -40,7 +40,7 @@ public:
     void scheduleJump(int64_t atMs, int64_t targetMs, bool disableLoopAfterJump);
     void clearScheduledJump();
     bool scheduleGuideCue(const std::vector<float>& monoSamples, int64_t atMs, int64_t suppressUntilMs, int route, float volume);
-    void clearGuideCue() noexcept;
+    void clearGuideCue();
     bool prepareCountIn(int64_t targetMs, int bars);
     int64_t countInRemainingMs() const;
     bool setOutputDevice(int32_t deviceId);
@@ -100,8 +100,6 @@ private:
                     std::make_unique<SpscRingBuffer>(kRingCapacitySamples)} {}
         ~TrackState();
 
-        // Two one-second stereo banks at 48 kHz use approximately the same memory as the former
-        // single two-second bank, while allowing a replacement path to be prepared off-callback.
         static constexpr size_t kRingCapacitySamples = 96000;
         std::unique_ptr<WavReader> reader;
         int type{OTHER};
@@ -159,16 +157,12 @@ private:
     std::atomic<int64_t> gridOffsetFrame_{0};
     std::atomic<int64_t> trackGateUntilFrame_{-1};
 
-    // A manual live section choice can publish one short preloaded spoken Guide cue. PCM allocation
-    // and ownership changes happen on control/background threads. The reader-active handshake lets
-    // control retain the previous shared object until a callback that may have loaded it finishes,
-    // so the callback cannot become the final owner and trigger vector destruction/deallocation.
+    // The cue's vector is built off-callback. The callback marks its short read section; control
+    // exchanges ownership and waits outside realtime before allowing the previous cue to destruct.
     std::shared_ptr<GuideCueData> guideCue_;
     std::mutex guideCueControlMutex_;
     std::atomic<bool> guideCueReaderActive_{false};
 
-    // Live path changes use the inactive bank. Control threads publish a complete path snapshot,
-    // decoder threads preload it, and only the realtime callback switches all tracks together.
     static constexpr uint64_t kPathClaimedGeneration = ~uint64_t{0};
     std::array<AtomicPathState, 2> pathStates_{};
     std::array<std::atomic<uint64_t>, 2> bankGenerations_{};
