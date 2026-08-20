@@ -79,12 +79,26 @@ jobs:
           set -o pipefail
           ./gradlew testDebugUnitTest assembleDebug --stacktrace 2>&1 | tee ci-gradle-build.log
 
-      - name: Save CI failure diagnostic
-        if: always() && github.event_name == 'push' && (steps.java_setup.outcome == 'failure' || steps.debug_signing.outcome == 'failure' || steps.android_sdk_setup.outcome == 'failure' || steps.android_sdk_install.outcome == 'failure' || steps.gradle_build.outcome == 'failure')
+      - name: Publish CI result marker
+        if: always() && github.event_name == 'push'
         shell: bash
         run: |
+          FAILED=0
+          for OUTCOME in \
+            "${{ steps.java_setup.outcome }}" \
+            "${{ steps.debug_signing.outcome }}" \
+            "${{ steps.android_sdk_setup.outcome }}" \
+            "${{ steps.android_sdk_install.outcome }}" \
+            "${{ steps.gradle_build.outcome }}"; do
+            if [ "$OUTCOME" = "failure" ]; then FAILED=1; fi
+          done
+
           {
-            echo "StageGrid Android CI failure"
+            if [ "$FAILED" -eq 0 ] && [ "${{ steps.gradle_build.outcome }}" = "success" ]; then
+              echo "result: success"
+            else
+              echo "result: failure"
+            fi
             echo "ref: $GITHUB_REF"
             echo "sha: $GITHUB_SHA"
             echo "java_setup: ${{ steps.java_setup.outcome }}"
@@ -92,21 +106,34 @@ jobs:
             echo "android_sdk_setup: ${{ steps.android_sdk_setup.outcome }}"
             echo "android_sdk_install: ${{ steps.android_sdk_install.outcome }}"
             echo "gradle_build: ${{ steps.gradle_build.outcome }}"
-            echo
-            if [ -f ci-sdk-install.log ]; then
-              echo "===== SDK INSTALL LOG ====="
-              tail -n 220 ci-sdk-install.log
+          } > ci/last-build-result.txt
+
+          if [ "$FAILED" -ne 0 ] || [ "${{ steps.gradle_build.outcome }}" != "success" ]; then
+            {
+              cat ci/last-build-result.txt
               echo
-            fi
-            if [ -f ci-gradle-build.log ]; then
-              echo "===== GRADLE LOG ====="
-              tail -n 500 ci-gradle-build.log
-            fi
-          } > ci/last-build-failure.txt
+              if [ -f ci-sdk-install.log ]; then
+                echo "===== SDK INSTALL LOG ====="
+                tail -n 220 ci-sdk-install.log
+                echo
+              fi
+              if [ -f ci-gradle-build.log ]; then
+                echo "===== GRADLE LOG ====="
+                tail -n 500 ci-gradle-build.log
+              fi
+            } > ci/last-build-failure.txt
+          else
+            rm -f ci/last-build-failure.txt
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- ci/last-build-failure.txt
-          git commit -m "ci: capture build failure [skip ci]" || true
+          git add -- ci/last-build-result.txt
+          if [ -f ci/last-build-failure.txt ]; then git add -- ci/last-build-failure.txt; fi
+          if git ls-files --error-unmatch ci/last-build-failure.txt >/dev/null 2>&1 && [ ! -f ci/last-build-failure.txt ]; then
+            git rm --ignore-unmatch ci/last-build-failure.txt
+          fi
+          git commit -m "ci: publish Android build result [skip ci]" || true
           git push || true
 
       - name: Fail job when a required stage failed
