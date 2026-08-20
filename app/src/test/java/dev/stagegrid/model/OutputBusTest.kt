@@ -16,7 +16,7 @@ class OutputBusTest {
         assertEquals(listOf(OutputBus.OUT_1_2), OutputBus.availableForChannels(2))
         assertEquals(listOf(OutputBus.OUT_1_2, OutputBus.OUT_3_4), OutputBus.availableForChannels(4))
         assertEquals(listOf(OutputBus.OUT_1_2, OutputBus.OUT_3_4, OutputBus.OUT_5_6), OutputBus.availableForChannels(6))
-        assertEquals(OutputBus.entries, OutputBus.availableForChannels(8))
+        assertEquals(OutputBus.entries.toList(), OutputBus.availableForChannels(8))
     }
 
     @Test fun physicalChannelPairsAreOneBasedForUi() {
