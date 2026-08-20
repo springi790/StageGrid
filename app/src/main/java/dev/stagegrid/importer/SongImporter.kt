@@ -5,16 +5,13 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
 import dev.stagegrid.data.LibraryRepository
-import dev.stagegrid.guide.GuideCueAnalyzer
 import dev.stagegrid.guide.GuidePackManager
-import dev.stagegrid.guide.NativeGuideRenderer
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.model.TrackEntity
 import dev.stagegrid.model.TrackType
 import dev.stagegrid.settings.AppSettingsRepository
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -30,7 +27,7 @@ class SongImporter(
     private val context: Context,
     private val repository: LibraryRepository,
     private val guidePacks: GuidePackManager,
-    private val settings: AppSettingsRepository,
+    @Suppress("unused") private val settings: AppSettingsRepository,
 ) {
     data class ImportResult(
         val songId: String,
@@ -244,89 +241,23 @@ class SongImporter(
             warnings += "A click track was detected, but its first transient could not be identified reliably; native click starts at 0 ms until adjusted."
         }
 
-        var guideAnalysis: GuideCueAnalyzer.Result? = null
-        var autoSectionProposals = emptyList<GuideCueAnalyzer.SectionProposal>()
-        var nativeGuideLanguage: String? = null
+        // Automatic speech/template recognition is now an explicit experimental action in Player.
+        // Import keeps the original Guide reference intact and does not spend time guessing sections.
         val installedGuideSamples = guidePacks.listSamples()
-        if (guideReferenceFile != null && installedGuideSamples.isNotEmpty()) {
-            report(onProgress, 77, ImportStage.ANALYZING_GUIDE, guideReferenceFile?.name)
-            guideAnalysis = runCatching { GuideCueAnalyzer.analyze(guideReferenceFile!!, installedGuideSamples) }
-                .onFailure { warnings += "Native Guide analysis failed: ${it.message ?: "unknown error"}. The imported Guide track was kept." }
-                .getOrNull()
-            val analysis = guideAnalysis
-            if (analysis != null && analysis.cues.isNotEmpty()) {
-                autoSectionProposals = GuideCueAnalyzer.inferSections(
-                    result = analysis,
-                    bpm = manifest.bpm,
-                    timeSignature = manifest.timeSignature ?: "4/4",
-                    gridOffsetMs = gridOffsetMs,
-                    durationMs = maxDuration,
-                )
-                val preferredLanguage = settings.settings.first().nativeGuideLanguage
-                nativeGuideLanguage = guidePacks.resolveOutputLanguage(preferredLanguage, analysis.dominantLanguage)
-                val outputLanguage = nativeGuideLanguage
-                if (outputLanguage != null && tracks.size < MAX_TRACKS) {
-                    val nativeGuideFile = uniqueFile(audioDir, "${NativeGuideRenderer.TRACK_NAME}.wav")
-                    report(onProgress, 86, ImportStage.RENDERING_GUIDE, outputLanguage)
-                    val rendered = runCatching {
-                        NativeGuideRenderer.render(
-                            outputFile = nativeGuideFile,
-                            durationMs = maxDuration,
-                            cues = analysis.cues,
-                            samples = installedGuideSamples,
-                            outputLanguage = outputLanguage,
-                            onProgress = { fraction ->
-                                report(onProgress, (86f + 7f * fraction).roundToInt(), ImportStage.RENDERING_GUIDE, outputLanguage)
-                            },
-                        )
-                    }.getOrNull()
-                    if (rendered != null) {
-                        val metadata = WavMetadataReader.read(rendered.file)
-                        for (i in tracks.indices) {
-                            if (tracks[i].type == TrackType.GUIDE.name) tracks[i] = tracks[i].copy(muted = true)
-                        }
-                        tracks += TrackEntity(
-                            songId = songId,
-                            name = NativeGuideRenderer.TRACK_NAME,
-                            filePath = rendered.file.absolutePath,
-                            type = TrackType.GUIDE.name,
-                            channels = metadata.channels,
-                            sampleRate = metadata.sampleRate,
-                            bitDepth = metadata.bitDepth,
-                            durationMs = metadata.durationMs,
-                            sortOrder = tracks.size,
-                        )
-                        warnings += "StageGrid recognized ${analysis.cues.size} Guide cue(s) and generated a native Guide in '${rendered.outputLanguage}'. " +
-                            "The imported Guide track was muted but kept as a reference."
-                        if (rendered.missingEvents > 0) {
-                            warnings += "${rendered.missingEvents} recognized Guide cue(s) had no matching sample in the selected/fallback pack."
-                        }
-                    } else {
-                        nativeGuideFile.delete()
-                        warnings += "Guide cues were recognized, but a native Guide WAV could not be rendered; the imported Guide track remains active."
-                    }
-                } else if (tracks.size >= MAX_TRACKS) {
-                    warnings += "Guide cues were recognized, but the native Guide track was skipped because the song already uses the $MAX_TRACKS-track import limit."
-                }
-                runCatching {
-                    NativeGuideRenderer.writeEventSidecar(
-                        File(songRoot, "native-guide-events.json"),
-                        analysis,
-                        nativeGuideLanguage,
-                        autoSectionProposals,
-                    )
-                }
-            } else if (analysis != null) {
-                warnings += "A Guide track and Guide sample pack were found, but no cue matched the installed templates confidently."
+        if (guideReferenceFile != null) {
+            report(onProgress, 82, ImportStage.PREPARING, guideReferenceFile?.name)
+            if (installedGuideSamples.isNotEmpty()) {
+                warnings += "A Guide track was detected. Automatic Guide recognition is experimental and was skipped during import. " +
+                    "Use Automatic recognition (experimental) from Player if desired, or create/edit sections manually; StageGrid will generate section cues from those names."
+            } else {
+                warnings += "A Guide track was detected. Install a Guide sample pack in Settings to generate Native Guide cues from manual sections or try experimental automatic recognition."
             }
-        } else if (guideReferenceFile != null && installedGuideSamples.isEmpty()) {
-            warnings += "A Guide track was detected. Install a Guide sample pack in Settings to enable native Guide recognition and automatic section detection on future imports."
         }
 
         report(onProgress, 94, ImportStage.BUILDING_SECTIONS)
         val manifestSectionStarts = manifest.sections.filter { it.startMs < maxDuration }.sortedBy { it.startMs }
-        val sections = when {
-            manifestSectionStarts.isNotEmpty() -> manifestSectionStarts.mapIndexed { i, section ->
+        val sections = if (manifestSectionStarts.isNotEmpty()) {
+            manifestSectionStarts.mapIndexed { i, section ->
                 val end = manifestSectionStarts.getOrNull(i + 1)?.startMs ?: maxDuration
                 SectionEntity(
                     songId = songId,
@@ -337,23 +268,8 @@ class SongImporter(
                     colorArgb = section.colorArgb ?: defaultSectionColor(i),
                 )
             }
-            autoSectionProposals.isNotEmpty() -> {
-                warnings += "${autoSectionProposals.size} song section(s) were created automatically from the recognized Guide cues. Review them in Edit sections before live use."
-                autoSectionProposals.mapIndexed { i, proposal ->
-                    val end = autoSectionProposals.getOrNull(i + 1)?.startMs ?: maxDuration
-                    SectionEntity(
-                        songId = songId,
-                        name = proposal.name,
-                        startMs = proposal.startMs,
-                        endMs = end.coerceAtLeast(proposal.startMs + 1),
-                        sortOrder = i,
-                        colorArgb = defaultSectionColor(i),
-                    )
-                }
-            }
-            else -> listOf(
-                SectionEntity(songId = songId, name = "Full Song", startMs = 0, endMs = maxDuration, sortOrder = 0),
-            )
+        } else {
+            listOf(SectionEntity(songId = songId, name = "Full Song", startMs = 0, endMs = maxDuration, sortOrder = 0))
         }
 
         report(onProgress, 97, ImportStage.SAVING_LIBRARY)
