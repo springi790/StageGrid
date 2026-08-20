@@ -42,12 +42,18 @@ import dev.stagegrid.ui.screens.CloudBrowserDialog
 import dev.stagegrid.ui.screens.LibraryScreen
 import dev.stagegrid.ui.screens.LiveWorkspaceScreen
 import dev.stagegrid.ui.screens.MixerScreen
+import dev.stagegrid.ui.screens.PlayerScreen
 import dev.stagegrid.ui.screens.SectionEditorDialog
 import dev.stagegrid.ui.screens.SetlistsScreen
 import dev.stagegrid.ui.screens.SettingsScreen
 
 private enum class MainScreen(val labelRes: Int) {
-    LIBRARY(R.string.library), SETLISTS(R.string.setlists), PLAYER(R.string.live_workspace), MIXER(R.string.mixer), SETTINGS(R.string.settings),
+    LIBRARY(R.string.library),
+    SETLISTS(R.string.setlists),
+    PLAYER(R.string.live_workspace),
+    MIXER(R.string.mixer),
+    ADVANCED(R.string.advanced_options),
+    SETTINGS(R.string.settings),
 }
 
 @Composable
@@ -60,6 +66,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val importState by viewModel.importState.collectAsStateWithLifecycle()
     val guidePackState by viewModel.guidePackState.collectAsStateWithLifecycle()
+    val nativeGuideState by viewModel.nativeGuideState.collectAsStateWithLifecycle()
     val sessionRecoveryState by viewModel.sessionRecoveryState.collectAsStateWithLifecycle()
     val backupState by viewModel.backupState.collectAsStateWithLifecycle()
     val libraryActionState by viewModel.libraryActionState.collectAsStateWithLifecycle()
@@ -79,7 +86,11 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     val backupFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? -> uri?.let(viewModel::createLibraryBackup) }
     val restoreBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> uri?.let(viewModel::restoreLibraryBackup) }
 
-    val availableScreens = if (settings.performanceLock) listOf(MainScreen.PLAYER, MainScreen.MIXER, MainScreen.SETTINGS) else MainScreen.entries.toList()
+    val availableScreens = if (settings.performanceLock) {
+        listOf(MainScreen.PLAYER, MainScreen.MIXER, MainScreen.SETTINGS)
+    } else {
+        MainScreen.entries.toList()
+    }
     LaunchedEffect(settings.performanceLock) { if (screen !in availableScreens) screen = MainScreen.PLAYER }
     LaunchedEffect(settings.clickBus) { viewModel.applyPersistedClickBus(settings.clickBus) }
     LaunchedEffect(outputs) { viewModel.handleOutputDevicesChanged(outputs) }
@@ -160,6 +171,32 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onOutputBus = { index, bus -> viewModel.setTrackOutputBus(index, bus) },
                 onClickRoute = viewModel::setClickRoute,
                 onClickBus = { bus -> viewModel.setClickBus(bus) },
+                modifier = contentModifier,
+            )
+            MainScreen.ADVANCED -> PlayerScreen(
+                state = player,
+                nativeGuide = nativeGuideState,
+                setlistLive = setlistLiveState,
+                onPlayPause = viewModel::playPause,
+                onStop = viewModel::stop,
+                onStopAll = viewModel::stopAll,
+                onSeek = viewModel::seekTo,
+                onLoop = viewModel::toggleLoop,
+                onExitLoop = viewModel::exitLoop,
+                onSection = viewModel::selectSection,
+                onEditSections = { sectionEditorOpen = true },
+                onPlaySectionWithCountIn = viewModel::playCurrentSectionWithCountIn,
+                onCountInBars = viewModel::setCountInBars,
+                onMaster = viewModel::setMaster,
+                onClick = viewModel::setClick,
+                onGuide = viewModel::setGuide,
+                onNativeGuideLanguage = viewModel::setSongNativeGuideLanguage,
+                onReanalyzeNativeGuide = viewModel::reanalyzeCurrentNativeGuide,
+                onClickSubdivision = viewModel::setClickSubdivision,
+                onClickRoute = viewModel::setClickRoute,
+                onSetlistPrevious = viewModel::setlistLivePrevious,
+                onSetlistNext = viewModel::setlistLiveNext,
+                onExitSetlistLive = viewModel::exitSetlistLive,
                 modifier = contentModifier,
             )
             MainScreen.SETTINGS -> SettingsScreen(
