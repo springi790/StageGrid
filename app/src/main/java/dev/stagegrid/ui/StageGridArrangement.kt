@@ -5,8 +5,10 @@ import dev.stagegrid.arrangement.ArrangementGraph
 import dev.stagegrid.arrangement.ArrangementGraphStore
 import dev.stagegrid.arrangement.ArrangementRuntime
 import dev.stagegrid.arrangement.ArrangementRuntimeState
+import dev.stagegrid.audio.EngineState
 import dev.stagegrid.audio.PlayerState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -120,9 +122,12 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
             exitRequested = false,
             error = null,
         )
-        if (player.currentSection?.id != active.sectionId) {
-            graph.sectionFor(active, player.sections)?.let(app.audio::queueOrJumpSection)
+        val section = graph.sectionFor(active, player.sections) ?: return
+        if (!player.isPlaying && active.preRollBars > 0) {
+            launchStoppedNodeWithPreRoll(active.id, section.id, active.preRollBars)
+            return
         }
+        if (player.currentSection?.id != active.sectionId) app.audio.queueOrJumpSection(section)
         configureActiveNode(player, _state.value)
     }
 
@@ -152,6 +157,22 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
         )
         if (!player.isPlaying) {
             _state.value = _state.value.copy(activeNodeId = node.id, queuedNodeId = null, iteration = 1)
+            if (node.preRollBars > 0) launchStoppedNodeWithPreRoll(node.id, section.id, node.preRollBars)
+        }
+    }
+
+    private fun launchStoppedNodeWithPreRoll(nodeId: String, sectionId: String, bars: Int) {
+        viewModel.viewModelScope.launch {
+            val deadline = System.currentTimeMillis() + PRE_ROLL_SEEK_TIMEOUT_MS
+            while (System.currentTimeMillis() < deadline) {
+                val player = viewModel.player.value
+                if (player.currentSection?.id == sectionId && player.engineState !in setOf(EngineState.LOADING, EngineState.SEEKING)) break
+                delay(30)
+            }
+            val latest = viewModel.player.value
+            if (_state.value.activeNodeId != nodeId || latest.currentSection?.id != sectionId) return@launch
+            app.audio.setCountInBars(bars)
+            app.audio.playCurrentSectionWithCountIn()
         }
     }
 
@@ -196,6 +217,10 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
             iteration = next.nextIteration,
             exitRequested = false,
         )
+    }
+
+    private companion object {
+        const val PRE_ROLL_SEEK_TIMEOUT_MS = 2_000L
     }
 }
 
