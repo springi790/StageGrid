@@ -144,28 +144,43 @@ class SongImporter(
         val manifest = SongManifestParser.parse(manifestFile)
         val warnings = mutableListOf<String>()
 
-        val requestedAudio = allFiles.filter { it.extension.lowercase(Locale.ROOT) in AUDIO_EXTENSIONS }
+        val requestedAudio = allFiles.filter { ImportAudioFormat.fromFileName(it.name) != null }
         if (requestedAudio.isEmpty()) throw ImportException("No compatible audio files were found.")
 
-        val wavFiles = requestedAudio.filter { it.extension.equals("wav", true) }
-        val mp3Files = requestedAudio.filter { it.extension.equals("mp3", true) }
-        val playableSources = (wavFiles + mp3Files).sortedBy { it.name.lowercase() }
+        val playableSources = requestedAudio.filter {
+            ImportAudioFormat.fromFileName(it.name)?.playable == true
+        }.sortedBy { it.name.lowercase(Locale.ROOT) }
         val unsupportedCompressed = requestedAudio.filter {
-            !it.extension.equals("wav", true) && !it.extension.equals("mp3", true)
+            ImportAudioFormat.fromFileName(it.name)?.playable != true
         }
         if (unsupportedCompressed.isNotEmpty()) {
-            warnings += "${unsupportedCompressed.size} compressed track(s) were detected but are not playable yet: " +
-                unsupportedCompressed.take(4).joinToString { it.name }
+            val unsupportedSummary = unsupportedCompressed
+                .groupingBy { ImportAudioFormat.fromFileName(it.name)?.label ?: it.extension.uppercase(Locale.ROOT) }
+                .eachCount()
+                .entries
+                .sortedBy { it.key }
+                .joinToString { (label, count) -> "$count $label" }
+            warnings += "${unsupportedCompressed.size} compressed track(s) were detected but are not playable yet ($unsupportedSummary)."
         }
-        if (mp3Files.isNotEmpty()) {
-            warnings += "${mp3Files.size} MP3 track(s) were converted to 16-bit PCM WAV for reliable live playback. " +
+
+        val normalizedSources = playableSources.filter {
+            ImportAudioFormat.fromFileName(it.name)?.normalizeToWav == true
+        }
+        if (normalizedSources.isNotEmpty()) {
+            val normalizedSummary = normalizedSources
+                .groupingBy { ImportAudioFormat.fromFileName(it.name)?.label ?: it.extension.uppercase(Locale.ROOT) }
+                .eachCount()
+                .entries
+                .sortedBy { it.key }
+                .joinToString { (label, count) -> "$count $label" }
+            warnings += "${normalizedSources.size} compressed track(s) were converted to 16-bit PCM WAV for reliable live playback ($normalizedSummary). " +
                 "WAV exported from one common timeline remains recommended for the best stem alignment."
         }
         if (playableSources.isEmpty()) {
-            throw ImportException("This build requires at least one WAV or MP3 audio track.")
+            throw ImportException("This build requires at least one WAV, MP3, M4A or AAC audio track.")
         }
         if (playableSources.size > MAX_TRACKS) {
-            throw ImportException("This song contains ${playableSources.size} playable tracks; the MVP import limit is $MAX_TRACKS.")
+            throw ImportException("This song contains ${playableSources.size} playable tracks; the import limit is $MAX_TRACKS.")
         }
 
         val audioDir = File(songRoot, "audio").apply { mkdirs() }
@@ -174,25 +189,27 @@ class SongImporter(
         var clickReferenceFile: File? = null
         var guideReferenceFile: File? = null
         var totalEncoderDelayFrames = 0L
-        var mp3WithGaplessMetadata = 0
+        var normalizedWithGaplessMetadata = 0
         val trackProgressStart = 18f
         val trackProgressEnd = 70f
         val progressPerTrack = (trackProgressEnd - trackProgressStart) / playableSources.size.toFloat()
 
         playableSources.forEachIndexed { index, source ->
-            val isMp3 = source.extension.equals("mp3", true)
+            val format = ImportAudioFormat.fromFileName(source.name)
+                ?: throw ImportException("Unsupported audio extension for ${source.name}")
+            val shouldNormalize = format.normalizeToWav
             val trackBase = trackProgressStart + progressPerTrack * index
-            val destinationName = if (isMp3) "${source.nameWithoutExtension}.wav" else source.name
+            val destinationName = if (shouldNormalize) "${source.nameWithoutExtension}.wav" else source.name
             val safeName = uniqueFile(audioDir, sanitizeFileName(destinationName))
-            var mp3Decode: Mp3ToWavDecoder.DecodeResult? = null
-            val stageType = if (isMp3) ImportStage.DECODING_MP3 else ImportStage.PROCESSING_TRACK
+            var platformDecode: PlatformAudioToWavDecoder.DecodeResult? = null
+            val stageType = if (shouldNormalize) ImportStage.DECODING_MP3 else ImportStage.PROCESSING_TRACK
             report(onProgress, trackBase.roundToInt(), stageType, source.name)
             val metadata = try {
-                if (isMp3) {
-                    Mp3ToWavDecoder.decode(source, safeName) { fraction ->
+                if (shouldNormalize) {
+                    PlatformAudioToWavDecoder.decode(source, safeName) { fraction ->
                         val weighted = trackBase + progressPerTrack * fraction
                         report(onProgress, weighted.roundToInt(), ImportStage.DECODING_MP3, source.name)
-                    }.also { mp3Decode = it }.metadata
+                    }.also { platformDecode = it }.metadata
                 } else {
                     copyLocalFile(source, safeName) { fraction ->
                         val weighted = trackBase + progressPerTrack * fraction
@@ -204,9 +221,9 @@ class SongImporter(
                 safeName.delete()
                 throw ImportException("Track \"${source.name}\" could not be decoded: ${t.message}", t)
             }
-            mp3Decode?.let { decode ->
+            platformDecode?.let { decode ->
                 if (decode.encoderDelayFrames > 0 || decode.encoderPaddingFrames > 0) {
-                    mp3WithGaplessMetadata++
+                    normalizedWithGaplessMetadata++
                     totalEncoderDelayFrames += decode.encoderDelayFrames
                 }
             }
@@ -229,8 +246,8 @@ class SongImporter(
             )
         }
 
-        if (mp3WithGaplessMetadata > 0) {
-            warnings += "Android gapless metadata removed encoder delay/padding from $mp3WithGaplessMetadata MP3 track(s) " +
+        if (normalizedWithGaplessMetadata > 0) {
+            warnings += "Android gapless metadata removed encoder delay/padding from $normalizedWithGaplessMetadata compressed track(s) " +
                 "during import (total leading trim: $totalEncoderDelayFrames decoded frames)."
         }
 
@@ -541,7 +558,7 @@ class SongImporter(
         private const val MAX_TRACKS = 64
         private const val MAX_DEPTH = 8
         private const val MAX_EXTRACTED_BYTES = 50L * 1024L * 1024L * 1024L
-        private val AUDIO_EXTENSIONS = setOf("wav", "flac", "mp3", "m4a", "aac", "ogg")
+        private val AUDIO_EXTENSIONS = ImportAudioFormat.detectedExtensions
         private val SECTION_COLORS = longArrayOf(
             0xFF5B8CFF, 0xFF2FBF9F, 0xFF9C6CFF, 0xFFF39C55, 0xFFE85D75, 0xFF4FB6E9,
         )
