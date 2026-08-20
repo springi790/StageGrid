@@ -2,240 +2,153 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Stems, Native Click, Native Guide and the musical timeline share one real-time audio clock instead of independent Android media players.
 
-> **Current release: `0.2.0-alpha10.2` — English Guide recognition isolation before beta.**
+> **Current release: `0.2.0-alpha10.3` — manual Guide fallback + experimental recognition.**
 >
-> This hotfix keeps the alpha10 beta-readiness feature set, preserves the Spanish recognition path that is already behaving well in field testing, and specifically reduces English-source false positives/repeated recognition work.
+> App version: `versionCode 19`, `versionName 0.2.0-alpha10.3`.
 
 ## Product principle
 
-**A musician should be able to use the basic live workflow without understanding audio-engineering terminology.** Common performance actions stay visible; technical controls remain progressively disclosed.
+**A musician should be able to use the basic live workflow without understanding audio-engineering terminology.** Common performance actions stay visible and technical controls stay progressively disclosed.
 
-## New in 0.2.0-alpha10.2
+## New in 0.2.0-alpha10.3
 
-### Source-language-first Native Guide matching
+Physical-device feedback showed an English-specific recognition failure where different calls could collapse into repeated short labels such as `Vamp`, while Spanish recognition remained reliable. Alpha10.3 keeps the English hardening work for continued testing, but automatic Guide recognition is now explicitly treated as an **experimental opt-in aid rather than a required import step**.
 
-Field feedback narrowed the remaining recognition problem: Spanish Guide stems were consistently recognized, while some English Guide stems were slower and collapsed unrelated calls into repeated `Vamp` / `Rap` section matches.
+### Automatic Guide recognition no longer runs during import
 
-StageGrid now performs a small bounded language probe before the expensive full cue pass. When the evidence is strong enough, the complete Guide is compared only against samples from that source language. When evidence is weak, StageGrid falls back to the all-language matcher rather than guessing.
+Import now keeps the original Guide reference and finishes without spending time trying to infer spoken cues automatically. If a song contains manifest sections, those are used; otherwise the song starts with the normal `Full Song` placeholder.
 
-The Spanish acceptance thresholds remain unchanged. English uses a wider semantic ambiguity margin so uncertain short-section matches are rejected instead of being promoted into a section map merely because they resemble `Vamp` or `Rap`.
+The musician can later choose **Automatic recognition (experimental)** from Player if desired. This reduces import time and prevents an uncertain English recognizer from creating a misleading section map by default.
 
-The alpha10.1 rejected-candidate second full pass has been removed. The language probe is bounded to a small set of candidates and SECTION templates, so a confidently identified source language reduces the number of template comparisons during the main pass.
+### Manual sections are authoritative for Guide SECTION cues
 
-### Included alpha10.1 recognition/grid hardening
+When the musician creates, renames, moves or deletes a section through the section editor, StageGrid rebuilds the Native Guide SECTION calls from that manual section map. A section cue is scheduled approximately one musical bar before the section start when a valid grid exists (or with a conservative time lead when no valid grid exists).
 
-Candidate discovery still combines strong + relaxed activity thresholds and phase-robust per-channel energy, preserving recovery of quiet Guide calls and avoiding stereo phase cancellation. Template timing tolerance remains approximately ±240 ms.
+The manual path:
 
-`ClickGridAnalyzer` still prefers the beginning of a stable periodic Click train instead of blindly accepting one isolated early transient as the Musical Grid origin.
+- works even if automatic Guide recognition was never run or found no useful SECTION cues;
+- can create `StageGrid Native Guide.wav` from an installed Guide pack when no Native Guide track existed yet;
+- preserves already available COUNT / DYNAMIC events while replacing automatic SECTION events with the manual structure;
+- maps common Spanish/English section names and shorthand such as `Verso 1`, `Verse 1`, `V1`, `C2`, `In2`, `Puente`, `P`, `Vp`, `Intro` and `Final` to installed cue samples when available;
+- marks `native-guide-events.json` with `sectionCueSource = manual` and `automaticRecognition = experimental` so later systems know the musician-authored section map is authoritative.
 
-App version: `0.2.0-alpha10.2` (`versionCode 18`).
+This is the reliable preparation workflow. Automatic recognition can continue improving without blocking normal live use or the move to beta.
 
-## Included alpha10 beta-readiness work
+### English acoustic second-stage matcher (experimental)
 
-### Safe performance-session recovery
+Candidate discovery uses the phase-robust 10 ms energy envelope. When the source Guide is confidently detected as English, StageGrid performs a second-stage acoustic comparison using a lightweight decimated multi-band fingerprint.
 
-StageGrid stores a small, versioned performance-session snapshot while a song is loaded. The snapshot includes the loaded song, approximate transport position, Click/Guide state, Click subdivision/route, count-in choice, master volume and active Setlist Live context.
+The English score combines:
 
-On a later app start StageGrid validates that the referenced song/setlist still exists, restores the available context and loads the song at the latest saved position. **Recovered sessions never auto-play.**
+- temporal energy/envelope shape;
+- coarse low / low-mid / high-mid / high speech-band movement;
+- gain-independent relative band energy;
+- semantic margin against the next-best cue.
 
-### In-place Native Guide reanalysis + persistent fingerprints
+This gives the matcher information that `RMS` shape alone does not contain, making short English calls such as `Verse`, `Vamp`, `Rap`, `Tag` and `Solo` easier to distinguish.
 
-A retained original Guide track can be analyzed again from Player after installing or replacing a Guide sample pack without reimporting/reconverting the multitrack stems.
+Spanish and other installed languages keep the alpha10.2 envelope path. The English acoustic pass is intentionally isolated so English experimentation does not destabilize Spanish recognition that already works well in physical-device testing.
 
-```text
-Imported song already on device
-        ↓
-install / replace Guide pack
-        ↓
-Player → Reanalyze Guide
-        ↓
-reuse original Guide reference
-        ↓
-recognize cues again
-        ↓
-regenerate StageGrid Native Guide.wav
-        ↓
-refresh untouched automatic sections when safe
-```
+### Anti-collapse safety guard
 
-If a section was renamed, resized, reordered or recolored manually, the user-authored section map is protected rather than silently replaced.
+`Vamp`, `Rap`, `Tag` and `Solo` are not allowed to become convenient low-confidence defaults. If most recognized SECTION events in an English song collapse into one of those labels, StageGrid discards weak repetitions rather than generating an obviously misleading section map.
 
-### Arrangement-aware section + count + dynamic Guide phrases
+### Better section naming and recognition diagnostics
 
-For a selected destination, StageGrid can relocate a phrase from that section's original lead bar containing SECTION, COUNT and DYNAMIC calls.
+Repeated generic `Verse` calls can be numbered by occurrence (`Verse 1`, `Verse 2`, ... / `Verso 1`, `Verso 2`, ...) when the source sample did not already include an explicit number.
 
-```text
-Original lead into CHORUS
-"Chorus" → "2" → "3" → "All in"
+Recognition diagnostics are persisted in `native-guide-events.json` alongside the accepted cues. Each diagnostic records the best candidate, runner-up, confidence, acceptance state and rejection reason. This gives future field feedback a concrete way to distinguish “candidate not found” from “candidate found but ambiguous” without repeatedly guessing global thresholds.
 
-Live performance
-VERSE is playing
-      ↓
-user selects CHORUS
-      ↓
-StageGrid prepares destination Guide phrase off-thread
-      ↓
-current VERSE reaches its authored end marker
-      ↓
-all stems jump together to CHORUS start
-```
+## Current 0.2 feature set
 
-Cue WAV files are opened, decoded/resampled and mixed into an immutable short mono buffer outside the realtime callback. If a late choice does not leave room for an entire spoken sample, that sample is skipped rather than cut mid-word.
+### Library / import
 
-## Current live workflow
-
-```text
-Import ZIP / folder / audio files
-        ↓
-local normalized playback files
-        ↓
-Click → Musical Grid
-Guide → optional local cue recognition
-        ↓
-automatic/editable sections
-        ↓
-Player / Mixer / Setlist Live
-        ↓
-manual section choice
-        ↓
-prepare destination audio + Guide phrase
-        ↓
-finish CURRENT authored section
-        ↓
-double-buffered synchronized handoff
-        ↓
-selected section start
-```
-
-A common stereo stage preset remains:
-
-```text
-Left  → Click + Guide
-Right → Tracks
-```
-
-## Library, import and portability
-
-Implemented:
-
-- Kotlin / Jetpack Compose Android application.
+- Kotlin + Jetpack Compose Android app.
 - Room library for songs, tracks, sections and setlists.
 - ZIP, folder and multi-file import through Android Storage Access Framework.
-- Linked document-provider folder browsing, including Google Drive when exposed by Android.
-- Imported audio copied into app-private storage for deterministic offline playback.
-- ZIP-slip protection, bounded extraction and safe filenames.
-- Optional `song.json` metadata/section markers.
-- Post-import metadata editing.
-- Import percentage, pipeline stage and current-file detail.
-- Safe local multitrack deletion with confirmation and staged file rollback around the Room operation.
-- Deleting a local song does not modify external `.stagebackup` snapshots.
+- Local/offline app-private playback storage.
+- WAV playback and one-time MP3 → PCM WAV normalization.
+- Import percentage, current pipeline stage and file detail.
+- Import does **not** run experimental Guide recognition automatically.
+- Safe local multitrack deletion with staged rollback around database deletion.
+- Linked document-provider folders, including Google Drive when exposed through Android SAF.
 
-### Audio formats currently playable
+### Shared-clock native audio
 
-- WAV RIFF PCM: supported integer PCM depths handled by the parser.
-- WAV 32-bit IEEE float where supported.
-- MP3 through one-time Android `MediaExtractor` / `MediaCodec` normalization to PCM WAV during import.
+- one Oboe stereo output stream;
+- one authoritative native master frame clock;
+- streaming stem decoder threads and preallocated buffers;
+- two decoder banks per track for prepared Loop/section transitions;
+- synchronized all-track handoff;
+- play / pause / stop / seek;
+- per-track volume, mute, solo, pan and `L / L+R / R` routing;
+- native Click with quarter/eighth/triplet/sixteenth subdivisions;
+- native section count-in;
+- Android/USB stereo output-device selection;
+- runtime diagnostics for underruns/callback/path handoffs.
 
-MP3 decoding never runs in the Oboe callback. StageGrid does not independently strip musical silence from each stem because intentional rests/count-ins must preserve the common timeline.
+Manual section choices wait for the explicit end of the **current** section and then enter the selected destination at its explicit start marker.
 
-## Native audio engine
+### Native Guide
+
+StageGrid does not bundle third-party Guide audio. A user-supplied/licensed sample ZIP can be installed locally.
 
 Implemented:
 
-- one native Oboe stereo output stream;
-- one master output-frame playhead shared by every stem;
-- streaming decoder threads and preallocated SPSC buffers;
-- two decoder banks per track for prepared Loop/section paths;
-- active audio continues while the inactive bank prepares a replacement path;
-- synchronized all-track handoff after readiness/alignment checks;
-- stale/unsafe prepared paths are rejected instead of being applied late;
-- play, pause, stop and seek;
-- master volume;
-- per-track volume, mute, solo, pan and `L / L+R / R` route;
-- native sample-clock Click with 1/4, 1/8, 1/8T and 1/16 subdivisions;
-- native 1/2-bar section count-in;
-- Android/USB stereo output-device selection;
-- diagnostics for sample rate, burst size, underruns, callback load and path swaps/misses.
+- Spanish, English, French and Portuguese pack layouts when present;
+- experimental offline sample/fingerprint recognition available on demand;
+- SECTION / COUNT / DYNAMIC events;
+- `native-guide-events.json` structured sidecar;
+- generated `StageGrid Native Guide.wav` on the same playback clock;
+- original Guide retained as a reference;
+- experimental automatic editable section proposals only when recognition is explicitly requested;
+- manual section → Native Guide SECTION cue generation as the reliable path;
+- delayed section recovery when BPM is entered after an experimental analysis;
+- per-song Native Guide output-language switching;
+- Guide reanalysis without reimporting/reconverting the other stems;
+- persistent energy-fingerprint cache;
+- arrangement-aware relocation of a destination lead phrase containing SECTION/COUNT/DYNAMIC calls;
+- English-only acoustic discrimination and anti-collapse protection in alpha10.3.
 
-Manual section choices wait for the explicit `endMs` of the **current** section and then enter the requested section at its explicit `startMs`.
+Automatic recognition remains **experimental sample/template matching, not general-purpose speech-to-text**. A musician can prepare the section map and spoken SECTION cues manually without depending on recognition.
 
-## Native Guide
+### Setlist Live
 
-StageGrid does not bundle third-party Guide audio. A user-supplied/licensed sample ZIP is installed locally through Android's document picker.
+- Setlist current/next context in Player.
+- Previous / Next navigation.
+- Destination song loads stopped; navigation never auto-plays.
+- Bounded filesystem-cache warming of the next song.
 
-Supported pack language layouts currently include Spanish, English, French and Portuguese when present in the installed pack.
+The preload is not yet a second full decoder graph, gapless handoff or crossfade.
 
-```text
-Original Guide stem
-       ↓
-offline sample/fingerprint matching
-       ↓
-recognized structured events
-       ├─ SECTION
-       ├─ COUNT
-       └─ DYNAMIC
-       ↓
-native-guide-events.json
-       ↓
-StageGrid Native Guide.wav
-       ↓
-optional arrangement-aware destination phrase
-```
+### Backup / restore
 
-Recognition is sample/template matching, **not general-purpose speech-to-text**.
+Settings can create a portable `.stagebackup` through Android SAF. A destination can be a local folder, removable storage or Google Drive when exposed as a DocumentsProvider.
 
-Implemented Native Guide behavior:
+A backup includes app-private song data/audio, mixer metadata, sections, setlists/order, Native Guide files/sidecars and the installed user Guide pack. Payload files are validated using byte size + SHA-256 before restore.
 
-- local cue-pack installation;
-- phase-robust fingerprint envelope and adaptive candidate discovery;
-- bounded source-language probe before the full recognition pass;
-- language-scoped full matching when source-language evidence is strong;
-- Spanish recognition thresholds preserved from alpha10.1;
-- stricter English semantic ambiguity margin to suppress repeated `Vamp` / `Rap` false positives;
-- all-language fallback when source-language evidence is weak;
-- structured event sidecar;
-- generated Native Guide WAV on the same shared playback clock;
-- original Guide retained muted as a reference after successful reconstruction;
-- automatic editable section proposals;
-- delayed section recovery when BPM is supplied after import;
-- per-song output-language switching without stem reimport/reanalysis;
-- in-place reanalysis from the retained original Guide;
-- persistent Guide fingerprint cache;
-- arrangement-aware relocation of a destination lead-bar phrase containing section/count/dynamic cues when matching samples exist.
+Backups are explicit snapshots, not continuous Drive synchronization.
 
-## Setlist Live
+### Safe session recovery
 
-A selected non-empty setlist can enter Setlist Live mode. Player shows current song, next song, setlist position, Previous/Next and Exit Setlist.
+StageGrid stores a versioned performance-session snapshot. A valid previous song/setlist context can be restored after process death, but recovered sessions **always load stopped**. Session recovery never starts emitting audio automatically.
 
-NEXT/PREV stop and unload the previous native song before loading the destination in a stopped state. StageGrid does not auto-play merely because the setlist was advanced.
+## Build
 
-The next song receives a bounded warm preload into the Android/Linux filesystem cache. This can reduce startup latency but is **not** a second native decoder graph, gapless transition or crossfade.
-
-## Portable backup and restore
-
-Settings can create a self-contained `.stagebackup` through Android SAF. The destination can be a local folder, compatible removable storage, Google Drive when exposed as a DocumentsProvider, or another writable provider.
-
-A backup includes app-private song directories/audio, song/track/mixer metadata, sections, setlists/order, Native Guide sidecars/generated files and the currently installed user-supplied Guide pack.
-
-Every payload file is declared with byte size + SHA-256. Restore stages and validates the complete archive before installing it, rebuilds device-specific app-private paths and preserves unrelated local library records.
-
-Backups are explicit snapshots, not continuous/bidirectional Drive synchronization.
-
-## Build requirements
+Requirements:
 
 - Android Gradle Plugin 9.2.1
-- compileSdk / targetSdk 37
-- JDK 17+
 - Gradle 9.5.1
+- JDK 17+
+- compileSdk / targetSdk 37
 - NDK 28.2.13676358
 - CMake 3.22.1
-- Jetpack Compose
-- Room
-- Oboe
 
-Windows build:
+Windows:
 
 ```bat
+git switch main
+git pull
 gradlew.bat testDebugUnitTest assembleDebug
 ```
 
@@ -245,12 +158,63 @@ Debug APK:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Keep a local checkout current with:
+## Known limitations of alpha10.3
 
-```bash
-git switch main
-git pull
-```
+- Automatic Guide recognition is explicitly **experimental** and opt-in. Manual sections are the reliable path and generate their own SECTION cues.
+- English acoustic matching still depends on the installed cue sample pack being acoustically related enough to the source Guide voice; it is not arbitrary speech recognition.
+- Alpha10.3 deliberately favors precision over inventing a SECTION label. A very uncertain English call may be omitted instead of shown incorrectly.
+- COUNT cues are short and remain a dedicated beta-polish target.
+- A custom manual section name that has no equivalent SECTION sample in the installed Guide pack cannot produce spoken audio until a compatible sample/key exists.
+- Recognition diagnostics are persisted in the Guide sidecar; final user-facing diagnostic presentation/export is beta polish.
+- Full arbitrary virtual arrangement graphs remain planned for 0.5.
+- Setlist preload is not gapless dual-engine preload/crossfade.
+- USB routing is currently stereo; arbitrary 4/8/custom output matrices are planned for 0.4.
+- AAC/M4A/FLAC/OGG expansion, waveform editing, tempo/pitch DSP, MIDI, pads, automation and LTC are later milestones.
+- Physical-device/high-track-count qualification is still required before StageGrid is considered stage-ready.
+
+See [`docs/STATUS.md`](docs/STATUS.md) for the exact source boundary and [`docs/ROADMAP.md`](docs/ROADMAP.md) for planned milestones.
+
+## Release history
+
+### 0.2.0-alpha10.3
+
+**Manual Guide fallback + experimental recognition** — import no longer runs recognition automatically; manual section maps generate authoritative Native Guide SECTION cues; English-only multi-band acoustic matching, anti-collapse protection and diagnostics remain available as an experimental opt-in tool.
+
+### 0.2.0-alpha10.2
+
+**English source-language isolation** — bounded language probe, language-specific matching, stricter English ambiguity margin and reduced repeated recognition work.
+
+### 0.2.0-alpha10.1
+
+**Recognition hardening** — adaptive candidate discovery, phase-robust energy fingerprints, wider timing tolerance and stable Click-train grid anchoring.
+
+### 0.2.0-alpha10
+
+**Beta-readiness integration sprint** — safe session recovery, in-place Guide reanalysis/persistent cache and richer arrangement-aware Guide phrases.
+
+### 0.2.0-alpha07
+
+**Library lifecycle + Setlist Live** — safe song deletion, Previous/Next and bounded next-song cache warming.
+
+### 0.2.0-alpha06
+
+**Portable backup/restore + first arrangement-aware Guide cue**.
+
+### 0.2.0-alpha05 / alpha05.1
+
+**Double-buffered section transitions + section-boundary policy**.
+
+### 0.2.0-alpha04 / alpha04.1 / alpha04.2
+
+**Native Guide foundation, delayed section recovery, per-song Guide language and import progress/performance work**.
+
+### 0.2.0-alpha01 → alpha03
+
+**Musical Grid, simplified live UX and native count-in**.
+
+### 0.1.2 / 0.1.3
+
+**Shared-clock local playback MVP + Native Click/stereo routing**.
 
 ## Local data and privacy
 
@@ -258,103 +222,8 @@ git pull
 - No analytics SDK.
 - No ads.
 - No broad storage permission.
-- StageGrid does not upload song audio or Guide samples itself.
-- Imported songs, session snapshots, Guide packs and fingerprint caches live in app-private storage.
-- SAF access is limited to files/folders explicitly selected by the user.
-- Drive access is performed by Android/Google Drive's document provider; StageGrid does not receive Drive credentials.
-
-## Tests and CI
-
-GitHub Actions runs `testDebugUnitTest` and `assembleDebug` before release PRs are merged into `main`.
-
-Coverage includes stem classification, WAV parsing, Musical Grid conversion/snapping, manual section-boundary policy, Native Guide recognition/section inference, quiet anti-phase Guide recognition, English/Spanish source-language isolation, Click stable-train selection, Guide arrangement timing/sequence selection, setlist navigation and native/JNI compilation.
-
-Physical-device qualification is still required before StageGrid is considered stage-ready.
-
-## Known limitations of 0.2.0-alpha10.2
-
-- Guide recognition remains sample/template matching: a Guide generated from a substantially different voice/sample library can still fail or produce low confidence.
-- English recognition is now isolated from cross-language competition when source-language evidence is strong, but real songs using a substantially different English Guide voice still require field validation.
-- COUNT cue recognition still needs additional polish; short spoken numbers are naturally more ambiguous than longer SECTION phrases.
-- The relaxed candidate pass is deliberately conservative; unusual Guides that continuously contain other audio may still need further profiling with a representative failing Guide stem.
-- Session recovery is approximately as recent as the latest periodic snapshot and always returns stopped; it is not sample-exact crash continuation.
-- Guide reanalysis requires that the retained original Guide audio still exists locally.
-- Arrangement-aware Guide relocation derives section/count/dynamic calls from the destination's original lead bar; a complete arbitrary virtual arrangement graph remains planned for 0.5.
-- Extremely late live section choices can intentionally omit cues that cannot fit completely before the transition.
-- Physical-device/high-track-count stress validation remains required for double-buffered transitions and dynamic Guide phrases.
-- Setlist preload warms the OS file cache; it is not gapless dual-engine preload/crossfade.
-- Backup/restore remains a manual snapshot workflow.
-- USB device selection is implemented, but arbitrary 4/8/custom multichannel routing is not.
-- AAC/M4A/FLAC/OGG playback expansion, waveform editing/cache management, tempo/pitch DSP, MIDI, pads, automation and SMPTE/LTC are later milestones.
-- Onboarding, final accessibility/large-touch-target polish and beta qualification remain pending.
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/STATUS.md`](docs/STATUS.md).
-
-## Release history
-
-### 0.2.0-alpha10.2
-
-**English Guide recognition isolation** — bounded source-language probing, language-scoped main matching, preserved Spanish thresholds, stricter English ambiguity rejection and removal of the expensive alpha10.1 recovery pass.
-
-### 0.2.0-alpha10.1
-
-**Recognition hardening before beta** — adaptive Guide candidate discovery, phase-robust fingerprints, language-aware recovery matching, wider timing tolerance and stable Click-train grid anchoring.
-
-### 0.2.0-alpha10
-
-**Beta-readiness sprint: session recovery + Guide reanalysis/cache + richer dynamic Guide phrases** — includes planned alpha08/alpha09/alpha10 work in one integration sprint.
-
-### 0.2.0-alpha07
-
-**Library lifecycle + Live Setlist** — safe local song deletion, Setlist Live Previous/Next and bounded next-song OS-cache warming.
-
-### 0.2.0-alpha06
-
-**Portable backup/restore + first arrangement-aware Guide layer** — `.stagebackup`, SHA-256 validation and live destination section-name Guide cue.
-
-### 0.2.0-alpha05.1
-
-**Manual section-boundary transition hotfix** — current section finishes at explicit `endMs`; requested destination enters at explicit `startMs`.
-
-### 0.2.0-alpha05
-
-**Double-buffered live path hardening** — two decoder banks per track, background path preparation, synchronized handoff and stale-path rejection.
-
-### 0.2.0-alpha04.2
-
-**Per-song Guide language + import progress/performance pass**.
-
-### 0.2.0-alpha04.1
-
-**Delayed Native Guide section recovery after BPM becomes available**.
-
-### 0.2.0-alpha04
-
-**Native Guide recognition + automatic editable section proposals**.
-
-### 0.2.0-alpha03
-
-**Native count-in + initial section transition scheduling**.
-
-### 0.2.0-alpha02
-
-**Simplified live UX and routing presets**.
-
-### 0.2.0-alpha01
-
-**Musical Grid + visual Section Editor**.
-
-### 0.1.3
-
-**Native Click + stereo routing**.
-
-### 0.1.2
-
-**Shared-clock local WAV + MP3 normalization MVP**.
-
-## Release documentation policy
-
-Every StageGrid alpha, beta or release updates this README with the current version, new functionality, implemented behavior, known limitations and release history. `docs/ROADMAP.md` describes what comes next; `docs/STATUS.md` defines the exact implementation boundary.
+- Imported song audio and Guide samples remain local unless the user explicitly creates a backup through a selected provider.
+- StageGrid does not receive Google Drive credentials; Drive access is handled by Android's document provider.
 
 ## License
 

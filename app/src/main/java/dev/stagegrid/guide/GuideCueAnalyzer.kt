@@ -14,11 +14,11 @@ import kotlin.math.sqrt
 /**
  * Offline Guide recognizer for sample-based Guide stems.
  *
- * Alpha10.2 keeps the proven Spanish path intact but determines the source Guide language before
- * the expensive full match whenever confidence is sufficient. The full pass then compares only
- * against that language, reducing cross-language false positives and repeated work. English uses
- * a slightly larger ambiguity margin because field feedback showed short SECTION calls collapsing
- * into Vamp/Rap. If language evidence is weak, matching safely falls back to all installed samples.
+ * Alpha10.3 keeps Spanish on the proven envelope path and adds a second-stage acoustic fingerprint
+ * only when the source Guide is confidently English. The acoustic pass combines temporal energy
+ * with coarse speech-band movement, which is substantially more discriminative than RMS shape alone
+ * for short words such as Verse/Vamp/Rap. Ambiguous short SECTION labels are penalized rather than
+ * becoming an implicit fallback, and suspicious repeated Vamp/Rap/Tag/Solo collapses are guarded.
  */
 object GuideCueAnalyzer {
     data class DetectedCue(
@@ -29,10 +29,23 @@ object GuideCueAnalyzer {
         val confidence: Float,
     )
 
+    data class MatchDiagnostic(
+        val cueMs: Long,
+        val bestKey: String?,
+        val bestKind: CueKind?,
+        val bestLanguage: String?,
+        val bestScore: Float,
+        val secondKey: String?,
+        val secondScore: Float,
+        val accepted: Boolean,
+        val reason: String,
+    )
+
     data class Result(
         val cues: List<DetectedCue>,
         val dominantLanguage: String?,
         val candidateCount: Int,
+        val diagnostics: List<MatchDiagnostic> = emptyList(),
     )
 
     data class SectionProposal(
@@ -53,12 +66,30 @@ object GuideCueAnalyzer {
         val templates: List<Template>,
     )
 
-    private data class Match(val template: Template, val score: Float, val activeStart: Int)
+    private data class AcousticTemplate(
+        val sampleIdentity: String,
+        val fingerprint: FloatArray,
+        val windowCount: Int,
+    )
+
+    private data class AcousticTemplateCache(
+        val signature: Long,
+        val templates: Map<String, AcousticTemplate>,
+    )
+
+    private data class Match(
+        val template: Template,
+        val score: Float,
+        val activeStart: Int,
+        val envelopeScore: Float = score,
+        val acousticScore: Float? = null,
+    )
 
     private data class Evaluation(
         val candidate: Int,
         val best: Match?,
         val secondSemanticScore: Float,
+        val secondSemanticKey: String?,
     )
 
     private data class AcceptanceThresholds(
@@ -79,20 +110,35 @@ object GuideCueAnalyzer {
     private const val PRIMARY_MIN_SCORE = 0.80f
     private const val PRIMARY_MIN_MARGIN = 0.040f
     private const val PRIMARY_HIGH_SCORE = 0.94f
-    private const val ENGLISH_MIN_SCORE = 0.82f
-    private const val ENGLISH_MIN_MARGIN = 0.065f
-    private const val ENGLISH_HIGH_SCORE = 0.96f
+    private const val ENGLISH_ENVELOPE_MIN_SCORE = 0.82f
+    private const val ENGLISH_ENVELOPE_MIN_MARGIN = 0.065f
+    private const val ENGLISH_ENVELOPE_HIGH_SCORE = 0.96f
+    private const val ENGLISH_ACOUSTIC_MIN_SCORE = 0.78f
+    private const val ENGLISH_ACOUSTIC_MIN_MARGIN = 0.050f
+    private const val ENGLISH_ACOUSTIC_HIGH_SCORE = 0.94f
+    private const val ENVELOPE_WEIGHT = 0.42f
+    private const val ACOUSTIC_WEIGHT = 0.58f
+    private const val AMBIGUOUS_SHORT_SECTION_PENALTY = 0.035f
     private const val DEDUPE_WINDOW_MS = 180L
     private const val MAX_CANDIDATES = 2_400
+    private const val MAX_DIAGNOSTICS = 96
     private const val INTRA_PHRASE_MERGE_WINDOWS = 24 // 240 ms: syllable gaps, not separate Guide calls.
     private const val CONTINUOUS_ACTIVITY_WINDOWS = 35 // 350 ms before local-onset recovery is allowed.
     private const val LANGUAGE_PROBE_MAX_CANDIDATES = 14
     private const val LANGUAGE_PROBE_MIN_MATCH = 0.72f
     private const val LANGUAGE_PROBE_MAX_SCORES = 6
     private const val LANGUAGE_PROBE_MIN_GAP = 0.035
+    private const val COLLAPSE_MIN_SECTION_COUNT = 3
+    private const val COLLAPSE_SHARE = 0.60
+    private const val COLLAPSE_KEEP_SCORE = 0.94f
+
+    private val ambiguousShortSections = setOf("vamp", "rap", "tag", "solo")
 
     @Volatile
     private var templateCache: TemplateCache? = null
+
+    @Volatile
+    private var acousticTemplateCache: AcousticTemplateCache? = null
 
     @Volatile
     private var persistentCacheFile: File? = null
@@ -103,6 +149,7 @@ object GuideCueAnalyzer {
 
     fun invalidateMemoryCache() {
         templateCache = null
+        acousticTemplateCache = null
     }
 
     fun prepare(samples: List<GuideSample>): Int = templatesFor(samples).size
@@ -132,22 +179,50 @@ object GuideCueAnalyzer {
             ?.let { language -> templates.filter { it.sample.language == language } }
             ?.takeIf { it.isNotEmpty() }
             ?: templates
-        val thresholds = acceptanceThresholds(sourceLanguage)
-        onProgress?.invoke(0.24f)
+
+        // Spanish and other languages keep the alpha10.2 matcher unchanged. English alone gets the
+        // additional acoustic discriminator because that is where physical-device feedback exposed
+        // short-word collapse.
+        val guideAcoustic = if (sourceLanguage == "en") {
+            runCatching { GuideAcousticFingerprint.read(guideFile, WINDOW_MS) }.getOrNull()
+        } else {
+            null
+        }
+        val acousticTemplates = if (guideAcoustic != null) acousticTemplatesFor(activeTemplates) else emptyMap()
+        val acousticEnabled = guideAcoustic != null && acousticTemplates.isNotEmpty()
+        val thresholds = acceptanceThresholds(sourceLanguage, acousticEnabled)
+        onProgress?.invoke(if (acousticEnabled) 0.30f else 0.24f)
 
         val accepted = mutableListOf<DetectedCue>()
+        val diagnostics = mutableListOf<MatchDiagnostic>()
+        val progressStart = if (acousticEnabled) 0.30f else 0.24f
+        val progressSpan = 0.68f
         candidates.forEachIndexed { index, candidate ->
-            val evaluation = evaluateCandidate(guideLog, candidate, activeTemplates)
-            evaluation.toCue(thresholds.minScore, thresholds.minMargin, thresholds.highScore)?.let(accepted::add)
+            val evaluation = evaluateCandidate(
+                guide = guideLog,
+                guideAcoustic = guideAcoustic,
+                candidate = candidate,
+                templates = activeTemplates,
+                acousticTemplates = acousticTemplates,
+                useEnglishAcoustic = sourceLanguage == "en" && acousticEnabled,
+            )
+            val cue = evaluation.toCue(thresholds.minScore, thresholds.minMargin, thresholds.highScore)
+            if (cue != null) accepted += cue
+            diagnostics += evaluation.toDiagnostic(cue, thresholds)
             if (index % maxOf(1, candidates.size / 30) == 0 || index == candidates.lastIndex) {
-                onProgress?.invoke(0.24f + 0.74f * ((index + 1f) / candidates.size.toFloat()))
+                onProgress?.invoke(progressStart + progressSpan * ((index + 1f) / candidates.size.toFloat()))
             }
         }
 
         val deduped = dedupe(accepted)
-        val dominant = sourceLanguage ?: dominantLanguage(deduped)
+        val guarded = if (sourceLanguage == "en") guardEnglishSectionCollapse(deduped) else deduped
+        val dominant = sourceLanguage ?: dominantLanguage(guarded)
+        val compactDiagnostics = diagnostics
+            .sortedWith(compareByDescending<MatchDiagnostic> { it.accepted }.thenByDescending { it.bestScore })
+            .take(MAX_DIAGNOSTICS)
+            .sortedBy { it.cueMs }
         onProgress?.invoke(1f)
-        return Result(deduped, dominant, candidates.size)
+        return Result(guarded, dominant, candidates.size, compactDiagnostics)
     }
 
     fun inferSections(
@@ -186,14 +261,16 @@ object GuideCueAnalyzer {
                 unique += proposal
             }
         }
-        return unique
+        return numberGenericVerses(unique, localeLanguage)
     }
 
-    private fun acceptanceThresholds(sourceLanguage: String?): AcceptanceThresholds =
-        if (sourceLanguage == "en") {
-            AcceptanceThresholds(ENGLISH_MIN_SCORE, ENGLISH_MIN_MARGIN, ENGLISH_HIGH_SCORE)
-        } else {
-            AcceptanceThresholds(PRIMARY_MIN_SCORE, PRIMARY_MIN_MARGIN, PRIMARY_HIGH_SCORE)
+    private fun acceptanceThresholds(sourceLanguage: String?, acousticEnabled: Boolean): AcceptanceThresholds =
+        when {
+            sourceLanguage == "en" && acousticEnabled ->
+                AcceptanceThresholds(ENGLISH_ACOUSTIC_MIN_SCORE, ENGLISH_ACOUSTIC_MIN_MARGIN, ENGLISH_ACOUSTIC_HIGH_SCORE)
+            sourceLanguage == "en" ->
+                AcceptanceThresholds(ENGLISH_ENVELOPE_MIN_SCORE, ENGLISH_ENVELOPE_MIN_MARGIN, ENGLISH_ENVELOPE_HIGH_SCORE)
+            else -> AcceptanceThresholds(PRIMARY_MIN_SCORE, PRIMARY_MIN_MARGIN, PRIMARY_HIGH_SCORE)
         }
 
     private fun Evaluation.toCue(minScore: Float, minMargin: Float, highScore: Float): DetectedCue? {
@@ -210,24 +287,68 @@ object GuideCueAnalyzer {
         )
     }
 
-    private fun evaluateCandidate(guide: FloatArray, candidate: Int, templates: List<Template>): Evaluation {
+    private fun Evaluation.toDiagnostic(cue: DetectedCue?, thresholds: AcceptanceThresholds): MatchDiagnostic {
+        val chosen = best
+        val margin = if (chosen == null) -1f else chosen.score - secondSemanticScore
+        val reason = when {
+            cue != null -> "accepted"
+            chosen == null -> "no_match"
+            chosen.score < thresholds.minScore -> "low_score"
+            margin < thresholds.minMargin && chosen.score < thresholds.highScore -> "ambiguous"
+            else -> "rejected"
+        }
+        return MatchDiagnostic(
+            cueMs = candidate * WINDOW_MS.toLong(),
+            bestKey = chosen?.template?.sample?.key,
+            bestKind = chosen?.template?.sample?.kind,
+            bestLanguage = chosen?.template?.sample?.language,
+            bestScore = chosen?.score ?: -1f,
+            secondKey = secondSemanticKey,
+            secondScore = secondSemanticScore,
+            accepted = cue != null,
+            reason = reason,
+        )
+    }
+
+    private fun evaluateCandidate(
+        guide: FloatArray,
+        guideAcoustic: GuideAcousticFingerprint.Series?,
+        candidate: Int,
+        templates: List<Template>,
+        acousticTemplates: Map<String, AcousticTemplate>,
+        useEnglishAcoustic: Boolean,
+    ): Evaluation {
         var best: Match? = null
         val semanticScores = HashMap<String, Float>()
         for (template in templates) {
-            val match = bestMatchAround(guide, candidate, template) ?: continue
+            val match = if (useEnglishAcoustic && guideAcoustic != null) {
+                val acoustic = acousticTemplates[sampleIdentity(template.sample)]
+                if (acoustic != null) {
+                    bestEnglishMatchAround(guide, guideAcoustic, candidate, template, acoustic)
+                } else {
+                    bestMatchAround(guide, candidate, template)
+                }
+            } else {
+                bestMatchAround(guide, candidate, template)
+            } ?: continue
+
             val semantic = "${template.sample.kind.name}:${template.sample.key}"
             val previous = semanticScores[semantic]
             if (previous == null || match.score > previous) semanticScores[semantic] = match.score
             val currentBest = best
             if (currentBest == null || match.score > currentBest.score) best = match
         }
-        val chosen = best ?: return Evaluation(candidate, null, -1f)
+        val chosen = best ?: return Evaluation(candidate, null, -1f, null)
         val chosenSemantic = "${chosen.template.sample.kind.name}:${chosen.template.sample.key}"
         var second = -1f
+        var secondKey: String? = null
         for ((semantic, score) in semanticScores) {
-            if (semantic != chosenSemantic && score > second) second = score
+            if (semantic != chosenSemantic && score > second) {
+                second = score
+                secondKey = semantic.substringAfter(':')
+            }
         }
-        return Evaluation(candidate, chosen, second)
+        return Evaluation(candidate, chosen, second, secondKey)
     }
 
     /**
@@ -249,14 +370,20 @@ object GuideCueAnalyzer {
         val probeCandidates = sampleEvenly(candidates, LANGUAGE_PROBE_MAX_CANDIDATES)
         val evidence = byLanguage.mapNotNull { (language, languageTemplates) ->
             val scores = probeCandidates.mapNotNull { candidate ->
-                evaluateCandidate(guide, candidate, languageTemplates).best?.score
+                evaluateCandidate(
+                    guide = guide,
+                    guideAcoustic = null,
+                    candidate = candidate,
+                    templates = languageTemplates,
+                    acousticTemplates = emptyMap(),
+                    useEnglishAcoustic = false,
+                ).best?.score
             }.filter { it >= LANGUAGE_PROBE_MIN_MATCH }
                 .sortedDescending()
                 .take(LANGUAGE_PROBE_MAX_SCORES)
             if (scores.isEmpty()) return@mapNotNull null
             val strongest = scores.first()
             val matches = scores.size
-            // Multiple moderate anchors are preferable to one accidental near-perfect match.
             val usable = matches >= 2 || strongest >= 0.93f
             if (!usable) return@mapNotNull null
             val average = scores.average()
@@ -298,6 +425,44 @@ object GuideCueAnalyzer {
         }
         return out
     }
+
+    /**
+     * A whole song becoming Vamp/Rap/Tag/Solo is a known failure signature, not a plausible default.
+     * Preserve high-confidence occurrences, but discard low-confidence repetitions instead of
+     * manufacturing a section map from one short English template.
+     */
+    private fun guardEnglishSectionCollapse(cues: List<DetectedCue>): List<DetectedCue> {
+        val sections = cues.filter { it.kind == CueKind.SECTION }
+        if (sections.size < COLLAPSE_MIN_SECTION_COUNT) return cues
+        val dominant = sections.groupingBy { it.key }.eachCount().maxByOrNull { it.value } ?: return cues
+        if (dominant.key !in ambiguousShortSections) return cues
+        if (dominant.value.toDouble() / sections.size.toDouble() < COLLAPSE_SHARE) return cues
+
+        val repeated = sections.filter { it.key == dominant.key }
+        val strong = repeated.filter { it.confidence >= COLLAPSE_KEEP_SCORE }
+        val keepFallback = if (strong.isEmpty()) repeated.maxByOrNull { it.confidence } else null
+        return cues.filter { cue ->
+            cue.kind != CueKind.SECTION || cue.key != dominant.key || cue in strong || cue == keepFallback
+        }
+    }
+
+    private fun numberGenericVerses(proposals: List<SectionProposal>, localeLanguage: String): List<SectionProposal> {
+        val genericVerseCount = proposals.count { canonicalBaseKey(it.key) == "verse" && !hasExplicitNumber(it.key) }
+        if (genericVerseCount <= 1) return proposals
+        var occurrence = 0
+        val spanish = localeLanguage.lowercase(Locale.ROOT).startsWith("es")
+        return proposals.map { proposal ->
+            if (canonicalBaseKey(proposal.key) == "verse" && !hasExplicitNumber(proposal.key)) {
+                occurrence++
+                proposal.copy(name = if (spanish) "Verso $occurrence" else "Verse $occurrence")
+            } else {
+                proposal
+            }
+        }
+    }
+
+    private fun canonicalBaseKey(key: String): String = key.replace(Regex("_\\d+$"), "")
+    private fun hasExplicitNumber(key: String): Boolean = Regex("_\\d+$").containsMatchIn(key)
 
     private fun templatesFor(samples: List<GuideSample>): List<Template> {
         if (samples.isEmpty()) return emptyList()
@@ -341,6 +506,31 @@ object GuideCueAnalyzer {
                     },
                 )
             }
+            built
+        }
+    }
+
+    private fun acousticTemplatesFor(templates: List<Template>): Map<String, AcousticTemplate> {
+        val englishTemplates = templates.filter { it.sample.language == "en" }
+        if (englishTemplates.isEmpty()) return emptyMap()
+        val signature = sampleSignature(englishTemplates.map { it.sample })
+        acousticTemplateCache?.takeIf { it.signature == signature }?.let { return it.templates }
+        return synchronized(this) {
+            acousticTemplateCache?.takeIf { it.signature == signature }?.let { return@synchronized it.templates }
+            val built = buildMap {
+                for (template in englishTemplates) {
+                    val series = runCatching { GuideAcousticFingerprint.read(template.sample.file, WINDOW_MS) }.getOrNull()
+                        ?: continue
+                    val fingerprint = GuideAcousticFingerprint.sliceAndNormalize(
+                        series = series,
+                        startWindow = template.trimStartWindows,
+                        windowCount = template.fingerprint.size,
+                    ) ?: continue
+                    val identity = sampleIdentity(template.sample)
+                    put(identity, AcousticTemplate(identity, fingerprint, template.fingerprint.size))
+                }
+            }
+            acousticTemplateCache = AcousticTemplateCache(signature, built)
             built
         }
     }
@@ -389,28 +579,78 @@ object GuideCueAnalyzer {
         val to = (candidate + SEARCH_RADIUS_WINDOWS).coerceAtMost(guide.size - n)
         if (to < from) return null
         for (start in from..to) {
-            var sum = 0.0
-            var sumSq = 0.0
-            for (i in 0 until n) {
-                val value = guide[start + i].toDouble()
-                sum += value
-                sumSq += value * value
-            }
-            val mean = sum / n
-            val variance = (sumSq / n) - mean * mean
-            if (variance <= 1e-10) continue
-            val std = sqrt(variance)
-            var dot = 0.0
-            for (i in 0 until n) {
-                dot += template.fingerprint[i] * (guide[start + i] - mean).toFloat()
-            }
-            val score = (dot / (n * std)).toFloat().coerceIn(-1f, 1f)
+            val score = envelopeScoreAt(guide, start, template.fingerprint) ?: continue
             if (score > bestScore) {
                 bestScore = score
                 bestStart = start
             }
         }
         return if (bestStart >= 0) Match(template, bestScore, bestStart) else null
+    }
+
+    private fun bestEnglishMatchAround(
+        guide: FloatArray,
+        acousticGuide: GuideAcousticFingerprint.Series,
+        candidate: Int,
+        template: Template,
+        acousticTemplate: AcousticTemplate,
+    ): Match? {
+        val n = template.fingerprint.size
+        if (guide.size < n || acousticTemplate.windowCount != n) return null
+        var bestScore = -1f
+        var bestStart = -1
+        var bestEnvelope = -1f
+        var bestAcoustic: Float? = null
+        val from = (candidate - SEARCH_RADIUS_WINDOWS).coerceAtLeast(0)
+        val to = (candidate + SEARCH_RADIUS_WINDOWS).coerceAtMost(minOf(guide.size, acousticGuide.windows) - n)
+        if (to < from) return null
+        for (start in from..to) {
+            val envelopeScore = envelopeScoreAt(guide, start, template.fingerprint) ?: continue
+            val acousticScore = GuideAcousticFingerprint.correlation(
+                guide = acousticGuide,
+                startWindow = start,
+                template = acousticTemplate.fingerprint,
+                windowCount = n,
+            ) ?: continue
+            var score = envelopeScore * ENVELOPE_WEIGHT + acousticScore * ACOUSTIC_WEIGHT
+            if (
+                template.sample.kind == CueKind.SECTION &&
+                canonicalBaseKey(template.sample.key) in ambiguousShortSections
+            ) {
+                score -= AMBIGUOUS_SHORT_SECTION_PENALTY
+            }
+            score = score.coerceIn(-1f, 1f)
+            if (score > bestScore) {
+                bestScore = score
+                bestStart = start
+                bestEnvelope = envelopeScore
+                bestAcoustic = acousticScore
+            }
+        }
+        return if (bestStart >= 0) {
+            Match(template, bestScore, bestStart, envelopeScore = bestEnvelope, acousticScore = bestAcoustic)
+        } else {
+            null
+        }
+    }
+
+    private fun envelopeScoreAt(guide: FloatArray, start: Int, fingerprint: FloatArray): Float? {
+        val n = fingerprint.size
+        if (start < 0 || start + n > guide.size || n < 2) return null
+        var sum = 0.0
+        var sumSq = 0.0
+        for (i in 0 until n) {
+            val value = guide[start + i].toDouble()
+            sum += value
+            sumSq += value * value
+        }
+        val mean = sum / n
+        val variance = (sumSq / n) - mean * mean
+        if (variance <= 1e-10) return null
+        val std = sqrt(variance)
+        var dot = 0.0
+        for (i in 0 until n) dot += fingerprint[i] * (guide[start + i] - mean).toFloat()
+        return (dot / (n * std)).toFloat().coerceIn(-1f, 1f)
     }
 
     private fun findCandidates(envelope: FloatArray): List<Int> {
@@ -420,17 +660,12 @@ object GuideCueAnalyzer {
         val floorCount = max(1, sorted.size / 5)
         val noise = sorted.take(floorCount).average().toFloat()
 
-        // A Guide phrase often contains 50-200 ms gaps between syllables. Treat those as one
-        // candidate region; otherwise an internal syllable can be mistaken for a new cue.
         val strongThreshold = max(0.0025f, max(noise * 4.0f, peak * 0.045f))
         val relaxedThreshold = max(0.0015f, max(noise * 2.2f, peak * 0.012f))
         val candidates = linkedSetOf<Int>()
         candidates += runStarts(envelope, strongThreshold, mergeGapWindows = INTRA_PHRASE_MERGE_WINDOWS)
         candidates += runStarts(envelope, relaxedThreshold, mergeGapWindows = INTRA_PHRASE_MERGE_WINDOWS)
 
-        // Local attack recovery is only useful when compression/noise has kept the Guide above the
-        // relaxed floor for a sustained period. If there was a recent quiet gap, runStarts already
-        // represents the phrase and adding each syllable would create false duplicate matches.
         val minimumRise = max(noise * 0.60f, peak * 0.0025f)
         var lastBelowRelaxed = -CONTINUOUS_ACTIVITY_WINDOWS
         for (i in 3 until envelope.size - 2) {

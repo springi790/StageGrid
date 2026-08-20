@@ -1,6 +1,7 @@
 package dev.stagegrid.guide
 
 import dev.stagegrid.data.LibraryRepository
+import dev.stagegrid.guide.GuidePackManager.CueKind
 import dev.stagegrid.importer.WavMetadataReader
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.StereoRoute
@@ -43,21 +44,53 @@ class NativeGuideReanalyzer(
         }
 
         val sidecar = File(filesDir, "library/$songId/native-guide-events.json")
+        val previousAnalysis = NativeGuideEventStore.readAnalysis(sidecar)
         val previousProposals = NativeGuideEventStore.readSectionProposals(sidecar)
-        val autoSectionsUntouched = matchesStoredAutoSections(bundle.sections, previousProposals, song.durationMs)
+        val manualSectionsAuthoritative = NativeGuideEventStore.readSectionCueSource(sidecar) == "manual"
+        val previousManualSectionCues = if (manualSectionsAuthoritative) {
+            previousAnalysis?.cues?.filter { it.kind == CueKind.SECTION }.orEmpty()
+        } else {
+            emptyList()
+        }
+        val autoSectionsUntouched = !manualSectionsAuthoritative &&
+            matchesStoredAutoSections(bundle.sections, previousProposals, song.durationMs)
 
-        val analysis = GuideCueAnalyzer.analyze(referenceFile, samples) { fraction ->
+        val recognized = GuideCueAnalyzer.analyze(referenceFile, samples) { fraction ->
             onProgress?.invoke((5f + fraction * 60f).roundToInt().coerceIn(5, 65))
         }
-        require(analysis.cues.isNotEmpty()) { "No Guide calls matched the installed sample pack confidently." }
+        require(recognized.cues.isNotEmpty() || previousManualSectionCues.isNotEmpty()) {
+            "No Guide calls matched the installed sample pack confidently."
+        }
 
-        val proposals = GuideCueAnalyzer.inferSections(
-            result = analysis,
-            bpm = song.bpm,
-            timeSignature = song.timeSignature,
-            gridOffsetMs = song.gridOffsetMs,
-            durationMs = song.durationMs,
-        )
+        // Once the musician has authored the section map, recognition is allowed to refresh
+        // COUNT/DYNAMIC events and diagnostics but it must never replace manual SECTION calls.
+        val analysis = if (manualSectionsAuthoritative) {
+            recognized.copy(
+                cues = (recognized.cues.filter { it.kind != CueKind.SECTION } + previousManualSectionCues)
+                    .sortedBy { it.cueMs },
+            )
+        } else {
+            recognized
+        }
+
+        val proposals = if (manualSectionsAuthoritative && previousProposals.isNotEmpty()) {
+            previousProposals.map {
+                GuideCueAnalyzer.SectionProposal(
+                    key = it.key,
+                    name = it.name,
+                    startMs = it.startMs,
+                    confidence = 1f,
+                )
+            }
+        } else {
+            GuideCueAnalyzer.inferSections(
+                result = analysis,
+                bpm = song.bpm,
+                timeSignature = song.timeSignature,
+                gridOffsetMs = song.gridOffsetMs,
+                durationMs = song.durationMs,
+            )
+        }
         val existingLanguage = NativeGuideEventStore.readOutputLanguage(sidecar)
         val availableLanguages = guidePacks.status().languages
         val outputLanguage = existingLanguage?.takeIf { it in availableLanguages }
@@ -77,7 +110,7 @@ class NativeGuideReanalyzer(
                 onProgress = { fraction ->
                     onProgress?.invoke((66f + fraction * 28f).roundToInt().coerceIn(66, 94))
                 },
-            ) ?: error("Recognized calls could not be rendered with the installed sample pack.")
+            ) ?: error("Recognized/manual calls could not be rendered with the installed sample pack.")
         } catch (t: Throwable) {
             temp.delete()
             throw t
@@ -132,6 +165,7 @@ class NativeGuideReanalyzer(
                 )
             }
             val sectionsUpdated = when {
+                manualSectionsAuthoritative -> false
                 replacements.isEmpty() -> false
                 isPlaceholder(bundle.sections, song.durationMs) ->
                     repository.replacePlaceholderSections(song.id, song.durationMs, replacements)
@@ -142,6 +176,7 @@ class NativeGuideReanalyzer(
 
             val sidecarTemp = File(sidecar.parentFile, ".native-guide-events-${System.nanoTime()}.json")
             NativeGuideRenderer.writeEventSidecar(sidecarTemp, analysis, rendered.outputLanguage, proposals)
+            if (manualSectionsAuthoritative) NativeGuideEventStore.markManualSectionCues(sidecarTemp)
             if (sidecar.exists()) sidecar.delete()
             if (!sidecarTemp.renameTo(sidecar)) {
                 sidecarTemp.copyTo(sidecar, overwrite = true)

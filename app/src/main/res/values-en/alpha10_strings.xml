@@ -3,8 +3,8 @@
     <string name="session_recovered_song">Song: %1$s</string>
     <string name="session_recovered_setlist">Setlist: %1$s</string>
     <string name="session_recovered_safe_stop">StageGrid restored the context and position, but playback remains stopped for safety. Press Play when you are ready.</string>
-    <string name="native_guide_reanalysis_available">The original Guide is available and can be analyzed with the installed pack.</string>
-    <string name="native_guide_reanalyzing">Reanalyzing Guide… %1$d%%</string>
-    <string name="native_guide_reanalyze_button">Reanalyze Guide</string>
-    <string name="native_guide_reanalyze_help">Detect calls again and rebuild the Native Guide without reimporting stems. Manually edited sections are preserved.</string>
+    <string name="native_guide_reanalysis_available">Automatic Guide recognition is available as an experimental feature.</string>
+    <string name="native_guide_reanalyzing">Analyzing Guide (experimental)… %1$d%%</string>
+    <string name="native_guide_reanalyze_button">Automatic recognition (experimental)</string>
+    <string name="native_guide_reanalyze_help">It can detect calls and propose sections, but it is not required for Native Guide. When you create or edit sections manually, StageGrid generates their cues from those names while preserving available count/dynamic events.</string>
 </resources>

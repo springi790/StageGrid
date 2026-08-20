@@ -46,13 +46,44 @@ object NativeGuideEventStore {
                 cues = cues.sortedBy { it.cueMs },
                 dominantLanguage = root.optNullableString("detectedLanguage"),
                 candidateCount = root.optInt("candidateCount", cues.size),
+                diagnostics = readDiagnostics(root),
             )
         }.getOrNull()
+    }
+
+    fun readDiagnostics(file: File): List<GuideCueAnalyzer.MatchDiagnostic> =
+        readRoot(file)?.let(::readDiagnostics) ?: emptyList()
+
+    private fun readDiagnostics(root: JSONObject): List<GuideCueAnalyzer.MatchDiagnostic> {
+        val array = root.optJSONArray("diagnostics") ?: return emptyList()
+        return buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val bestKind = item.optNullableString("bestKind")?.let { value ->
+                    runCatching { CueKind.valueOf(value) }.getOrNull()
+                }
+                add(
+                    GuideCueAnalyzer.MatchDiagnostic(
+                        cueMs = item.optLong("cueMs", 0L).coerceAtLeast(0L),
+                        bestKey = item.optNullableString("bestKey"),
+                        bestKind = bestKind,
+                        bestLanguage = item.optNullableString("bestLanguage"),
+                        bestScore = item.optDouble("bestScore", -1.0).toFloat(),
+                        secondKey = item.optNullableString("secondKey"),
+                        secondScore = item.optDouble("secondScore", -1.0).toFloat(),
+                        accepted = item.optBoolean("accepted", false),
+                        reason = item.optString("reason", "unknown"),
+                    ),
+                )
+            }
+        }.sortedBy { it.cueMs }
     }
 
     fun readOutputLanguage(file: File): String? = readRoot(file)?.optNullableString("outputLanguage")
 
     fun readDetectedLanguage(file: File): String? = readRoot(file)?.optNullableString("detectedLanguage")
+
+    fun readSectionCueSource(file: File): String? = readRoot(file)?.optNullableString("sectionCueSource")
 
     fun readSectionProposals(file: File): List<StoredSectionProposal> {
         val root = readRoot(file) ?: return emptyList()
@@ -119,6 +150,16 @@ object NativeGuideEventStore {
                 )
             }
             root.put("sections", sections)
+            file.writeText(root.toString(2))
+        }
+    }
+
+    fun markManualSectionCues(file: File) {
+        if (!file.isFile) return
+        runCatching {
+            val root = JSONObject(file.readText())
+            root.put("sectionCueSource", "manual")
+            root.put("automaticRecognition", "experimental")
             file.writeText(root.toString(2))
         }
     }
