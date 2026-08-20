@@ -94,28 +94,37 @@ class NativeAudioEngine : Closeable {
     }
 
     /**
-     * Promotes the prepared deck with an overlap/crossfade. Call from a background dispatcher.
-     * Each song keeps its own native timeline; only master gains overlap between the two streams.
+     * Promotes the prepared deck. If the active deck is playing, both streams overlap and a gain
+     * crossfade is performed. If transport is stopped/paused, ownership swaps silently and the new
+     * deck remains stopped. Call from a background dispatcher because the gain ramp is time based.
      */
     fun promotePreloaded(crossfadeMs: Int, targetMasterVolume: Float): Boolean {
         if (!standbyReady || handle == 0L || standbyHandle == 0L) return false
         val target = targetMasterVolume.coerceIn(0f, 1.25f)
-        nativeSetMasterVolume(standbyHandle, 0f)
-        if (!nativePlay(standbyHandle)) return false
+        val activeWasPlaying = nativeIsPlaying(handle)
 
-        val duration = crossfadeMs.coerceIn(0, 5_000)
-        if (duration == 0) {
+        if (activeWasPlaying) {
+            nativeSetMasterVolume(standbyHandle, 0f)
+            if (!nativePlay(standbyHandle)) return false
+
+            val duration = crossfadeMs.coerceIn(0, 5_000)
+            if (duration == 0) {
+                nativeSetMasterVolume(handle, 0f)
+                nativeSetMasterVolume(standbyHandle, target)
+            } else {
+                val steps = (duration / 20).coerceIn(8, 100)
+                val sleepMs = (duration / steps).coerceAtLeast(1)
+                for (step in 1..steps) {
+                    val fraction = step.toFloat() / steps.toFloat()
+                    nativeSetMasterVolume(handle, target * (1f - fraction))
+                    nativeSetMasterVolume(standbyHandle, target * fraction)
+                    Thread.sleep(sleepMs.toLong())
+                }
+            }
+        } else {
+            nativePause(standbyHandle)
             nativeSetMasterVolume(handle, 0f)
             nativeSetMasterVolume(standbyHandle, target)
-        } else {
-            val steps = (duration / 20).coerceIn(8, 100)
-            val sleepMs = (duration / steps).coerceAtLeast(1)
-            for (step in 1..steps) {
-                val fraction = step.toFloat() / steps.toFloat()
-                nativeSetMasterVolume(handle, target * (1f - fraction))
-                nativeSetMasterVolume(standbyHandle, target * fraction)
-                Thread.sleep(sleepMs.toLong())
-            }
         }
 
         val previous = handle
