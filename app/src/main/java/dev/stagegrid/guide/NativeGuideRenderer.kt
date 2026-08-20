@@ -120,6 +120,7 @@ object NativeGuideRenderer {
             .put("outputLanguage", outputLanguage ?: JSONObject.NULL)
             .put("candidateCount", analysis.candidateCount)
             .put("sectionCueSource", sectionCueSource)
+            .put("automaticRecognition", "experimental")
         val cues = JSONArray()
         analysis.cues.forEach { cue ->
             cues.put(
