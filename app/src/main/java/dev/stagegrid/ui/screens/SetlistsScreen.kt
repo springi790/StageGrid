@@ -42,6 +42,7 @@ fun SetlistsScreen(
     onAddSong: (String) -> Unit,
     onRemoveSong: (String) -> Unit,
     onLoadSong: (String) -> Unit,
+    onStartLive: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var newName by remember { mutableStateOf("") }
@@ -65,6 +66,20 @@ fun SetlistsScreen(
             return@Column
         }
         Text(bundle.setlist.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = onStartLive,
+            enabled = bundle.songs.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.setlist_live_start), fontWeight = FontWeight.Bold)
+        }
+        Text(
+            if (bundle.songs.isEmpty()) stringResource(R.string.setlist_live_empty) else stringResource(R.string.setlist_live_transport_note),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Spacer(Modifier.height(12.dp))
         Text(stringResource(R.string.add_song), style = MaterialTheme.typography.labelLarge)
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             songs.filter { candidate -> bundle.songs.none { it.id == candidate.id } }.take(4).forEach { song ->

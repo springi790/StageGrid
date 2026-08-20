@@ -1,0 +1,22 @@
+<resources>
+    <string name="delete_song">Delete</string>
+    <string name="delete_song_title">Delete multitrack</string>
+    <string name="delete_song_message">Delete "%1$s" from this device?</string>
+    <string name="delete_song_files_note">Its local tracks, sections and StageGrid Guide files will be removed. Backups stored outside the app are not changed.</string>
+    <string name="delete_song_confirm">Delete permanently</string>
+    <string name="delete_song_error_title">Could not delete</string>
+    <string name="setlist_live_start">Start Setlist mode</string>
+    <string name="setlist_live_title">Live Setlist</string>
+    <string name="setlist_live_song_position">Song %1$d of %2$d</string>
+    <string name="setlist_live_current">Current</string>
+    <string name="setlist_live_next_song">Next song</string>
+    <string name="setlist_live_previous">Previous</string>
+    <string name="setlist_live_next">Next</string>
+    <string name="setlist_live_exit">Exit Setlist</string>
+    <string name="setlist_live_next_ready">Next song prepared</string>
+    <string name="setlist_live_next_preparing">Preparing next song…</string>
+    <string name="setlist_live_no_next">This is the last song</string>
+    <string name="setlist_live_empty">Add at least one song before starting Setlist mode.</string>
+    <string name="setlist_live_transport_note">When changing songs, StageGrid stops the current song and loads the next one without starting playback automatically.</string>
+    <string name="queued_section_boundary">Queued: %1$s · changes when this section ends</string>
+</resources>

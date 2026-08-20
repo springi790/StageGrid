@@ -119,16 +119,41 @@ First arrangement-aware Native Guide layer:
 - temporarily suppress the fixed rendered Guide around the replacement section-name call to avoid conflicting spoken section names;
 - mix the prepared replacement cue on the same native master timeline as stems and Click.
 
+### 0.2.0-alpha07 — library lifecycle + Setlist Live
+
+Safe local-library deletion:
+
+- expose an explicit **Delete multitrack** action with confirmation from Library;
+- block destructive deletion while playback, count-in, import, backup/restore or Native Guide rendering is active;
+- unload a currently loaded song before its local WAV/Guide files are removed;
+- stage the complete app-private song folder before deleting its Room record, allowing the files to be restored if the database operation fails;
+- rely on Room foreign-key cascades to remove tracks, sections and setlist references belonging to the deleted song;
+- leave external `.stagebackup` snapshots untouched so a deliberately deleted local song can still exist in an older recovery backup.
+
+Setlist Live:
+
+- start a live setlist directly from the selected non-empty setlist;
+- show the active setlist, current song, next song and song position in Player;
+- provide large Previous/Next controls plus an explicit Exit Setlist action;
+- when changing songs, stop/unload the current native song and load the selected destination in a stopped state rather than auto-playing it;
+- perform a bounded warm preload for the next song by reading the first 512 KiB of every local normalized track into Android/Linux filesystem cache after current-song loading has begun;
+- keep warm preload off the realtime thread and avoid a second native decoder graph in 0.2;
+- expose preparing/ready state in Player;
+- cover deterministic setlist index/boundary navigation with JVM tests;
+- update queued-section wording so the UI reflects the authored section-end transition policy introduced in alpha05.1.
+
+A true dual-song native preload, gapless handoff and crossfade remain part of the later arrangement/transition architecture rather than being hidden inside the 0.2 stability milestone.
+
 ### Remaining 0.2 work
 
 - expand arrangement-aware Guide handling from the selected **section-name call** to count/dynamic cues and complete arbitrary live arrangement paths;
 - re-analyze an already imported song against a newly installed Guide pack without requiring a fresh song import;
 - persistent on-disk Guide fingerprint cache/index if physical-device profiling shows first-analysis preparation remains significant;
-- setlist live NEXT/PREV song transport and next-song preload;
 - persisted/restorable performance session without auto-emitting audio after a crash;
 - first-run onboarding for import, Click/Guide, routing, sections and backup/restore;
 - additional accessibility/large-touch-target pass for live use;
 - physical-device stress validation of double-buffered loops/jumps/count-in/arrangement-aware Guides under high track counts;
+- physical-device validation of Setlist Live song changes/warm preload and safe local deletion under low-storage/failure conditions;
 - physical-device import profiling and real-provider backup/restore validation, including Drive and low-storage/failure scenarios.
 
 ## 0.3 — expanded decoder/cache layer

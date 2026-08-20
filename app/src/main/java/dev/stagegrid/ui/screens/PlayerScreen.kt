@@ -43,6 +43,7 @@ import dev.stagegrid.ui.StageGridViewModel
 fun PlayerScreen(
     state: PlayerState,
     nativeGuide: StageGridViewModel.NativeGuideUiState,
+    setlistLive: StageGridViewModel.SetlistLiveUiState,
     onPlayPause: () -> Unit,
     onStop: () -> Unit,
     onStopAll: () -> Unit,
@@ -59,6 +60,9 @@ fun PlayerScreen(
     onNativeGuideLanguage: (String) -> Unit,
     onClickSubdivision: (ClickSubdivision) -> Unit,
     onClickRoute: (StereoRoute) -> Unit,
+    onSetlistPrevious: () -> Unit,
+    onSetlistNext: () -> Unit,
+    onExitSetlistLive: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val song = state.song
@@ -105,6 +109,74 @@ fun PlayerScreen(
             }
         }
 
+        if (setlistLive.active) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.setlist_live_title), fontWeight = FontWeight.Bold)
+                    Text(
+                        setlistLive.setlistName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (setlistLive.currentIndex >= 0 && setlistLive.totalSongs > 0) {
+                        Text(
+                            stringResource(
+                                R.string.setlist_live_song_position,
+                                setlistLive.currentIndex + 1,
+                                setlistLive.totalSongs,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.setlist_live_current), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(setlistLive.currentSongTitle ?: song.title, fontWeight = FontWeight.SemiBold)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.setlist_live_next_song), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(setlistLive.nextSongTitle ?: "—", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    when {
+                        setlistLive.preloadingNext -> Text(
+                            stringResource(R.string.setlist_live_next_preparing),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        setlistLive.nextReady -> Text(
+                            stringResource(R.string.setlist_live_next_ready),
+                            color = MaterialTheme.colorScheme.secondary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        !setlistLive.hasNext -> Text(
+                            stringResource(R.string.setlist_live_no_next),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    setlistLive.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            onClick = onSetlistPrevious,
+                            enabled = setlistLive.hasPrevious && state.engineState != EngineState.LOADING && !state.isCountingIn,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(stringResource(R.string.setlist_live_previous))
+                        }
+                        Button(
+                            onClick = onSetlistNext,
+                            enabled = setlistLive.hasNext && state.engineState != EngineState.LOADING && !state.isCountingIn,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(stringResource(R.string.setlist_live_next), fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    OutlinedButton(onClick = onExitSetlistLive, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.setlist_live_exit))
+                    }
+                }
+            }
+        }
+
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (state.isCountingIn) {
@@ -135,7 +207,7 @@ fun PlayerScreen(
                         val queued = state.sections.firstOrNull { it.id == queuedId }
                         queued?.let {
                             Text(
-                                stringResource(R.string.queued_next_bar, it.name),
+                                stringResource(R.string.queued_section_boundary, it.name),
                                 color = MaterialTheme.colorScheme.tertiary,
                                 fontWeight = FontWeight.SemiBold,
                             )

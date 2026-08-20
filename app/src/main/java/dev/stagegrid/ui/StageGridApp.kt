@@ -65,10 +65,13 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     val guidePackState by viewModel.guidePackState.collectAsStateWithLifecycle()
     val nativeGuideState by viewModel.nativeGuideState.collectAsStateWithLifecycle()
     val backupState by viewModel.backupState.collectAsStateWithLifecycle()
+    val libraryActionState by viewModel.libraryActionState.collectAsStateWithLifecycle()
     val selectedSetlist by viewModel.selectedSetlist.collectAsStateWithLifecycle()
+    val setlistLiveState by viewModel.setlistLiveState.collectAsStateWithLifecycle()
 
     var screen by rememberSaveable { mutableStateOf(MainScreen.LIBRARY) }
     var editingSong by remember { mutableStateOf<SongEntity?>(null) }
+    var deletingSong by remember { mutableStateOf<SongEntity?>(null) }
     var cloudBrowserOpen by rememberSaveable { mutableStateOf(false) }
     var sectionEditorOpen by rememberSaveable { mutableStateOf(false) }
 
@@ -125,6 +128,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onOpenCloud = { cloudBrowserOpen = true },
                 onLoadSong = { id -> viewModel.loadSong(id); screen = MainScreen.PLAYER },
                 onEditSong = { editingSong = it },
+                onDeleteSong = { deletingSong = it },
                 modifier = contentModifier,
             )
             MainScreen.SETLISTS -> SetlistsScreen(
@@ -136,11 +140,16 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onAddSong = viewModel::addSongToSelectedSetlist,
                 onRemoveSong = viewModel::removeSongFromSelectedSetlist,
                 onLoadSong = { id -> viewModel.loadSong(id); screen = MainScreen.PLAYER },
+                onStartLive = {
+                    viewModel.startSelectedSetlistLive()
+                    screen = MainScreen.PLAYER
+                },
                 modifier = contentModifier,
             )
             MainScreen.PLAYER -> PlayerScreen(
                 state = player,
                 nativeGuide = nativeGuideState,
+                setlistLive = setlistLiveState,
                 onPlayPause = viewModel::playPause,
                 onStop = viewModel::stop,
                 onStopAll = viewModel::stopAll,
@@ -157,6 +166,9 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onNativeGuideLanguage = viewModel::setSongNativeGuideLanguage,
                 onClickSubdivision = viewModel::setClickSubdivision,
                 onClickRoute = viewModel::setClickRoute,
+                onSetlistPrevious = viewModel::setlistLivePrevious,
+                onSetlistNext = viewModel::setlistLiveNext,
+                onExitSetlistLive = viewModel::exitSetlistLive,
                 modifier = contentModifier,
             )
             MainScreen.MIXER -> MixerScreen(
@@ -209,6 +221,34 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onDismiss = { sectionEditorOpen = false },
             )
         } ?: run { sectionEditorOpen = false }
+    }
+
+    deletingSong?.let { song ->
+        AlertDialog(
+            onDismissRequest = { deletingSong = null },
+            title = { Text(stringResource(R.string.delete_song_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.delete_song_message, song.title), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        stringResource(R.string.delete_song_files_note),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    deletingSong = null
+                    viewModel.deleteSong(song)
+                }) {
+                    Text(stringResource(R.string.delete_song_confirm), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingSong = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
 
     if (importState.running) {
@@ -293,6 +333,17 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             title = { Text(stringResource(R.string.import_failed)) },
             text = { Text(error, color = MaterialTheme.colorScheme.error) },
             confirmButton = { TextButton(onClick = viewModel::dismissImportState) { Text(stringResource(R.string.close)) } },
+        )
+    }
+
+    libraryActionState.error?.let { error ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissLibraryActionState,
+            title = { Text(stringResource(R.string.delete_song_error_title)) },
+            text = { Text(error, color = MaterialTheme.colorScheme.error) },
+            confirmButton = {
+                TextButton(onClick = viewModel::dismissLibraryActionState) { Text(stringResource(R.string.close)) }
+            },
         )
     }
 
