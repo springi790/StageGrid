@@ -4,7 +4,7 @@
     <string name="import_stage_preparing">Preparando la importación…</string>
     <string name="import_stage_copying">Copiando archivos al almacenamiento local…</string>
     <string name="import_stage_processing_track">Preparando pistas WAV…</string>
-    <string name="import_stage_decoding_mp3">Convirtiendo MP3 a audio listo para reproducción…</string>
+    <string name="import_stage_decoding_mp3">Convirtiendo audio comprimido a WAV listo para reproducción…</string>
     <string name="import_stage_analyzing_click">Alineando el click y la cuadrícula musical…</string>
     <string name="import_stage_analyzing_guide">Reconociendo llamadas de la guía…</string>
     <string name="import_stage_rendering_guide">Generando la guía nativa…</string>
