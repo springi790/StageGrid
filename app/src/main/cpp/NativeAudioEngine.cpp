@@ -10,6 +10,12 @@ namespace {
 constexpr const char *TAG = "StageGridAudio";
 constexpr double PI = 3.14159265358979323846;
 inline float clampUnit(float x) noexcept { return std::clamp(x, -1.0f, 1.0f); }
+inline int normalizeRequestedChannels(int channels) noexcept {
+    if (channels >= 8) return 8;
+    if (channels >= 6) return 6;
+    if (channels >= 4) return 4;
+    return 2;
+}
 }
 
 NativeAudioEngine::TrackState::~TrackState() {
@@ -35,32 +41,49 @@ NativeAudioEngine::~NativeAudioEngine() {
     tracks_.clear();
 }
 
-bool NativeAudioEngine::openStreamLocked() {
-    closeStreamLocked();
+bool NativeAudioEngine::tryOpenStreamLocked(int channelCount, oboe::SharingMode sharingMode) {
+    stream_.reset();
     oboe::AudioStreamBuilder builder;
     builder.setDirection(oboe::Direction::Output)
         ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
-        ->setSharingMode(oboe::SharingMode::Exclusive)
+        ->setSharingMode(sharingMode)
         ->setFormat(oboe::AudioFormat::Float)
-        ->setChannelCount(2)
+        ->setChannelCount(channelCount)
         ->setDataCallback(this)
         ->setErrorCallback(this);
     const int32_t requestedDevice = outputDeviceId_.load(std::memory_order_acquire);
     if (requestedDevice != oboe::kUnspecified) builder.setDeviceId(requestedDevice);
+    return builder.openStream(stream_) == oboe::Result::OK && stream_;
+}
 
-    auto result = builder.openStream(stream_);
-    if (result != oboe::Result::OK) {
-        builder.setSharingMode(oboe::SharingMode::Shared);
-        result = builder.openStream(stream_);
+bool NativeAudioEngine::openStreamLocked() {
+    closeStreamLocked();
+    const int requested = normalizeRequestedChannels(requestedOutputChannelCount_.load(std::memory_order_acquire));
+    requestedOutputChannelCount_.store(requested, std::memory_order_release);
+
+    int openedFor = 0;
+    for (int channels = requested; channels >= 2; channels -= 2) {
+        if (tryOpenStreamLocked(channels, oboe::SharingMode::Exclusive) ||
+            tryOpenStreamLocked(channels, oboe::SharingMode::Shared)) {
+            openedFor = channels;
+            break;
+        }
     }
-    if (result != oboe::Result::OK || !stream_) {
-        setLastError(std::string("Could not open Oboe stream: ") + oboe::convertToText(result));
+    if (!stream_ || openedFor == 0) {
+        setLastError("Could not open an Oboe output stream.");
+        outputChannelCount_.store(2, std::memory_order_release);
+        multichannelFallback_.store(requested > 2, std::memory_order_release);
         return false;
     }
+
     streamStarted_.store(false, std::memory_order_release);
     outputSampleRate_.store(stream_->getSampleRate(), std::memory_order_release);
     framesPerBurst_.store(stream_->getFramesPerBurst(), std::memory_order_release);
+    const int actualChannels = std::clamp(stream_->getChannelCount(), 2, 8);
+    outputChannelCount_.store(actualChannels, std::memory_order_release);
+    multichannelFallback_.store(actualChannels < requested, std::memory_order_release);
     stream_->setBufferSizeInFrames(std::max(stream_->getFramesPerBurst() * 2, stream_->getBufferSizeInFrames()));
+    setLastError("");
     return true;
 }
 
@@ -71,6 +94,8 @@ void NativeAudioEngine::closeStreamLocked() {
         stream_.reset();
     }
     streamStarted_.store(false, std::memory_order_release);
+    outputTestRemainingFrames_.store(0, std::memory_order_release);
+    outputTestChannel_.store(-1, std::memory_order_release);
 }
 
 bool NativeAudioEngine::loadSong(const std::vector<std::string>& paths, const std::vector<int>& types, double bpm, int beatsPerBar, int64_t gridOffsetMs) {
@@ -491,6 +516,11 @@ void NativeAudioEngine::setTrackOutputRoute(int index, int route) {
         tracks_[index]->outputRoute.store(std::clamp(route, static_cast<int>(BOTH), static_cast<int>(RIGHT)));
     }
 }
+void NativeAudioEngine::setTrackOutputBus(int index, int bus) {
+    if (index >= 0 && index < static_cast<int>(tracks_.size())) {
+        tracks_[index]->outputBus.store(std::clamp(bus, 0, 3), std::memory_order_release);
+    }
+}
 void NativeAudioEngine::setMasterVolume(float volume) { masterVolume_.store(std::clamp(volume, 0.0f, 1.25f)); }
 void NativeAudioEngine::setClickEnabled(bool enabled) { clickEnabled_.store(enabled); }
 void NativeAudioEngine::setGuideEnabled(bool enabled) { guideEnabled_.store(enabled); }
@@ -502,6 +532,9 @@ void NativeAudioEngine::setClickSubdivision(int subdivisionsPerBeat) {
 }
 void NativeAudioEngine::setClickRoute(int route) {
     clickRoute_.store(std::clamp(route, static_cast<int>(BOTH), static_cast<int>(RIGHT)), std::memory_order_release);
+}
+void NativeAudioEngine::setClickOutputBus(int bus) {
+    clickOutputBus_.store(std::clamp(bus, 0, 3), std::memory_order_release);
 }
 
 void NativeAudioEngine::setLoop(bool enabled, int64_t startMs, int64_t endMs) {
@@ -547,6 +580,7 @@ bool NativeAudioEngine::scheduleGuideCue(
     int64_t atMs,
     int64_t suppressUntilMs,
     int route,
+    int bus,
     float volume
 ) {
     const int sr = std::max(1, outputSampleRate_.load(std::memory_order_acquire));
@@ -558,6 +592,7 @@ bool NativeAudioEngine::scheduleGuideCue(
     cue->startFrame = msToFrames(atMs);
     cue->suppressUntilFrame = msToFrames(suppressUntilMs);
     cue->route = std::clamp(route, static_cast<int>(BOTH), static_cast<int>(RIGHT));
+    cue->bus = std::clamp(bus, 0, 3);
     cue->volume = std::clamp(volume, 0.0f, 1.5f);
     cue->consumed.store(false, std::memory_order_relaxed);
 
@@ -580,8 +615,7 @@ void NativeAudioEngine::clearGuideCue() noexcept {
         }
         previous.reset();
     } catch (...) {
-        // Teardown/control callers keep noexcept semantics. Shared ownership remains valid if the
-        // control synchronization primitive itself cannot complete.
+        // Teardown/control callers keep noexcept semantics.
     }
 }
 
@@ -601,8 +635,7 @@ bool NativeAudioEngine::prepareCountIn(int64_t targetMs, int bars) {
     const int64_t target = std::clamp<int64_t>(msToFrames(targetMs), 0, durationFrames_.load(std::memory_order_acquire));
     const int64_t start = target - countInFrames;
 
-    const bool wasPlaying = playing_.exchange(false, std::memory_order_acq_rel);
-    (void)wasPlaying;
+    playing_.store(false, std::memory_order_release);
     PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
     path.loopEnabled = false;
     path.jumpAtFrame = -1;
@@ -622,7 +655,7 @@ int64_t NativeAudioEngine::countInRemainingMs() const {
     return framesToMs(gate - current);
 }
 
-bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
+bool NativeAudioEngine::setOutputDevice(int32_t deviceId, int requestedChannels) {
     std::lock_guard<std::mutex> lock(controlMutex_);
     const bool resume = playing_.exchange(false, std::memory_order_acq_rel);
     clearGuideCue();
@@ -644,6 +677,7 @@ bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
     const int64_t gateUntilMsBefore = oldToMs(trackGateUntilFrame_.load(std::memory_order_acquire));
 
     outputDeviceId_.store(deviceId, std::memory_order_release);
+    requestedOutputChannelCount_.store(normalizeRequestedChannels(requestedChannels), std::memory_order_release);
     if (!openStreamLocked()) {
         playing_.store(false, std::memory_order_release);
         return false;
@@ -697,6 +731,31 @@ bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
     return true;
 }
 
+bool NativeAudioEngine::startOutputTest(int channelIndex, int durationMs) {
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    if (!stream_ && !openStreamLocked()) return false;
+    const int channels = std::clamp(outputChannelCount_.load(std::memory_order_acquire), 2, 8);
+    if (channelIndex < 0 || channelIndex >= channels) {
+        setLastError("Requested output-test channel is not available.");
+        return false;
+    }
+    if (!streamStarted_.load(std::memory_order_acquire)) {
+        const auto result = stream_->requestStart();
+        if (result != oboe::Result::OK) {
+            setLastError(std::string("Could not start output test: ") + oboe::convertToText(result));
+            return false;
+        }
+        streamStarted_.store(true, std::memory_order_release);
+    }
+    const int sr = std::max(1, outputSampleRate_.load(std::memory_order_acquire));
+    const int safeDuration = std::clamp(durationMs, 120, 1200);
+    outputTestChannel_.store(channelIndex, std::memory_order_release);
+    outputTestFrame_.store(0, std::memory_order_release);
+    outputTestRemainingFrames_.store(static_cast<int64_t>(sr) * safeDuration / 1000, std::memory_order_release);
+    setLastError("");
+    return true;
+}
+
 int64_t NativeAudioEngine::msToFrames(int64_t ms) const noexcept {
     return ms * static_cast<int64_t>(std::max(1, outputSampleRate_.load(std::memory_order_relaxed))) / 1000;
 }
@@ -736,12 +795,82 @@ float NativeAudioEngine::generatedClickSample(int64_t timelineFrame) const noexc
                               clickVolume_.load(std::memory_order_relaxed));
 }
 
+int NativeAudioEngine::normalizedBus(int bus, int channelCount) const noexcept {
+    const int safeBus = std::clamp(bus, 0, 3);
+    return safeBus * 2 + 1 < channelCount ? safeBus : 0;
+}
+
+void NativeAudioEngine::routeStereoPair(
+    std::array<float, 8> &mix,
+    int channelCount,
+    int bus,
+    int route,
+    float l,
+    float r,
+    float pan,
+    float volume
+) const noexcept {
+    const int base = normalizedBus(bus, channelCount) * 2;
+    if (route == LEFT || route == RIGHT) {
+        const float mono = (l + r) * 0.5f * volume;
+        mix[base + (route == RIGHT ? 1 : 0)] += mono;
+        return;
+    }
+    const float safePan = std::clamp(pan, -1.0f, 1.0f);
+    const float leftGain = std::sqrt(0.5f * (1.0f - safePan));
+    const float rightGain = std::sqrt(0.5f * (1.0f + safePan));
+    mix[base] += l * volume * leftGain * 1.41421356f;
+    mix[base + 1] += r * volume * rightGain * 1.41421356f;
+}
+
+void NativeAudioEngine::routeMono(
+    std::array<float, 8> &mix,
+    int channelCount,
+    int bus,
+    int route,
+    float sample
+) const noexcept {
+    const int base = normalizedBus(bus, channelCount) * 2;
+    if (route == LEFT) mix[base] += sample;
+    else if (route == RIGHT) mix[base + 1] += sample;
+    else {
+        mix[base] += sample;
+        mix[base + 1] += sample;
+    }
+}
+
 oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stream, void *audioData, int32_t numFrames) {
     auto *out = static_cast<float *>(audioData);
     const auto begin = std::chrono::steady_clock::now();
-    std::fill(out, out + numFrames * 2, 0.0f);
+    const int channelCount = std::clamp(outputChannelCount_.load(std::memory_order_relaxed), 2, 8);
+    std::fill(out, out + static_cast<size_t>(numFrames) * channelCount, 0.0f);
 
-    if (!playing_.load(std::memory_order_acquire) || tracks_.empty()) return oboe::DataCallbackResult::Continue;
+    int testChannel = outputTestChannel_.load(std::memory_order_relaxed);
+    int64_t testRemaining = outputTestRemainingFrames_.load(std::memory_order_relaxed);
+    int64_t testFrame = outputTestFrame_.load(std::memory_order_relaxed);
+    const int sr = std::max(1, outputSampleRate_.load(std::memory_order_relaxed));
+    const auto addTestTone = [&](std::array<float, 8> &mix) {
+        if (testRemaining <= 0 || testChannel < 0 || testChannel >= channelCount) return;
+        const double t = static_cast<double>(testFrame) / sr;
+        mix[testChannel] += static_cast<float>(std::sin(2.0 * PI * 880.0 * t) * 0.12);
+        --testRemaining;
+        ++testFrame;
+    };
+
+    const bool songActive = playing_.load(std::memory_order_acquire) && !tracks_.empty();
+    if (!songActive) {
+        if (testRemaining > 0) {
+            for (int32_t i = 0; i < numFrames; ++i) {
+                std::array<float, 8> mix{};
+                addTestTone(mix);
+                for (int ch = 0; ch < channelCount; ++ch) out[i * channelCount + ch] = clampUnit(mix[ch]);
+            }
+            outputTestRemainingFrames_.store(std::max<int64_t>(0, testRemaining), std::memory_order_relaxed);
+            outputTestFrame_.store(testFrame, std::memory_order_relaxed);
+            if (testRemaining <= 0) outputTestChannel_.store(-1, std::memory_order_relaxed);
+        }
+        return oboe::DataCallbackResult::Continue;
+    }
 
     tryActivatePendingPath(numFrames);
     const int active = activeBank_.load(std::memory_order_acquire);
@@ -771,7 +900,7 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
     const int64_t duration = durationFrames_.load(std::memory_order_relaxed);
     int32_t renderedFrames = 0;
     for (int32_t i = 0; i < numFrames; ++i) {
-        float mixL = 0.0f, mixR = 0.0f;
+        std::array<float, 8> mix{};
         bool trackUnderrun = false;
         const int64_t gateUntil = trackGateUntilFrame_.load(std::memory_order_relaxed);
         const bool suppressImportedTracks = gateUntil >= 0 && frame < gateUntil;
@@ -794,46 +923,45 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
             if (track->type == GUIDE && !guideEnabled_.load(std::memory_order_relaxed)) continue;
             if (track->type == GUIDE && guideCueEnabled) continue;
 
-            const float volume = track->volume.load(std::memory_order_relaxed);
-            const int route = track->outputRoute.load(std::memory_order_relaxed);
-            if (route == LEFT || route == RIGHT) {
-                const float mono = (l + r) * 0.5f * volume;
-                if (route == LEFT) mixL += mono;
-                else mixR += mono;
-            } else {
-                const float pan = track->pan.load(std::memory_order_relaxed);
-                const float leftGain = std::sqrt(0.5f * (1.0f - pan));
-                const float rightGain = std::sqrt(0.5f * (1.0f + pan));
-                mixL += l * volume * leftGain * 1.41421356f;
-                mixR += r * volume * rightGain * 1.41421356f;
-            }
+            routeStereoPair(
+                mix,
+                channelCount,
+                track->outputBus.load(std::memory_order_relaxed),
+                track->outputRoute.load(std::memory_order_relaxed),
+                l,
+                r,
+                track->pan.load(std::memory_order_relaxed),
+                track->volume.load(std::memory_order_relaxed)
+            );
         }
         if (trackUnderrun) underruns_.fetch_add(1, std::memory_order_relaxed);
 
         if (guideCueEnabled && guideEnabled_.load(std::memory_order_relaxed)) {
             const int64_t cueOffset = frame - guideCue->startFrame;
             if (cueOffset >= 0 && cueOffset < static_cast<int64_t>(guideCue->monoSamples.size())) {
-                const float cueSample = guideCue->monoSamples[static_cast<size_t>(cueOffset)] * guideCue->volume;
-                if (guideCue->route == LEFT) mixL += cueSample;
-                else if (guideCue->route == RIGHT) mixR += cueSample;
-                else {
-                    mixL += cueSample;
-                    mixR += cueSample;
-                }
+                routeMono(
+                    mix,
+                    channelCount,
+                    guideCue->bus,
+                    guideCue->route,
+                    guideCue->monoSamples[static_cast<size_t>(cueOffset)] * guideCue->volume
+                );
             }
         }
 
-        const float click = generatedClickSample(frame);
-        const int clickRoute = clickRoute_.load(std::memory_order_relaxed);
-        if (clickRoute == LEFT) mixL += click;
-        else if (clickRoute == RIGHT) mixR += click;
-        else {
-            mixL += click;
-            mixR += click;
-        }
+        routeMono(
+            mix,
+            channelCount,
+            clickOutputBus_.load(std::memory_order_relaxed),
+            clickRoute_.load(std::memory_order_relaxed),
+            generatedClickSample(frame)
+        );
+        addTestTone(mix);
+
         const float master = masterVolume_.load(std::memory_order_relaxed);
-        out[i * 2] = clampUnit(mixL * master);
-        out[i * 2 + 1] = clampUnit(mixR * master);
+        for (int ch = 0; ch < channelCount; ++ch) {
+            out[i * channelCount + ch] = clampUnit(mix[ch] * master);
+        }
         renderedFrames++;
 
         const int64_t previousFrame = frame;
@@ -853,6 +981,9 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
     }
     playheadFrame_.store(frame, std::memory_order_release);
     if (renderedFrames > 0) outputFrameCounter_.fetch_add(static_cast<uint64_t>(renderedFrames), std::memory_order_relaxed);
+    outputTestRemainingFrames_.store(std::max<int64_t>(0, testRemaining), std::memory_order_relaxed);
+    outputTestFrame_.store(testFrame, std::memory_order_relaxed);
+    if (testRemaining <= 0) outputTestChannel_.store(-1, std::memory_order_relaxed);
 
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
     const double budget = static_cast<double>(numFrames) / std::max(1, stream->getSampleRate());
