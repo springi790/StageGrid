@@ -38,6 +38,6 @@ class StageGridApplication : Application() {
         importer = SongImporter(this, repository, guidePacks, settings)
         backupManager = LibraryBackupManager(this, repository)
         audioDevices = AudioDeviceManager(this)
-        audio = AudioEngineController(this, repository, NativeAudioEngine())
+        audio = AudioEngineController(this, repository, NativeAudioEngine(), guidePacks)
     }
 }
