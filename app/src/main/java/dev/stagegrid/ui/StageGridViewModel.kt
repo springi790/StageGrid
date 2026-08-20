@@ -27,9 +27,13 @@ import dev.stagegrid.model.SetlistEntity
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.settings.AppSettingsRepository
+import java.io.BufferedInputStream
 import java.io.File
+import java.io.FileInputStream
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -88,6 +92,28 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         val error: String? = null,
     )
 
+    data class LibraryActionUiState(
+        val deletingSongId: String? = null,
+        val error: String? = null,
+    )
+
+    data class SetlistLiveUiState(
+        val active: Boolean = false,
+        val setlistId: String? = null,
+        val setlistName: String = "",
+        val currentIndex: Int = -1,
+        val totalSongs: Int = 0,
+        val currentSongTitle: String? = null,
+        val previousSongTitle: String? = null,
+        val nextSongTitle: String? = null,
+        val preloadingNext: Boolean = false,
+        val nextReady: Boolean = false,
+        val error: String? = null,
+    ) {
+        val hasPrevious: Boolean get() = active && currentIndex > 0
+        val hasNext: Boolean get() = active && currentIndex >= 0 && currentIndex + 1 < totalSongs
+    }
+
     private val _importState = MutableStateFlow(ImportUiState())
     val importState: StateFlow<ImportUiState> = _importState.asStateFlow()
 
@@ -100,8 +126,15 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     private val _backupState = MutableStateFlow(BackupUiState())
     val backupState: StateFlow<BackupUiState> = _backupState.asStateFlow()
 
+    private val _libraryActionState = MutableStateFlow(LibraryActionUiState())
+    val libraryActionState: StateFlow<LibraryActionUiState> = _libraryActionState.asStateFlow()
+
     private val _selectedSetlist = MutableStateFlow<SetlistBundle?>(null)
     val selectedSetlist: StateFlow<SetlistBundle?> = _selectedSetlist.asStateFlow()
+
+    private val _setlistLiveState = MutableStateFlow(SetlistLiveUiState())
+    val setlistLiveState: StateFlow<SetlistLiveUiState> = _setlistLiveState.asStateFlow()
+    private val setlistPreloadSerial = AtomicLong(0L)
 
     init {
         viewModelScope.launch {
@@ -175,6 +208,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         if (!backupOperationAllowed()) return
         val previouslyLoadedSongId = player.value.song?.id
         viewModelScope.launch {
+            exitSetlistLive()
             _backupState.value = BackupUiState(running = true, operation = BackupOperation.RESTORE)
             try {
                 // Stop decoder threads before restored WAV files replace their app-private paths.
@@ -262,7 +296,15 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     fun dismissImportState() { _importState.value = ImportUiState() }
 
     fun loadSong(songId: String) {
+        exitSetlistLive()
+        loadSongInternal(songId, unloadCurrent = false)
+    }
+
+    private fun loadSongInternal(songId: String, unloadCurrent: Boolean) {
         viewModelScope.launch {
+            if (unloadCurrent && player.value.song?.id != null && player.value.song?.id != songId) {
+                withContext(Dispatchers.Default) { app.audio.unloadForLibraryRestore() }
+            }
             withContext(Dispatchers.IO) {
                 app.repository.getSong(songId)?.let { recoverNativeGuideSections(it) }
             }
@@ -342,6 +384,91 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             withContext(Dispatchers.IO) { app.repository.deleteSection(section) }
             if (player.value.song?.id == section.songId) app.audio.loadSong(section.songId)
+        }
+    }
+
+    fun deleteSong(song: SongEntity) {
+        val busy = player.value.isPlaying || player.value.isCountingIn ||
+            importState.value.running || backupState.value.running || nativeGuideState.value.rendering ||
+            _libraryActionState.value.deletingSongId != null
+        if (busy) {
+            _libraryActionState.value = LibraryActionUiState(
+                error = "Stop playback and wait for current processing to finish before deleting a multitrack.",
+            )
+            return
+        }
+
+        viewModelScope.launch {
+            _libraryActionState.value = LibraryActionUiState(deletingSongId = song.id)
+            val wasLoaded = player.value.song?.id == song.id
+            val liveContainedSong = _setlistLiveState.value.active &&
+                _selectedSetlist.value?.songs?.any { it.id == song.id } == true
+            if (liveContainedSong) exitSetlistLive()
+            if (wasLoaded) {
+                withContext(Dispatchers.Default) { app.audio.unloadForLibraryRestore() }
+                _nativeGuideState.value = NativeGuideUiState()
+            }
+
+            val error = withContext(Dispatchers.IO) { deleteSongFromStorageAndDatabase(song) }
+            if (error == null) {
+                val selectedId = _selectedSetlist.value?.setlist?.id
+                if (selectedId != null) {
+                    _selectedSetlist.value = withContext(Dispatchers.IO) { app.repository.getSetlistBundle(selectedId) }
+                }
+                _libraryActionState.value = LibraryActionUiState()
+            } else {
+                _libraryActionState.value = LibraryActionUiState(error = error)
+            }
+        }
+    }
+
+    fun dismissLibraryActionState() {
+        if (_libraryActionState.value.deletingSongId == null) {
+            _libraryActionState.value = LibraryActionUiState()
+        }
+    }
+
+    private suspend fun deleteSongFromStorageAndDatabase(song: SongEntity): String? {
+        val songRoot = File(app.filesDir, "library/${song.id}")
+        val trashRoot = File(app.cacheDir, "song-delete-staging").apply { mkdirs() }
+        val staged = File(trashRoot, "${song.id}-${System.nanoTime()}")
+        var filesStaged = false
+
+        try {
+            if (songRoot.exists()) {
+                staged.deleteRecursively()
+                if (!songRoot.renameTo(staged)) {
+                    songRoot.copyRecursively(staged, overwrite = true)
+                    if (!staged.isDirectory || !songRoot.deleteRecursively()) {
+                        staged.deleteRecursively()
+                        return "StageGrid could not safely stage the local song files for deletion."
+                    }
+                }
+                filesStaged = staged.exists()
+                if (!filesStaged) return "StageGrid could not safely stage the local song files for deletion."
+            }
+
+            try {
+                app.repository.deleteSong(song)
+            } catch (t: Throwable) {
+                if (filesStaged) restoreStagedSong(staged, songRoot)
+                return t.message ?: "The song could not be removed from the library."
+            }
+
+            staged.deleteRecursively()
+            return null
+        } catch (t: Throwable) {
+            if (filesStaged && !songRoot.exists()) restoreStagedSong(staged, songRoot)
+            return t.message ?: "The song could not be deleted."
+        }
+    }
+
+    private fun restoreStagedSong(staged: File, target: File) {
+        if (!staged.exists() || target.exists()) return
+        target.parentFile?.mkdirs()
+        if (!staged.renameTo(target)) {
+            staged.copyRecursively(target, overwrite = true)
+            staged.deleteRecursively()
         }
     }
 
@@ -533,6 +660,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun loadSetlist(id: String) {
         viewModelScope.launch {
+            if (_setlistLiveState.value.active && _setlistLiveState.value.setlistId != id) exitSetlistLive()
             _selectedSetlist.value = withContext(Dispatchers.IO) { app.repository.getSetlistBundle(id) }
         }
     }
@@ -547,10 +675,115 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun removeSongFromSelectedSetlist(songId: String) {
         val id = _selectedSetlist.value?.setlist?.id ?: return
+        if (_setlistLiveState.value.active) exitSetlistLive()
         viewModelScope.launch(Dispatchers.IO) {
             app.repository.removeSongFromSetlist(id, songId)
             loadSetlist(id)
         }
+    }
+
+    fun startSelectedSetlistLive() {
+        val bundle = _selectedSetlist.value ?: return
+        val songIds = bundle.songs.map { it.id }
+        val index = SetlistLiveNavigation.initialIndex(songIds, player.value.song?.id)
+        if (index < 0) return
+        _setlistLiveState.value = buildSetlistLiveState(bundle, index)
+        loadSetlistLiveIndex(index)
+    }
+
+    fun setlistLiveNext() {
+        val live = _setlistLiveState.value
+        if (!live.active) return
+        val bundle = _selectedSetlist.value ?: return
+        val next = SetlistLiveNavigation.nextIndex(live.currentIndex, bundle.songs.size) ?: return
+        loadSetlistLiveIndex(next)
+    }
+
+    fun setlistLivePrevious() {
+        val live = _setlistLiveState.value
+        if (!live.active) return
+        val bundle = _selectedSetlist.value ?: return
+        val previous = SetlistLiveNavigation.previousIndex(live.currentIndex, bundle.songs.size) ?: return
+        loadSetlistLiveIndex(previous)
+    }
+
+    fun exitSetlistLive() {
+        setlistPreloadSerial.incrementAndGet()
+        _setlistLiveState.value = SetlistLiveUiState()
+    }
+
+    private fun loadSetlistLiveIndex(index: Int) {
+        val bundle = _selectedSetlist.value ?: return
+        val target = bundle.songs.getOrNull(index) ?: return
+        setlistPreloadSerial.incrementAndGet()
+        _setlistLiveState.value = buildSetlistLiveState(bundle, index)
+        val unloadCurrent = player.value.song?.id != null && player.value.song?.id != target.id
+        loadSongInternal(target.id, unloadCurrent = unloadCurrent)
+        scheduleNextSongPreload(bundle, index)
+    }
+
+    private fun buildSetlistLiveState(bundle: SetlistBundle, index: Int): SetlistLiveUiState {
+        val current = bundle.songs.getOrNull(index)
+        return SetlistLiveUiState(
+            active = current != null,
+            setlistId = bundle.setlist.id,
+            setlistName = bundle.setlist.name,
+            currentIndex = index,
+            totalSongs = bundle.songs.size,
+            currentSongTitle = current?.title,
+            previousSongTitle = bundle.songs.getOrNull(index - 1)?.title,
+            nextSongTitle = bundle.songs.getOrNull(index + 1)?.title,
+        )
+    }
+
+    private fun scheduleNextSongPreload(bundle: SetlistBundle, currentIndex: Int) {
+        val next = bundle.songs.getOrNull(currentIndex + 1)
+        val serial = setlistPreloadSerial.incrementAndGet()
+        if (next == null) {
+            _setlistLiveState.value = _setlistLiveState.value.copy(preloadingNext = false, nextReady = false)
+            return
+        }
+        _setlistLiveState.value = _setlistLiveState.value.copy(preloadingNext = true, nextReady = false)
+        viewModelScope.launch {
+            // Give the native engine the I/O priority to finish opening the current song first.
+            delay(SETLIST_PRELOAD_DELAY_MS)
+            val ready = withContext(Dispatchers.IO) { warmNextSong(next.id) }
+            if (serial != setlistPreloadSerial.get()) return@launch
+            val current = _setlistLiveState.value
+            if (!current.active || current.nextSongTitle != next.title) return@launch
+            _setlistLiveState.value = current.copy(
+                preloadingNext = false,
+                nextReady = ready,
+                error = if (ready) null else "The next song could not be prepared. It can still be loaded normally.",
+            )
+        }
+    }
+
+    /**
+     * Warms the beginning of every normalized WAV into the OS file cache. This is intentionally a
+     * bounded preload: alpha07 does not keep a second native decoder graph alive or auto-play audio.
+     */
+    private suspend fun warmNextSong(songId: String): Boolean {
+        val bundle = app.repository.getSongBundle(songId) ?: return false
+        if (bundle.tracks.isEmpty()) return false
+        val buffer = ByteArray(SETLIST_PRELOAD_BUFFER_BYTES)
+        for (track in bundle.tracks) {
+            val file = File(track.filePath)
+            if (!file.isFile || file.length() <= 44L) return false
+            try {
+                BufferedInputStream(FileInputStream(file), SETLIST_PRELOAD_BUFFER_BYTES).use { input ->
+                    var remaining = SETLIST_PRELOAD_BYTES_PER_TRACK
+                    while (remaining > 0) {
+                        val read = input.read(buffer, 0, minOf(buffer.size, remaining))
+                        if (read <= 0) break
+                        remaining -= read
+                    }
+                }
+            } catch (_: Throwable) {
+                return false
+            }
+        }
+        return true
     }
 
     fun setLiveMode(enabled: Boolean) = viewModelScope.launch { app.settings.setLiveMode(enabled) }
@@ -565,5 +798,8 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         private val AUTO_SECTION_COLORS = longArrayOf(
             0xFF5B8CFF, 0xFF2FBF9F, 0xFF9C6CFF, 0xFFF39C55, 0xFFE85D75, 0xFF4FB6E9,
         )
+        private const val SETLIST_PRELOAD_DELAY_MS = 450L
+        private const val SETLIST_PRELOAD_BYTES_PER_TRACK = 512 * 1024
+        private const val SETLIST_PRELOAD_BUFFER_BYTES = 64 * 1024
     }
 }
