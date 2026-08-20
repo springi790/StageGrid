@@ -12,7 +12,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.IdentityHashMap
@@ -31,7 +31,9 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
 
     init {
         viewModel.viewModelScope.launch {
-            viewModel.player.collectLatest { player -> onPlayerState(player) }
+            // Arrangement initialization may touch its small app-private sidecar. Process player
+            // states sequentially so an 80 ms transport tick can never cancel that initialization.
+            viewModel.player.collect { player -> onPlayerState(player) }
         }
     }
 
