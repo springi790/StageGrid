@@ -231,18 +231,23 @@ class AudioEngineController(
     /**
      * Starts the prepared deck muted, overlaps both native streams, then swaps deck ownership.
      * This is intentionally executed off the main thread because the gain ramp is time based.
+     * A stopped/paused source remains silent: no audio focus or foreground playback service is
+     * started solely because the user navigated to the already-preloaded next song.
      */
     fun promotePreloadedSong(crossfadeMs: Int = 700) {
         val bundle = preloadedBundle ?: return
         val before = _state.value
         if (before.crossfadeInProgress) return
-        val focus = audioManager.requestAudioFocus(focusRequest)
-        if (focus != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-            _state.update { it.copy(errorMessage = "Audio focus was not granted by Android.") }
-            return
+        val continuePlaying = before.isPlaying && native.isPlaying()
+        if (continuePlaying) {
+            val focus = audioManager.requestAudioFocus(focusRequest)
+            if (focus != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                _state.update { it.copy(errorMessage = "Audio focus was not granted by Android.") }
+                return
+            }
+            val serviceIntent = Intent(context, PlaybackService::class.java).setAction(PlaybackService.ACTION_ENSURE_FOREGROUND)
+            ContextCompat.startForegroundService(context, serviceIntent)
         }
-        val serviceIntent = Intent(context, PlaybackService::class.java).setAction(PlaybackService.ACTION_ENSURE_FOREGROUND)
-        ContextCompat.startForegroundService(context, serviceIntent)
         cancelArrangementGuideCue()
         scope.launch {
             _state.update { it.copy(crossfadeInProgress = true, errorMessage = null) }
@@ -261,8 +266,13 @@ class AudioEngineController(
             preloadedBundle = null
             val diagnostics = native.diagnostics()
             val duration = native.durationMs().takeIf { it > 0L } ?: bundle.song.durationMs
+            val promotedState = when {
+                continuePlaying -> EngineState.PLAYING
+                before.engineState == EngineState.PAUSED -> EngineState.PAUSED
+                else -> EngineState.READY
+            }
             _state.value = PlayerState(
-                engineState = EngineState.PLAYING,
+                engineState = promotedState,
                 song = bundle.song,
                 tracks = bundle.tracks,
                 sections = bundle.sections,
@@ -284,7 +294,7 @@ class AudioEngineController(
                 preloadedSongTitle = null,
                 crossfadeInProgress = false,
             )
-            scope.launch(Dispatchers.IO) { repository.markPlayed(bundle.song.id) }
+            if (continuePlaying) scope.launch(Dispatchers.IO) { repository.markPlayed(bundle.song.id) }
         }
     }
 
