@@ -38,6 +38,7 @@ import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.music.MusicalGrid
 import dev.stagegrid.ui.StageGridViewModel
+import dev.stagegrid.ui.components.SongWaveformOverview
 
 @Composable
 fun PlayerScreen(
@@ -180,6 +181,17 @@ fun PlayerScreen(
                         }
                     }
                 }
+
+                SongWaveformOverview(
+                    songId = song.id,
+                    positionMs = if (dragging) (seekFraction * state.durationMs).toLong() else state.positionMs,
+                    durationMs = state.durationMs,
+                    sections = state.sections,
+                    onSeek = if (state.isCountingIn) null else { target ->
+                        dragging = false
+                        onSeek(target)
+                    },
+                )
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(formatPlayerDuration(if (dragging) (seekFraction * state.durationMs).toLong() else state.positionMs))
