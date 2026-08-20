@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.stagegrid.R
+import dev.stagegrid.backup.BackupStage
 import dev.stagegrid.importer.ImportStage
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.ui.screens.CloudBrowserDialog
@@ -63,6 +64,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     val importState by viewModel.importState.collectAsStateWithLifecycle()
     val guidePackState by viewModel.guidePackState.collectAsStateWithLifecycle()
     val nativeGuideState by viewModel.nativeGuideState.collectAsStateWithLifecycle()
+    val backupState by viewModel.backupState.collectAsStateWithLifecycle()
     val selectedSetlist by viewModel.selectedSetlist.collectAsStateWithLifecycle()
 
     var screen by rememberSaveable { mutableStateOf(MainScreen.LIBRARY) }
@@ -81,6 +83,12 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     }
     val guidePackLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let(viewModel::installGuidePack)
+    }
+    val backupFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+        uri?.let(viewModel::createLibraryBackup)
+    }
+    val restoreBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri?.let(viewModel::restoreLibraryBackup)
     }
 
     val availableScreens = if (settings.performanceLock) {
@@ -172,6 +180,9 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onOutput = viewModel::setOutputDevice,
                 onInstallGuidePack = { guidePackLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
                 onNativeGuideLanguage = viewModel::setNativeGuideLanguage,
+                onCreateBackup = { backupFolderLauncher.launch(null) },
+                onRestoreBackup = { restoreBackupLauncher.launch(arrayOf("application/octet-stream", "application/zip", "*/*")) },
+                backupBusy = backupState.running,
                 modifier = contentModifier,
             )
         }
@@ -284,6 +295,81 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             confirmButton = { TextButton(onClick = viewModel::dismissImportState) { Text(stringResource(R.string.close)) } },
         )
     }
+
+    if (backupState.running) {
+        AlertDialog(
+            onDismissRequest = {},
+            confirmButton = {},
+            title = {
+                Text(
+                    if (backupState.operation == StageGridViewModel.BackupOperation.RESTORE) {
+                        stringResource(R.string.backup_restore_running_title)
+                    } else {
+                        stringResource(R.string.backup_create_running_title)
+                    },
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        stringResource(R.string.backup_progress_percent, backupState.progress.percent),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    LinearProgressIndicator(
+                        progress = { backupState.progress.fraction },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    )
+                    Text(backupStageLabel(backupState.progress.stage), fontWeight = FontWeight.SemiBold)
+                    backupState.progress.detail?.let {
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
+        )
+    }
+    backupState.backupResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissBackupState,
+            title = { Text(stringResource(R.string.backup_complete_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.backup_complete_summary,
+                        result.songs,
+                        result.setlists,
+                        result.fileName,
+                    ),
+                )
+            },
+            confirmButton = { TextButton(onClick = viewModel::dismissBackupState) { Text(stringResource(R.string.close)) } },
+        )
+    }
+    backupState.restoreResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissBackupState,
+            title = { Text(stringResource(R.string.backup_restore_complete_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.backup_restore_complete_summary,
+                        result.songs,
+                        result.setlists,
+                        result.files,
+                    ),
+                )
+            },
+            confirmButton = { TextButton(onClick = viewModel::dismissBackupState) { Text(stringResource(R.string.close)) } },
+        )
+    }
+    backupState.error?.let { error ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissBackupState,
+            title = { Text(stringResource(R.string.backup_error_title)) },
+            text = { Text(error, color = MaterialTheme.colorScheme.error) },
+            confirmButton = { TextButton(onClick = viewModel::dismissBackupState) { Text(stringResource(R.string.close)) } },
+        )
+    }
 }
 
 @Composable
@@ -298,6 +384,18 @@ private fun importStageLabel(stage: ImportStage): String = when (stage) {
     ImportStage.BUILDING_SECTIONS -> stringResource(R.string.import_stage_building_sections)
     ImportStage.SAVING_LIBRARY -> stringResource(R.string.import_stage_saving_library)
     ImportStage.COMPLETE -> stringResource(R.string.import_stage_complete)
+}
+
+@Composable
+private fun backupStageLabel(stage: BackupStage): String = when (stage) {
+    BackupStage.PREPARING -> stringResource(R.string.backup_stage_preparing)
+    BackupStage.HASHING -> stringResource(R.string.backup_stage_hashing)
+    BackupStage.WRITING -> stringResource(R.string.backup_stage_writing)
+    BackupStage.COPYING_ARCHIVE -> stringResource(R.string.backup_stage_copying_archive)
+    BackupStage.VALIDATING -> stringResource(R.string.backup_stage_validating)
+    BackupStage.RESTORING_FILES -> stringResource(R.string.backup_stage_restoring_files)
+    BackupStage.RESTORING_LIBRARY -> stringResource(R.string.backup_stage_restoring_library)
+    BackupStage.COMPLETE -> stringResource(R.string.backup_stage_complete)
 }
 
 @Composable
