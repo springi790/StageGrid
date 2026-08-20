@@ -1,5 +1,6 @@
 package dev.stagegrid.ui.screens
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
@@ -26,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.stagegrid.R
 import dev.stagegrid.audio.PlayerState
+import dev.stagegrid.model.OutputBus
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.model.TrackType
 
@@ -37,10 +40,13 @@ fun MixerScreen(
     onSolo: (Int, Boolean) -> Unit,
     onPan: (Int, Float) -> Unit,
     onOutputRoute: (Int, StereoRoute) -> Unit,
+    onOutputBus: (Int, OutputBus) -> Unit,
     onClickRoute: (StereoRoute) -> Unit,
+    onClickBus: (OutputBus) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showAdvancedRouting by remember { mutableStateOf(false) }
+    val availableBuses = OutputBus.availableForChannels(state.outputChannelCount)
 
     Column(modifier.fillMaxSize().padding(16.dp)) {
         Text(stringResource(R.string.mixer), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -57,30 +63,24 @@ fun MixerScreen(
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(stringResource(R.string.quick_output_setup), fontWeight = FontWeight.Bold)
                         Text(stringResource(R.string.quick_output_explanation), color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                        Button(
-                            onClick = {
-                                state.tracks.forEachIndexed { index, track ->
-                                    when (TrackType.fromStorage(track.type)) {
-                                        TrackType.CLICK -> Unit
-                                        TrackType.GUIDE -> onOutputRoute(index, StereoRoute.LEFT)
-                                        else -> onOutputRoute(index, StereoRoute.RIGHT)
-                                    }
-                                }
-                                onClickRoute(StereoRoute.LEFT)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(stringResource(R.string.preset_stage_split))
+                        Text(
+                            stringResource(R.string.multichannel_routing_summary, state.outputChannelCount, state.requestedOutputChannels),
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        if (state.outputFallback) {
+                            Text(stringResource(R.string.multichannel_fallback_warning), color = MaterialTheme.colorScheme.tertiary)
                         }
 
                         OutlinedButton(
                             onClick = {
                                 state.tracks.forEachIndexed { index, track ->
                                     if (TrackType.fromStorage(track.type) != TrackType.CLICK) {
+                                        onOutputBus(index, OutputBus.OUT_1_2)
                                         onOutputRoute(index, StereoRoute.BOTH)
                                     }
                                 }
+                                onClickBus(OutputBus.OUT_1_2)
                                 onClickRoute(StereoRoute.BOTH)
                             },
                             modifier = Modifier.fillMaxWidth(),
@@ -93,16 +93,101 @@ fun MixerScreen(
                                 state.tracks.forEachIndexed { index, track ->
                                     when (TrackType.fromStorage(track.type)) {
                                         TrackType.CLICK -> Unit
-                                        TrackType.GUIDE -> onOutputRoute(index, StereoRoute.LEFT)
-                                        else -> onOutputRoute(index, StereoRoute.BOTH)
+                                        TrackType.GUIDE -> {
+                                            onOutputBus(index, OutputBus.OUT_1_2)
+                                            onOutputRoute(index, StereoRoute.LEFT)
+                                        }
+                                        else -> {
+                                            onOutputBus(index, OutputBus.OUT_1_2)
+                                            onOutputRoute(index, StereoRoute.RIGHT)
+                                        }
                                     }
                                 }
+                                onClickBus(OutputBus.OUT_1_2)
                                 onClickRoute(StereoRoute.LEFT)
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(stringResource(R.string.preset_click_left_tracks_stereo))
+                            Text(stringResource(R.string.preset_stage_split))
                         }
+
+                        Button(
+                            enabled = state.outputChannelCount >= 4,
+                            onClick = {
+                                state.tracks.forEachIndexed { index, track ->
+                                    when (TrackType.fromStorage(track.type)) {
+                                        TrackType.CLICK -> Unit
+                                        TrackType.GUIDE -> {
+                                            onOutputBus(index, OutputBus.OUT_3_4)
+                                            onOutputRoute(index, StereoRoute.RIGHT)
+                                        }
+                                        else -> {
+                                            onOutputBus(index, OutputBus.OUT_1_2)
+                                            onOutputRoute(index, StereoRoute.BOTH)
+                                        }
+                                    }
+                                }
+                                onClickBus(OutputBus.OUT_3_4)
+                                onClickRoute(StereoRoute.LEFT)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(stringResource(R.string.preset_four_out)) }
+
+                        OutlinedButton(
+                            enabled = state.outputChannelCount >= 6,
+                            onClick = {
+                                state.tracks.forEachIndexed { index, track ->
+                                    when (TrackType.fromStorage(track.type)) {
+                                        TrackType.CLICK -> Unit
+                                        TrackType.GUIDE -> {
+                                            onOutputBus(index, OutputBus.OUT_5_6)
+                                            onOutputRoute(index, StereoRoute.RIGHT)
+                                        }
+                                        TrackType.VOCALS -> {
+                                            onOutputBus(index, OutputBus.OUT_3_4)
+                                            onOutputRoute(index, StereoRoute.BOTH)
+                                        }
+                                        else -> {
+                                            onOutputBus(index, OutputBus.OUT_1_2)
+                                            onOutputRoute(index, StereoRoute.BOTH)
+                                        }
+                                    }
+                                }
+                                onClickBus(OutputBus.OUT_5_6)
+                                onClickRoute(StereoRoute.LEFT)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(stringResource(R.string.preset_six_out)) }
+
+                        OutlinedButton(
+                            enabled = state.outputChannelCount >= 8,
+                            onClick = {
+                                state.tracks.forEachIndexed { index, track ->
+                                    when (TrackType.fromStorage(track.type)) {
+                                        TrackType.CLICK -> Unit
+                                        TrackType.GUIDE -> {
+                                            onOutputBus(index, OutputBus.OUT_7_8)
+                                            onOutputRoute(index, StereoRoute.RIGHT)
+                                        }
+                                        TrackType.DRUMS, TrackType.BASS -> {
+                                            onOutputBus(index, OutputBus.OUT_1_2)
+                                            onOutputRoute(index, StereoRoute.BOTH)
+                                        }
+                                        TrackType.GUITAR, TrackType.KEYS, TrackType.SYNTH, TrackType.PAD -> {
+                                            onOutputBus(index, OutputBus.OUT_3_4)
+                                            onOutputRoute(index, StereoRoute.BOTH)
+                                        }
+                                        TrackType.VOCALS, TrackType.STRINGS, TrackType.PERCUSSION, TrackType.OTHER -> {
+                                            onOutputBus(index, OutputBus.OUT_5_6)
+                                            onOutputRoute(index, StereoRoute.BOTH)
+                                        }
+                                    }
+                                }
+                                onClickBus(OutputBus.OUT_7_8)
+                                onClickRoute(StereoRoute.LEFT)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(stringResource(R.string.preset_eight_out)) }
 
                         OutlinedButton(onClick = { showAdvancedRouting = !showAdvancedRouting }, modifier = Modifier.fillMaxWidth()) {
                             Text(
@@ -114,10 +199,45 @@ fun MixerScreen(
                 }
             }
 
+            if (showAdvancedRouting) {
+                item {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(stringResource(R.string.generated_click_routing), fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.generated_click_routing_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.output_bus), fontWeight = FontWeight.SemiBold)
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                availableBuses.forEach { bus ->
+                                    FilterChip(
+                                        selected = state.clickBus == bus,
+                                        onClick = { onClickBus(bus) },
+                                        label = { Text(busLabel(bus)) },
+                                    )
+                                }
+                            }
+                            Text(stringResource(R.string.where_should_this_track_sound), fontWeight = FontWeight.SemiBold)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                StereoRoute.entries.forEach { option ->
+                                    FilterChip(
+                                        selected = state.clickRoute == option,
+                                        onClick = { onClickRoute(option) },
+                                        label = { Text(routeFriendlyLabel(option)) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             itemsIndexed(state.tracks, key = { _, track -> track.id }) { index, track ->
                 val type = TrackType.fromStorage(track.type)
                 val isImportedClickReference = type == TrackType.CLICK
                 val route = StereoRoute.fromStorage(track.outputRoute)
+                val bus = OutputBus.fromStorage(track.outputBus)
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -144,6 +264,20 @@ fun MixerScreen(
                             Slider(value = track.volume.coerceIn(0f, 1.25f), onValueChange = { onVolume(index, it) }, valueRange = 0f..1.25f)
 
                             if (showAdvancedRouting) {
+                                Text(stringResource(R.string.output_bus), fontWeight = FontWeight.SemiBold)
+                                Row(
+                                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    availableBuses.forEach { option ->
+                                        FilterChip(
+                                            selected = bus == option,
+                                            onClick = { onOutputBus(index, option) },
+                                            label = { Text(busLabel(option)) },
+                                        )
+                                    }
+                                }
+
                                 Text(stringResource(R.string.where_should_this_track_sound), fontWeight = FontWeight.SemiBold)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     StereoRoute.entries.forEach { option ->
@@ -169,6 +303,13 @@ fun MixerScreen(
         }
     }
 }
+
+@Composable
+private fun busLabel(bus: OutputBus): String = stringResource(
+    R.string.output_bus_pair,
+    bus.firstPhysicalChannel,
+    bus.lastPhysicalChannel,
+)
 
 @Composable
 private fun routeFriendlyLabel(route: StereoRoute): String = when (route) {
