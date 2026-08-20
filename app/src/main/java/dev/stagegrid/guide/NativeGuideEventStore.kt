@@ -4,9 +4,19 @@ import dev.stagegrid.guide.GuidePackManager.CueKind
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.text.Normalizer
+import java.util.Locale
+import kotlin.math.abs
 
 /** Reads persisted native-Guide cue events without re-analyzing the source audio. */
 object NativeGuideEventStore {
+    data class StoredSectionProposal(
+        val key: String,
+        val name: String,
+        val startMs: Long,
+        val confidence: Float,
+    )
+
     fun readAnalysis(file: File): GuideCueAnalyzer.Result? {
         val root = readRoot(file) ?: return null
         return runCatching {
@@ -44,6 +54,47 @@ object NativeGuideEventStore {
 
     fun readDetectedLanguage(file: File): String? = readRoot(file)?.optNullableString("detectedLanguage")
 
+    fun readSectionProposals(file: File): List<StoredSectionProposal> {
+        val root = readRoot(file) ?: return emptyList()
+        val sections = root.optJSONArray("sections") ?: return emptyList()
+        return buildList {
+            for (i in 0 until sections.length()) {
+                val item = sections.optJSONObject(i) ?: continue
+                val key = item.optString("key").trim()
+                val name = item.optString("name").trim()
+                val startMs = item.optLong("startMs", -1L)
+                if (key.isBlank() || startMs < 0L) continue
+                add(
+                    StoredSectionProposal(
+                        key = key,
+                        name = name,
+                        startMs = startMs,
+                        confidence = item.optDouble("confidence", 0.0).toFloat().coerceIn(0f, 1f),
+                    ),
+                )
+            }
+        }.sortedBy { it.startMs }
+    }
+
+    /**
+     * Resolves an editable Room section back to the canonical Guide cue key saved at import time.
+     * Start position is authoritative because users may rename a section after auto-detection.
+     */
+    fun findSectionKey(file: File, sectionStartMs: Long, sectionName: String): String? {
+        val proposals = readSectionProposals(file)
+        if (proposals.isEmpty()) return null
+        proposals.firstOrNull { it.startMs == sectionStartMs }?.let { return it.key }
+        proposals.minByOrNull { abs(it.startMs - sectionStartMs) }
+            ?.takeIf { abs(it.startMs - sectionStartMs) <= SECTION_MATCH_TOLERANCE_MS }
+            ?.let { return it.key }
+
+        val normalizedName = canonicalName(sectionName)
+        if (normalizedName.isBlank()) return null
+        return proposals.firstOrNull {
+            canonicalName(it.name) == normalizedName || canonicalName(it.key) == normalizedName
+        }?.key
+    }
+
     fun writeOutputLanguage(file: File, language: String) {
         if (!file.isFile || language.isBlank()) return
         runCatching {
@@ -77,6 +128,14 @@ object NativeGuideEventStore {
         return runCatching { JSONObject(file.readText()) }.getOrNull()
     }
 
+    private fun canonicalName(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "")
+        .lowercase(Locale.ROOT)
+        .replace(Regex("[^a-z0-9]+"), "_")
+        .trim('_')
+
     private fun JSONObject.optNullableString(key: String): String? =
         optString(key).trim().takeIf { it.isNotBlank() && it != "null" }
+
+    private const val SECTION_MATCH_TOLERANCE_MS = 2_000L
 }
