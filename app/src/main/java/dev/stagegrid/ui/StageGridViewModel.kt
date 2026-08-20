@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import dev.stagegrid.StageGridApplication
 import dev.stagegrid.audio.AudioDeviceManager
 import dev.stagegrid.audio.ClickSubdivision
+import dev.stagegrid.audio.EngineState
 import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.audio.PlayerState
 import dev.stagegrid.backup.BackupProgress
@@ -26,6 +27,8 @@ import dev.stagegrid.model.SetlistBundle
 import dev.stagegrid.model.SetlistEntity
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.model.StereoRoute
+import dev.stagegrid.model.TrackType
+import dev.stagegrid.session.PerformanceSessionStore
 import dev.stagegrid.settings.AppSettingsRepository
 import java.io.BufferedInputStream
 import java.io.File
@@ -72,13 +75,22 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     data class NativeGuideUiState(
         val songId: String? = null,
         val available: Boolean = false,
+        val canReanalyze: Boolean = false,
         val currentLanguage: String? = null,
         val detectedLanguage: String? = null,
         val languages: List<String> = emptyList(),
         val eventCount: Int = 0,
         val rendering: Boolean = false,
         val renderPercent: Int = 0,
+        val reanalyzing: Boolean = false,
+        val reanalyzePercent: Int = 0,
         val error: String? = null,
+    )
+
+    data class SessionRecoveryUiState(
+        val recovered: Boolean = false,
+        val songTitle: String? = null,
+        val setlistName: String? = null,
     )
 
     enum class BackupOperation { CREATE, RESTORE }
@@ -116,22 +128,18 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _importState = MutableStateFlow(ImportUiState())
     val importState: StateFlow<ImportUiState> = _importState.asStateFlow()
-
     private val _guidePackState = MutableStateFlow(GuidePackUiState(status = app.guidePacks.status()))
     val guidePackState: StateFlow<GuidePackUiState> = _guidePackState.asStateFlow()
-
     private val _nativeGuideState = MutableStateFlow(NativeGuideUiState())
     val nativeGuideState: StateFlow<NativeGuideUiState> = _nativeGuideState.asStateFlow()
-
+    private val _sessionRecoveryState = MutableStateFlow(SessionRecoveryUiState())
+    val sessionRecoveryState: StateFlow<SessionRecoveryUiState> = _sessionRecoveryState.asStateFlow()
     private val _backupState = MutableStateFlow(BackupUiState())
     val backupState: StateFlow<BackupUiState> = _backupState.asStateFlow()
-
     private val _libraryActionState = MutableStateFlow(LibraryActionUiState())
     val libraryActionState: StateFlow<LibraryActionUiState> = _libraryActionState.asStateFlow()
-
     private val _selectedSetlist = MutableStateFlow<SetlistBundle?>(null)
     val selectedSetlist: StateFlow<SetlistBundle?> = _selectedSetlist.asStateFlow()
-
     private val _setlistLiveState = MutableStateFlow(SetlistLiveUiState())
     val setlistLiveState: StateFlow<SetlistLiveUiState> = _setlistLiveState.asStateFlow()
     private val setlistPreloadSerial = AtomicLong(0L)
@@ -142,6 +150,16 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
                 app.audio.setClickSubdivision(preferences.clickSubdivision)
                 app.audio.setClickRoute(preferences.clickRoute)
                 app.audio.setCountInBars(preferences.countInBars)
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { GuideCueAnalyzer.prepare(app.guidePacks.listSamples()) }
+        }
+        viewModelScope.launch {
+            restorePreviousSession()
+            while (true) {
+                delay(SESSION_SNAPSHOT_INTERVAL_MS)
+                persistCurrentSession()
             }
         }
     }
@@ -156,19 +174,10 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val result = withContext(Dispatchers.IO) {
                     block { progress ->
-                        _importState.value = _importState.value.copy(
-                            running = true,
-                            progress = progress,
-                            result = null,
-                            error = null,
-                        )
+                        _importState.value = _importState.value.copy(running = true, progress = progress, result = null, error = null)
                     }
                 }
-                _importState.value = ImportUiState(
-                    running = false,
-                    progress = ImportProgress(100, ImportStage.COMPLETE),
-                    result = result,
-                )
+                _importState.value = ImportUiState(running = false, progress = ImportProgress(100, ImportStage.COMPLETE), result = result)
             } catch (t: Throwable) {
                 _importState.value = ImportUiState(error = t.message ?: "Import failed")
             }
@@ -182,24 +191,12 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val result = withContext(Dispatchers.IO) {
                     app.backupManager.createBackup(destinationTree) { progress ->
-                        _backupState.value = _backupState.value.copy(
-                            running = true,
-                            operation = BackupOperation.CREATE,
-                            progress = progress,
-                            error = null,
-                        )
+                        _backupState.value = _backupState.value.copy(running = true, operation = BackupOperation.CREATE, progress = progress, error = null)
                     }
                 }
-                _backupState.value = BackupUiState(
-                    operation = BackupOperation.CREATE,
-                    progress = BackupProgress(100, BackupStage.COMPLETE),
-                    backupResult = result,
-                )
+                _backupState.value = BackupUiState(operation = BackupOperation.CREATE, progress = BackupProgress(100, BackupStage.COMPLETE), backupResult = result)
             } catch (t: Throwable) {
-                _backupState.value = BackupUiState(
-                    operation = BackupOperation.CREATE,
-                    error = t.message ?: "Backup failed",
-                )
+                _backupState.value = BackupUiState(operation = BackupOperation.CREATE, error = t.message ?: "Backup failed")
             }
         }
     }
@@ -211,52 +208,37 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
             exitSetlistLive()
             _backupState.value = BackupUiState(running = true, operation = BackupOperation.RESTORE)
             try {
-                // Stop decoder threads before restored WAV files replace their app-private paths.
                 withContext(Dispatchers.Default) { app.audio.unloadForLibraryRestore() }
                 val result = withContext(Dispatchers.IO) {
                     app.backupManager.restoreBackup(backupUri) { progress ->
-                        _backupState.value = _backupState.value.copy(
-                            running = true,
-                            operation = BackupOperation.RESTORE,
-                            progress = progress,
-                            error = null,
-                        )
+                        _backupState.value = _backupState.value.copy(running = true, operation = BackupOperation.RESTORE, progress = progress, error = null)
                     }
                 }
                 app.guidePacks.invalidateCache()
-                withContext(Dispatchers.IO) {
-                    runCatching { GuideCueAnalyzer.prepare(app.guidePacks.listSamples()) }
-                }
+                withContext(Dispatchers.IO) { runCatching { GuideCueAnalyzer.prepare(app.guidePacks.listSamples()) } }
                 _guidePackState.value = GuidePackUiState(status = app.guidePacks.status())
                 _selectedSetlist.value = null
                 if (previouslyLoadedSongId != null && withContext(Dispatchers.IO) { app.repository.getSong(previouslyLoadedSongId) } != null) {
                     refreshNativeGuideState(previouslyLoadedSongId)
                     app.audio.loadSong(previouslyLoadedSongId)
                 } else {
+                    withContext(Dispatchers.IO) { app.sessionStore.clear() }
                     _nativeGuideState.value = NativeGuideUiState()
                 }
-                _backupState.value = BackupUiState(
-                    operation = BackupOperation.RESTORE,
-                    progress = BackupProgress(100, BackupStage.COMPLETE),
-                    restoreResult = result,
-                )
+                _backupState.value = BackupUiState(operation = BackupOperation.RESTORE, progress = BackupProgress(100, BackupStage.COMPLETE), restoreResult = result)
             } catch (t: Throwable) {
-                // If validation fails before install, the library remains untouched. If a later
-                // restore stage fails, LibraryBackupManager rolls back replaced song directories.
                 if (previouslyLoadedSongId != null && withContext(Dispatchers.IO) { app.repository.getSong(previouslyLoadedSongId) } != null) {
                     app.audio.loadSong(previouslyLoadedSongId)
                 }
-                _backupState.value = BackupUiState(
-                    operation = BackupOperation.RESTORE,
-                    error = t.message ?: "Restore failed",
-                )
+                _backupState.value = BackupUiState(operation = BackupOperation.RESTORE, error = t.message ?: "Restore failed")
             }
         }
     }
 
     private fun backupOperationAllowed(): Boolean {
         val p = player.value
-        val busy = p.isPlaying || p.isCountingIn || importState.value.running || nativeGuideState.value.rendering || backupState.value.running
+        val nativeBusy = nativeGuideState.value.rendering || nativeGuideState.value.reanalyzing
+        val busy = p.isPlaying || p.isCountingIn || importState.value.running || nativeBusy || backupState.value.running
         if (!busy) return true
         _backupState.value = BackupUiState(error = "Stop playback and wait for current processing to finish before backup or restore.")
         return false
@@ -272,19 +254,13 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val result = withContext(Dispatchers.IO) {
                     val installed = app.guidePacks.installZip(uri)
-                    // Pay the one-time template preparation cost when the pack is installed rather
-                    // than rebuilding hundreds of cue fingerprints during each song import.
                     GuideCueAnalyzer.prepare(app.guidePacks.listSamples())
                     installed
                 }
                 _guidePackState.value = GuidePackUiState(status = result.status)
                 player.value.song?.id?.let { refreshNativeGuideState(it) }
             } catch (t: Throwable) {
-                _guidePackState.value = _guidePackState.value.copy(
-                    installing = false,
-                    status = app.guidePacks.status(),
-                    error = t.message ?: "Guide pack installation failed",
-                )
+                _guidePackState.value = _guidePackState.value.copy(installing = false, status = app.guidePacks.status(), error = t.message ?: "Guide pack installation failed")
             }
         }
     }
@@ -300,16 +276,14 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         loadSongInternal(songId, unloadCurrent = false)
     }
 
-    private fun loadSongInternal(songId: String, unloadCurrent: Boolean) {
+    private fun loadSongInternal(songId: String, unloadCurrent: Boolean, initialPositionMs: Long = 0L) {
         viewModelScope.launch {
             if (unloadCurrent && player.value.song?.id != null && player.value.song?.id != songId) {
                 withContext(Dispatchers.Default) { app.audio.unloadForLibraryRestore() }
             }
-            withContext(Dispatchers.IO) {
-                app.repository.getSong(songId)?.let { recoverNativeGuideSections(it) }
-            }
+            withContext(Dispatchers.IO) { app.repository.getSong(songId)?.let { recoverNativeGuideSections(it) } }
             refreshNativeGuideState(songId)
-            app.audio.loadSong(songId)
+            app.audio.loadSong(songId, initialPositionMs)
         }
     }
 
@@ -324,42 +298,70 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     fun setMaster(value: Float) = app.audio.setMasterVolume(value)
     fun setClick(enabled: Boolean) = app.audio.setClickEnabled(enabled)
     fun setGuide(enabled: Boolean) = app.audio.setGuideEnabled(enabled)
+
     fun setClickSubdivision(subdivision: ClickSubdivision) {
         app.audio.setClickSubdivision(subdivision)
         viewModelScope.launch { app.settings.setClickSubdivision(subdivision) }
     }
+
     fun setClickRoute(route: StereoRoute) {
         app.audio.setClickRoute(route)
         viewModelScope.launch { app.settings.setClickRoute(route) }
     }
+
     fun setCountInBars(bars: Int) {
         val normalized = bars.coerceIn(0, 2)
         app.audio.setCountInBars(normalized)
         viewModelScope.launch { app.settings.setCountInBars(normalized) }
     }
-    fun setNativeGuideLanguage(language: String) = viewModelScope.launch {
-        app.settings.setNativeGuideLanguage(language)
-    }
 
-    /** Regenerates only the current song's native Guide from already-recognized events. */
+    fun setNativeGuideLanguage(language: String) = viewModelScope.launch { app.settings.setNativeGuideLanguage(language) }
+
     fun setSongNativeGuideLanguage(language: String) {
         val song = player.value.song ?: return
-        if (player.value.isPlaying || player.value.isCountingIn || _nativeGuideState.value.rendering) return
-        if (language !in _nativeGuideState.value.languages) return
-        if (language == _nativeGuideState.value.currentLanguage) return
+        val guideState = _nativeGuideState.value
+        if (player.value.isPlaying || player.value.isCountingIn || guideState.rendering || guideState.reanalyzing) return
+        if (language !in guideState.languages || language == guideState.currentLanguage) return
 
         viewModelScope.launch {
-            _nativeGuideState.value = _nativeGuideState.value.copy(
-                rendering = true,
-                renderPercent = 0,
-                error = null,
-            )
-            val error = withContext(Dispatchers.IO) {
-                rerenderNativeGuide(song, language)
-            }
-            if (error == null) app.audio.loadSong(song.id)
+            _nativeGuideState.value = guideState.copy(rendering = true, renderPercent = 0, error = null)
+            val position = player.value.positionMs
+            val error = withContext(Dispatchers.IO) { rerenderNativeGuide(song, language) }
+            if (error == null) app.audio.loadSong(song.id, position)
             val refreshed = withContext(Dispatchers.IO) { buildNativeGuideState(song.id) }
             _nativeGuideState.value = refreshed.copy(error = error)
+        }
+    }
+
+    fun reanalyzeCurrentNativeGuide() {
+        val song = player.value.song ?: return
+        val guideState = _nativeGuideState.value
+        if (player.value.isPlaying || player.value.isCountingIn || guideState.rendering || guideState.reanalyzing) return
+        if (!guideState.canReanalyze) return
+        val position = player.value.positionMs
+        viewModelScope.launch {
+            _nativeGuideState.value = guideState.copy(reanalyzing = true, reanalyzePercent = 0, error = null)
+            val error = try {
+                withContext(Dispatchers.IO) {
+                    app.nativeGuideReanalyzer.reanalyze(
+                        songId = song.id,
+                        preferredLanguage = settings.value.nativeGuideLanguage,
+                        onProgress = { percent ->
+                            _nativeGuideState.value = _nativeGuideState.value.copy(
+                                reanalyzing = true,
+                                reanalyzePercent = percent.coerceIn(0, 100),
+                                error = null,
+                            )
+                        },
+                    )
+                }
+                null
+            } catch (t: Throwable) {
+                t.message ?: "Native Guide reanalysis failed."
+            }
+            val refreshed = withContext(Dispatchers.IO) { buildNativeGuideState(song.id) }
+            _nativeGuideState.value = refreshed.copy(error = error)
+            if (error == null) app.audio.loadSong(song.id, position)
         }
     }
 
@@ -388,21 +390,18 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun deleteSong(song: SongEntity) {
-        val busy = player.value.isPlaying || player.value.isCountingIn ||
-            importState.value.running || backupState.value.running || nativeGuideState.value.rendering ||
-            _libraryActionState.value.deletingSongId != null
+        val guideBusy = nativeGuideState.value.rendering || nativeGuideState.value.reanalyzing
+        val busy = player.value.isPlaying || player.value.isCountingIn || importState.value.running ||
+            backupState.value.running || guideBusy || _libraryActionState.value.deletingSongId != null
         if (busy) {
-            _libraryActionState.value = LibraryActionUiState(
-                error = "Stop playback and wait for current processing to finish before deleting a multitrack.",
-            )
+            _libraryActionState.value = LibraryActionUiState(error = "Stop playback and wait for current processing to finish before deleting a multitrack.")
             return
         }
 
         viewModelScope.launch {
             _libraryActionState.value = LibraryActionUiState(deletingSongId = song.id)
             val wasLoaded = player.value.song?.id == song.id
-            val liveContainedSong = _setlistLiveState.value.active &&
-                _selectedSetlist.value?.songs?.any { it.id == song.id } == true
+            val liveContainedSong = _setlistLiveState.value.active && _selectedSetlist.value?.songs?.any { it.id == song.id } == true
             if (liveContainedSong) exitSetlistLive()
             if (wasLoaded) {
                 withContext(Dispatchers.Default) { app.audio.unloadForLibraryRestore() }
@@ -411,10 +410,9 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
             val error = withContext(Dispatchers.IO) { deleteSongFromStorageAndDatabase(song) }
             if (error == null) {
+                if (wasLoaded) withContext(Dispatchers.IO) { app.sessionStore.clear() }
                 val selectedId = _selectedSetlist.value?.setlist?.id
-                if (selectedId != null) {
-                    _selectedSetlist.value = withContext(Dispatchers.IO) { app.repository.getSetlistBundle(selectedId) }
-                }
+                if (selectedId != null) _selectedSetlist.value = withContext(Dispatchers.IO) { app.repository.getSetlistBundle(selectedId) }
                 _libraryActionState.value = LibraryActionUiState()
             } else {
                 _libraryActionState.value = LibraryActionUiState(error = error)
@@ -423,9 +421,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun dismissLibraryActionState() {
-        if (_libraryActionState.value.deletingSongId == null) {
-            _libraryActionState.value = LibraryActionUiState()
-        }
+        if (_libraryActionState.value.deletingSongId == null) _libraryActionState.value = LibraryActionUiState()
     }
 
     private suspend fun deleteSongFromStorageAndDatabase(song: SongEntity): String? {
@@ -433,7 +429,6 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         val trashRoot = File(app.cacheDir, "song-delete-staging").apply { mkdirs() }
         val staged = File(trashRoot, "${song.id}-${System.nanoTime()}")
         var filesStaged = false
-
         try {
             if (songRoot.exists()) {
                 staged.deleteRecursively()
@@ -447,14 +442,12 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
                 filesStaged = staged.exists()
                 if (!filesStaged) return "StageGrid could not safely stage the local song files for deletion."
             }
-
             try {
                 app.repository.deleteSong(song)
             } catch (t: Throwable) {
                 if (filesStaged) restoreStagedSong(staged, songRoot)
                 return t.message ?: "The song could not be removed from the library."
             }
-
             staged.deleteRecursively()
             return null
         } catch (t: Throwable) {
@@ -518,18 +511,25 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     private suspend fun buildNativeGuideState(songId: String): NativeGuideUiState {
         val bundle = app.repository.getSongBundle(songId) ?: return NativeGuideUiState(songId = songId)
+        val status = app.guidePacks.status()
+        val referenceAvailable = bundle.tracks.any {
+            TrackType.fromStorage(it.type) == TrackType.GUIDE &&
+                it.name != NativeGuideRenderer.TRACK_NAME && File(it.filePath).isFile
+        }
+        val canReanalyze = referenceAvailable && status.installed
         val nativeTrack = bundle.tracks.firstOrNull { it.name == NativeGuideRenderer.TRACK_NAME }
-            ?: return NativeGuideUiState(songId = songId)
-        if (!File(nativeTrack.filePath).isFile) return NativeGuideUiState(songId = songId)
         val eventFile = nativeGuideEventFile(songId)
         val analysis = NativeGuideEventStore.readAnalysis(eventFile)
-            ?: return NativeGuideUiState(songId = songId)
+        if (nativeTrack == null || !File(nativeTrack.filePath).isFile || analysis == null) {
+            return NativeGuideUiState(songId = songId, canReanalyze = canReanalyze, languages = status.languages)
+        }
         return NativeGuideUiState(
             songId = songId,
             available = true,
+            canReanalyze = canReanalyze,
             currentLanguage = NativeGuideEventStore.readOutputLanguage(eventFile),
             detectedLanguage = analysis.dominantLanguage,
-            languages = app.guidePacks.status().languages,
+            languages = status.languages,
             eventCount = analysis.cues.size,
         )
     }
@@ -554,10 +554,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
                 samples = samples,
                 outputLanguage = language,
                 onProgress = { progress ->
-                    _nativeGuideState.value = _nativeGuideState.value.copy(
-                        rendering = true,
-                        renderPercent = (progress * 100f).roundToInt().coerceIn(0, 100),
-                    )
+                    _nativeGuideState.value = _nativeGuideState.value.copy(rendering = true, renderPercent = (progress * 100f).roundToInt().coerceIn(0, 100))
                 },
             )
         } catch (t: Throwable) {
@@ -572,18 +569,10 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
             temp.delete()
             return "StageGrid could not replace the current native Guide safely."
         }
-
         val metadata = runCatching { WavMetadataReader.read(target) }.getOrElse {
             return "The regenerated Guide could not be validated: ${it.message ?: "unknown error"}."
         }
-        app.repository.updateTrack(
-            nativeTrack.copy(
-                channels = metadata.channels,
-                sampleRate = metadata.sampleRate,
-                bitDepth = metadata.bitDepth,
-                durationMs = metadata.durationMs,
-            ),
-        )
+        app.repository.updateTrack(nativeTrack.copy(channels = metadata.channels, sampleRate = metadata.sampleRate, bitDepth = metadata.bitDepth, durationMs = metadata.durationMs))
         NativeGuideEventStore.writeOutputLanguage(eventFile, rendered.outputLanguage)
         return null
     }
@@ -614,11 +603,6 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    /**
-     * Reuses cues already saved by alpha04 once a valid BPM/grid becomes available. The audio is
-     * never re-analyzed here. Existing user-authored section maps are protected by the repository's
-     * placeholder-only replacement guard.
-     */
     private suspend fun recoverNativeGuideSections(song: SongEntity): Boolean {
         if (song.bpm == null || song.durationMs <= 0L) return false
         val eventFile = nativeGuideEventFile(song.id)
@@ -647,8 +631,7 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         return replaced
     }
 
-    private fun nativeGuideEventFile(songId: String): File =
-        File(app.filesDir, "library/$songId/native-guide-events.json")
+    private fun nativeGuideEventFile(songId: String): File = File(app.filesDir, "library/$songId/native-guide-events.json")
 
     fun createSetlist(name: String) {
         if (name.isBlank()) return
@@ -745,7 +728,6 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         }
         _setlistLiveState.value = _setlistLiveState.value.copy(preloadingNext = true, nextReady = false)
         viewModelScope.launch {
-            // Give the native engine the I/O priority to finish opening the current song first.
             delay(SETLIST_PRELOAD_DELAY_MS)
             val ready = withContext(Dispatchers.IO) { warmNextSong(next.id) }
             if (serial != setlistPreloadSerial.get()) return@launch
@@ -759,10 +741,6 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    /**
-     * Warms the beginning of every normalized WAV into the OS file cache. This is intentionally a
-     * bounded preload: alpha07 does not keep a second native decoder graph alive or auto-play audio.
-     */
     private suspend fun warmNextSong(songId: String): Boolean {
         val bundle = app.repository.getSongBundle(songId) ?: return false
         if (bundle.tracks.isEmpty()) return false
@@ -786,18 +764,80 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         return true
     }
 
+    private suspend fun restorePreviousSession() {
+        val snapshot = withContext(Dispatchers.IO) { app.sessionStore.read() } ?: return
+        val song = withContext(Dispatchers.IO) { app.repository.getSong(snapshot.songId) }
+        if (song == null) {
+            withContext(Dispatchers.IO) { app.sessionStore.clear() }
+            return
+        }
+
+        app.audio.setClickEnabled(snapshot.clickEnabled)
+        app.audio.setGuideEnabled(snapshot.guideEnabled)
+        app.audio.setClickSubdivision(snapshot.clickSubdivision)
+        app.audio.setClickRoute(snapshot.clickRoute)
+        app.audio.setCountInBars(snapshot.countInBars)
+        app.audio.setMasterVolume(snapshot.masterVolume)
+
+        var recoveredSetlistName: String? = null
+        if (snapshot.setlistActive && snapshot.setlistId != null) {
+            val bundle = withContext(Dispatchers.IO) { app.repository.getSetlistBundle(snapshot.setlistId) }
+            if (bundle != null) {
+                _selectedSetlist.value = bundle
+                val currentIndex = bundle.songs.indexOfFirst { it.id == song.id }
+                if (currentIndex >= 0) {
+                    _setlistLiveState.value = buildSetlistLiveState(bundle, currentIndex)
+                    recoveredSetlistName = bundle.setlist.name
+                    scheduleNextSongPreload(bundle, currentIndex)
+                }
+            }
+        }
+
+        withContext(Dispatchers.IO) { recoverNativeGuideSections(song) }
+        refreshNativeGuideState(song.id)
+        app.audio.loadSong(song.id, snapshot.positionMs)
+        _sessionRecoveryState.value = SessionRecoveryUiState(
+            recovered = true,
+            songTitle = song.title,
+            setlistName = recoveredSetlistName,
+        )
+    }
+
+    private suspend fun persistCurrentSession() {
+        val p = player.value
+        val song = p.song ?: return
+        if (p.engineState == EngineState.LOADING || p.engineState == EngineState.ERROR) return
+        val live = _setlistLiveState.value
+        val snapshot = PerformanceSessionStore.Snapshot(
+            songId = song.id,
+            positionMs = p.positionMs.coerceIn(0L, p.durationMs.coerceAtLeast(0L)),
+            clickEnabled = p.clickEnabled,
+            guideEnabled = p.guideEnabled,
+            clickSubdivision = p.clickSubdivision,
+            clickRoute = p.clickRoute,
+            countInBars = p.countInBars,
+            masterVolume = p.masterVolume,
+            setlistActive = live.active,
+            setlistId = live.setlistId,
+            setlistIndex = live.currentIndex,
+        )
+        withContext(Dispatchers.IO) { app.sessionStore.write(snapshot) }
+    }
+
+    fun dismissSessionRecovery() {
+        _sessionRecoveryState.value = SessionRecoveryUiState()
+    }
+
     fun setLiveMode(enabled: Boolean) = viewModelScope.launch { app.settings.setLiveMode(enabled) }
     fun setPerformanceLock(enabled: Boolean) = viewModelScope.launch { app.settings.setPerformanceLock(enabled) }
 
-    private data class MetadataSaveResult(
-        val song: SongEntity,
-        val generatedSections: Boolean,
-    )
+    private data class MetadataSaveResult(val song: SongEntity, val generatedSections: Boolean)
 
     companion object {
         private val AUTO_SECTION_COLORS = longArrayOf(
             0xFF5B8CFF, 0xFF2FBF9F, 0xFF9C6CFF, 0xFFF39C55, 0xFFE85D75, 0xFF4FB6E9,
         )
+        private const val SESSION_SNAPSHOT_INTERVAL_MS = 1_000L
         private const val SETLIST_PRELOAD_DELAY_MS = 450L
         private const val SETLIST_PRELOAD_BYTES_PER_TRACK = 512 * 1024
         private const val SETLIST_PRELOAD_BUFFER_BYTES = 64 * 1024
