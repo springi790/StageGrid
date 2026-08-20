@@ -63,6 +63,17 @@ extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nat
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetLoop(JNIEnv *, jobject, jlong h, jboolean e, jlong s, jlong end) { engine(h)->setLoop(e, s, end); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeScheduleJump(JNIEnv *, jobject, jlong h, jlong at, jlong target, jboolean disableLoop) { engine(h)->scheduleJump(at, target, disableLoop); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeClearScheduledJump(JNIEnv *, jobject, jlong h) { engine(h)->clearScheduledJump(); }
+extern "C" JNIEXPORT jboolean JNICALL
+Java_dev_stagegrid_audio_NativeAudioEngine_nativeScheduleGuideCue(JNIEnv *env, jobject, jlong h, jfloatArray samples, jlong atMs, jlong suppressUntilMs, jint route, jfloat volume) {
+    if (!samples) return JNI_FALSE;
+    const jsize count = env->GetArrayLength(samples);
+    if (count <= 0) return JNI_FALSE;
+    std::vector<float> mono(static_cast<size_t>(count));
+    env->GetFloatArrayRegion(samples, 0, count, mono.data());
+    if (env->ExceptionCheck()) return JNI_FALSE;
+    return engine(h)->scheduleGuideCue(mono, atMs, suppressUntilMs, route, volume) ? JNI_TRUE : JNI_FALSE;
+}
+extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeClearGuideCue(JNIEnv *, jobject, jlong h) { engine(h)->clearGuideCue(); }
 extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativePrepareCountIn(JNIEnv *, jobject, jlong h, jlong targetMs, jint bars) { return engine(h)->prepareCountIn(targetMs, bars) ? JNI_TRUE : JNI_FALSE; }
 extern "C" JNIEXPORT jlong JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeCountInRemainingMs(JNIEnv *, jobject, jlong h) { return engine(h)->countInRemainingMs(); }
 extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetOutputDevice(JNIEnv *, jobject, jlong h, jint id) { return engine(h)->setOutputDevice(id) ? JNI_TRUE : JNI_FALSE; }
