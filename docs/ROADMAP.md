@@ -12,174 +12,80 @@ Delivered: local library/import, WAV playback, one-time MP3→PCM normalization,
 
 ## 0.2 — section/workflow hardening + usability
 
-### 0.2.0-alpha01 — Musical Grid
+The 0.2 development line delivered the Musical Grid, simplified live UX, native count-in, Native Guide recognition/reconstruction, automatic editable sections, double-buffered section paths, `.stagebackup`, Setlist Live, safe session recovery, Guide reanalysis/cache, arrangement-aware destination Guide phrases and recognition hardening through `0.2.0-alpha10.2`.
 
-- BPM/time-signature/grid-offset model;
-- milliseconds ↔ bar/beat conversion and snapping;
-- visual/manual Section Editor.
+The previous beta qualification plan remains relevant even though active feature development has moved to 0.3. A 0.3 development build must not be interpreted as retroactively marking 0.2 hardware qualification complete.
 
-### 0.2.0-alpha02 — simplified live UX
-
-- musician-friendly Player/Mixer terminology;
-- visible Edit Sections action;
-- routing presets;
-- advanced technical options progressively disclosed.
-
-### 0.2.0-alpha03 — native count-in
-
-- shared-clock 1/2-bar count-in;
-- synchronized stem entry;
-- persisted count-in preference.
-
-### 0.2.0-alpha04 / alpha04.1 / alpha04.2 — Native Guide foundation
-
-Delivered:
-
-- user-installed local Guide sample packs;
-- ES/EN/FR/PT layouts when present;
-- offline sample/fingerprint recognition;
-- SECTION/COUNT/DYNAMIC structured events in `native-guide-events.json`;
-- generated `StageGrid Native Guide.wav`;
-- automatic editable section proposals;
-- delayed section recovery when BPM is entered later;
-- per-song Guide language switching without stem reimport;
-- import percentage/stage reporting and first recognition-performance optimizations.
-
-### 0.2.0-alpha05 / alpha05.1 — double-buffered section paths
-
-Delivered:
-
-- two decoder banks per track;
-- background Loop/section-jump preparation;
-- synchronized all-track realtime handoff;
-- stale/late path rejection and diagnostics;
-- manual destination choices wait for the current authored section `endMs` and enter at destination `startMs`.
-
-### 0.2.0-alpha06 — portability + first arrangement-aware Guide cue
-
-Delivered:
-
-- self-contained `.stagebackup` through Android SAF;
-- local/removable/Drive-provider destinations;
-- portable song/setlist/Guide state with byte-size + SHA-256 validation;
-- staged restore and path reconstruction;
-- first arrangement-aware replacement of the selected destination section-name cue.
-
-### 0.2.0-alpha07 — library lifecycle + Setlist Live
-
-Delivered:
-
-- safe local multitrack deletion with confirmation and staged file rollback;
-- Setlist Live current/next context and Previous/Next navigation;
-- destination songs load stopped;
-- bounded next-song filesystem-cache warming;
-- no hidden gapless/crossfade claim.
-
-### 0.2.0-alpha08 — safe performance-session recovery
-
-Delivered as part of the alpha10 integration sprint:
-
-- versioned app-private performance-session snapshots;
-- temp/write/fsync/replace persistence;
-- loaded song and approximate position recovery;
-- Click/Guide, subdivision/route, count-in and master context recovery;
-- Setlist Live context recovery when the referenced setlist/song still exists;
-- missing/deleted references are discarded safely;
-- **recovered sessions always load stopped and never auto-play**.
-
-### 0.2.0-alpha09 — Guide reanalysis + persistent fingerprint cache
-
-Delivered as part of the alpha10 integration sprint:
-
-- persist installed Guide sample fingerprints on disk;
-- invalidate/rebuild the cache when the installed/restored pack signature changes;
-- reanalyze a song from its retained original Guide track without reimporting/reconverting stems;
-- regenerate the Native Guide with visible progress;
-- create a Native Guide track for an older import when capacity allows;
-- refresh an untouched automatic section map;
-- preserve manually renamed/resized/reordered/recolored sections.
-
-### 0.2.0-alpha10 — richer arrangement-aware Guide phrase
-
-Delivered:
-
-- inspect the destination section's originally recognized lead bar;
-- relocate matching SECTION, COUNT and DYNAMIC calls for a manual live section choice;
-- prefer the song's selected output language and fall back to the detected language where necessary;
-- load/resample cue samples outside the realtime thread;
-- compose one immutable short PCM phrase before publishing it to the native callback;
-- suppress the fixed rendered Guide through the replacement phrase window;
-- skip a cue that cannot fit completely before a late transition instead of cutting speech.
-
-Alpha10 remains an event-aware linear-section layer. The **full arbitrary arrangement graph** is deliberately reserved for 0.5.
-
-### 0.2.0-alpha10.1 — recognition hardening before beta
-
-Delivered from physical-device feedback:
-
-- phase-robust Guide fingerprint envelope that accumulates per-channel energy before averaging;
-- persistent fingerprint-cache format v2 so previous downmix-derived fingerprints are rebuilt automatically;
-- dual strong/relaxed Guide activity thresholds so a loud cue does not hide quieter calls;
-- local-onset candidate recovery for compressed Guides that do not return fully to silence between calls;
-- wider template timing search tolerance;
-- conservative language-aware second matching pass after the source language can be inferred;
-- semantic confidence margin ignores the same canonical cue duplicated in another language;
-- Click-grid analysis prefers the beginning of a stable periodic pulse train instead of blindly accepting one isolated early transient;
-- regression tests for quiet anti-phase Guide audio and an isolated spike before a valid Click train.
-
-### 0.2.0-alpha10.2 — English Guide recognition isolation
-
-Delivered after field feedback showed Spanish recognition behaving reliably while English sources produced repeated `Vamp` / `Rap` false positives and longer analysis:
-
-- bounded source-language probe before the full recognition pass;
-- probe uses only a small evenly distributed candidate subset and SECTION templates;
-- full matching is restricted to the inferred source language when evidence is strong;
-- all-language fallback remains when language evidence is weak;
-- Spanish thresholds are preserved from alpha10.1;
-- English uses a stricter ambiguity margin for short SECTION calls;
-- alpha10.1's expensive rejected-candidate second full pass is removed;
-- regression tests cover English isolation and non-regression of Spanish recognition.
-
-COUNT recognition remains an explicit beta-polish item because very short spoken numbers are more ambiguous than SECTION phrases.
-
-This is the final planned recognition-specific alpha before beta unless representative failing Guide stems expose another release-blocking matcher defect.
-
-## 0.2 beta plan
-
-### 0.2.0-beta01 — usability / field-feedback beta
-
-Primary work after alpha10.2 feedback:
-
-- first-run onboarding for import, Click/Guide, common routing, sections, Setlist Live and backup/restore;
-- accessibility pass: large touch targets, labels/content descriptions, contrast/focus and small-screen layout checks;
-- clearer recoverable error states and progress/cancellation policy where cancellation is safe;
-- polish COUNT cue recognition and presentation without destabilizing reliable SECTION recognition;
-- polish around session recovery, Guide reanalysis and Setlist Live based on physical-device feedback;
-- no major new audio architecture unless testing exposes a blocker.
-
-### 0.2.0-beta02 — qualification / stabilization
-
-- representative physical-device 16/32+ stem stress tests;
-- repeated Loop/manual-section/dynamic-Guide tests;
-- process-death/session-recovery tests;
-- Setlist Live NEXT/PREV/warm-preload tests;
-- real local/Drive-provider backup + restore validation;
-- low-storage and forced-failure validation for import, backup, restore and deletion;
-- USB stereo reconnect/output-selection validation;
-- fix all release-blocking regressions found by beta feedback.
-
-### 0.2.0 stable gate
-
-Do not mark 0.2 stable until the core stereo live workflow, backups, section transitions, Native Guide behavior, Setlist Live and safe session recovery pass the beta qualification matrix on physical Android hardware.
+Outstanding 0.2-style qualification work still includes representative physical-device/high-track-count stress, repeated transitions, process-death/session recovery, local/Drive backup/restore, low-storage/failure paths and USB stereo reconnect validation.
 
 ## 0.3 — expanded decoder/cache layer
 
+### 0.3.0-alpha01 — Android compressed-audio import foundation — DELIVERED
+
+Implemented:
+
+- explicit import-format policy for WAV, MP3, M4A, AAC, FLAC and OGG;
+- WAV remains the direct native playback/import path;
+- MP3, M4A and AAC are normalized once during import through Android `MediaExtractor` / `MediaCodec`;
+- compressed sources are written as 16-bit PCM RIFF/WAV before the realtime Oboe engine sees them;
+- Android encoder delay/padding metadata is trimmed when exposed by the platform;
+- MP3/M4A/AAC share one `PlatformAudioToWavDecoder` implementation;
+- the old `Mp3ToWavDecoder` API remains as a compatibility facade;
+- FLAC/OGG remain discoverable but explicitly non-playable until their production path is selected;
+- import progress text is format-neutral while retaining the previous internal enum identifier for source compatibility;
+- JVM coverage protects case-insensitive format recognition and the playable/planned boundary.
+
+Release: `0.3.0-alpha01` / `versionCode 19`.
+
+### 0.3.0-alpha02 — FLAC / OGG path
+
 Planned:
 
-- AAC/M4A import-time normalization where Android platform support is suitable;
-- evaluate license-compatible FLAC/OGG paths;
-- waveform peak-cache generation outside the audio thread;
-- storage accounting and cache management/eviction.
+- evaluate Android-platform decoding versus a bundled license-compatible decoder path;
+- prefer the smallest maintainable implementation that preserves deterministic offline normalization;
+- verify common FLAC PCM depths/sample rates and common OGG/Vorbis encodes;
+- do not add codec work to the realtime callback;
+- keep clear per-file recoverable errors when a device cannot decode a source.
+
+### 0.3.0-alpha03 — waveform peak cache
+
+Planned:
+
+- generate compact waveform peak data outside the audio thread;
+- use deterministic cache identity tied to the normalized local playback file;
+- support regeneration after cache loss/corruption without touching the imported source;
+- bound memory use for long songs/high stem counts;
+- initial cache format should be versioned for future evolution.
+
+### 0.3.0-alpha04 — waveform UI
+
+Planned:
+
+- render the cached waveform in Player and/or Section Editor without decoding the full source on the UI thread;
+- synchronized playhead tied to the shared transport clock;
+- section boundaries/selection remain readable on small screens;
+- waveform display must remain optional rather than making the basic live workflow more complex.
+
+### 0.3.0-alpha05 — storage accounting / cache manager
+
+Planned:
+
+- storage totals for imported playback audio, generated Guide material, waveform caches and other regenerable data;
+- per-song storage visibility where useful;
+- safe deletion of regenerable caches without removing the actual local song;
+- cache eviction policy that never silently removes essential playback audio;
+- low-storage handling and recovery tests.
+
+### 0.3 beta / stabilization gate
+
+Before treating the expanded decoder/cache layer as stable:
+
+- verify representative MP3/M4A/AAC imports on physical Android devices/OEMs;
+- validate timing/alignment across compressed stems and platform gapless metadata behavior;
+- validate FLAC/OGG once introduced;
+- stress waveform generation with long songs and 16/32+ stems;
+- validate cache corruption/regeneration and low-storage behavior;
+- rerun the existing live transition/Guide/backup/session qualification matrix to catch regressions.
 
 ## 0.4 — multichannel USB routing
 
