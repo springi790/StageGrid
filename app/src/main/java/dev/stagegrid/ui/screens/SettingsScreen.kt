@@ -22,8 +22,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -31,8 +33,12 @@ import dev.stagegrid.R
 import dev.stagegrid.audio.AudioDeviceManager
 import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.settings.AppSettingsRepository
+import dev.stagegrid.storage.StorageCacheManager
 import dev.stagegrid.ui.StageGridViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 @Composable
@@ -58,6 +64,17 @@ fun SettingsScreen(
             diagnostics = diagnosticsProvider()
             delay(1_000)
         }
+    }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val storageManager = remember(context.filesDir) { StorageCacheManager(context.filesDir) }
+    var storageSnapshot by remember { mutableStateOf<StorageCacheManager.Snapshot?>(null) }
+    var storageBusy by remember { mutableStateOf(false) }
+    var reclaimedBytes by remember { mutableStateOf<Long?>(null) }
+
+    LaunchedEffect(context.filesDir) {
+        storageSnapshot = withContext(Dispatchers.IO) { storageManager.snapshot() }
     }
 
     LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -163,6 +180,46 @@ fun SettingsScreen(
             }
         }
         item {
+            Text(stringResource(R.string.storage_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(stringResource(R.string.storage_description), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val snapshot = storageSnapshot
+                    if (snapshot == null) {
+                        Text(stringResource(R.string.storage_calculating))
+                    } else {
+                        Text(stringResource(R.string.storage_total, formatStorageBytes(snapshot.totalBytes)), fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.storage_songs, snapshot.songCount))
+                        Text(stringResource(R.string.storage_library, formatStorageBytes(snapshot.libraryBytes)))
+                        Text(stringResource(R.string.storage_audio, formatStorageBytes(snapshot.playbackAudioBytes)))
+                        Text(stringResource(R.string.storage_cache, formatStorageBytes(snapshot.regenerableCacheBytes)))
+                        Text(stringResource(R.string.storage_guide, formatStorageBytes(snapshot.guideBytes)))
+                        reclaimedBytes?.let { Text(stringResource(R.string.storage_reclaimed, formatStorageBytes(it)), color = MaterialTheme.colorScheme.primary) }
+                        OutlinedButton(
+                            onClick = {
+                                storageBusy = true
+                                reclaimedBytes = null
+                                scope.launch {
+                                    val reclaimed = withContext(Dispatchers.IO) { storageManager.clearRegenerableCaches() }
+                                    val refreshed = withContext(Dispatchers.IO) { storageManager.snapshot() }
+                                    reclaimedBytes = reclaimed
+                                    storageSnapshot = refreshed
+                                    storageBusy = false
+                                }
+                            },
+                            enabled = !storageBusy && snapshot.regenerableCacheBytes > 0L,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (storageBusy) stringResource(R.string.storage_clearing)
+                                else stringResource(R.string.storage_clear_cache),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item {
             Text(stringResource(R.string.audio_outputs), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Text(stringResource(R.string.bluetooth_latency_warning), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -236,4 +293,17 @@ private fun SettingSwitch(
             Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }
+}
+
+private fun formatStorageBytes(bytes: Long): String {
+    val value = bytes.coerceAtLeast(0L).toDouble()
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    var scaled = value
+    var unit = 0
+    while (scaled >= 1024.0 && unit < units.lastIndex) {
+        scaled /= 1024.0
+        unit++
+    }
+    return if (unit == 0) "${scaled.toLong()} ${units[unit]}"
+    else String.format(Locale.ROOT, "%.1f %s", scaled, units[unit])
 }
