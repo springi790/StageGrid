@@ -8,6 +8,7 @@ object ArrangementGuideSequencePlanner {
     data class SourceCue(
         val key: String,
         val kind: CueKind,
+        val language: String?,
         val offsetMs: Long,
         val confidence: Float,
     )
@@ -29,6 +30,7 @@ object ArrangementGuideSequencePlanner {
                 SourceCue(
                     key = cue.key,
                     kind = cue.kind,
+                    language = cue.language,
                     offsetMs = (cue.cueMs - sourceStart).coerceAtLeast(0L),
                     confidence = cue.confidence,
                 )
@@ -39,7 +41,7 @@ object ArrangementGuideSequencePlanner {
 
         val hasTargetSection = selected.any { it.kind == CueKind.SECTION && it.key == targetSectionKey }
         if (!hasTargetSection && targetSectionKey.isNotBlank()) {
-            selected += SourceCue(targetSectionKey, CueKind.SECTION, 0L, 1f)
+            selected += SourceCue(targetSectionKey, CueKind.SECTION, analysis.dominantLanguage, 0L, 1f)
         }
         return selected
             .distinctBy { Triple(it.kind, it.key, it.offsetMs / 120L) }
