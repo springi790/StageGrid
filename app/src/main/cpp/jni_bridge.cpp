@@ -54,31 +54,38 @@ extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nat
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetTrackSolo(JNIEnv *, jobject, jlong h, jint i, jboolean v) { engine(h)->setTrackSolo(i, v); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetTrackPan(JNIEnv *, jobject, jlong h, jint i, jfloat v) { engine(h)->setTrackPan(i, v); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetTrackOutputRoute(JNIEnv *, jobject, jlong h, jint i, jint route) { engine(h)->setTrackOutputRoute(i, route); }
+extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetTrackOutputBus(JNIEnv *, jobject, jlong h, jint i, jint bus) { engine(h)->setTrackOutputBus(i, bus); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetMasterVolume(JNIEnv *, jobject, jlong h, jfloat v) { engine(h)->setMasterVolume(v); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetClickEnabled(JNIEnv *, jobject, jlong h, jboolean v) { engine(h)->setClickEnabled(v); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetGuideEnabled(JNIEnv *, jobject, jlong h, jboolean v) { engine(h)->setGuideEnabled(v); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetClickVolume(JNIEnv *, jobject, jlong h, jfloat v) { engine(h)->setClickVolume(v); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetClickSubdivision(JNIEnv *, jobject, jlong h, jint v) { engine(h)->setClickSubdivision(v); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetClickRoute(JNIEnv *, jobject, jlong h, jint route) { engine(h)->setClickRoute(route); }
+extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetClickOutputBus(JNIEnv *, jobject, jlong h, jint bus) { engine(h)->setClickOutputBus(bus); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetLoop(JNIEnv *, jobject, jlong h, jboolean e, jlong s, jlong end) { engine(h)->setLoop(e, s, end); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeScheduleJump(JNIEnv *, jobject, jlong h, jlong at, jlong target, jboolean disableLoop) { engine(h)->scheduleJump(at, target, disableLoop); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeClearScheduledJump(JNIEnv *, jobject, jlong h) { engine(h)->clearScheduledJump(); }
 extern "C" JNIEXPORT jboolean JNICALL
-Java_dev_stagegrid_audio_NativeAudioEngine_nativeScheduleGuideCue(JNIEnv *env, jobject, jlong h, jfloatArray samples, jlong atMs, jlong suppressUntilMs, jint route, jfloat volume) {
+Java_dev_stagegrid_audio_NativeAudioEngine_nativeScheduleGuideCue(JNIEnv *env, jobject, jlong h, jfloatArray samples, jlong atMs, jlong suppressUntilMs, jint route, jint bus, jfloat volume) {
     if (!samples) return JNI_FALSE;
     const jsize count = env->GetArrayLength(samples);
     if (count <= 0) return JNI_FALSE;
     std::vector<float> mono(static_cast<size_t>(count));
     env->GetFloatArrayRegion(samples, 0, count, mono.data());
     if (env->ExceptionCheck()) return JNI_FALSE;
-    return engine(h)->scheduleGuideCue(mono, atMs, suppressUntilMs, route, volume) ? JNI_TRUE : JNI_FALSE;
+    return engine(h)->scheduleGuideCue(mono, atMs, suppressUntilMs, route, bus, volume) ? JNI_TRUE : JNI_FALSE;
 }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeClearGuideCue(JNIEnv *, jobject, jlong h) { engine(h)->clearGuideCue(); }
 extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativePrepareCountIn(JNIEnv *, jobject, jlong h, jlong targetMs, jint bars) { return engine(h)->prepareCountIn(targetMs, bars) ? JNI_TRUE : JNI_FALSE; }
 extern "C" JNIEXPORT jlong JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeCountInRemainingMs(JNIEnv *, jobject, jlong h) { return engine(h)->countInRemainingMs(); }
-extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetOutputDevice(JNIEnv *, jobject, jlong h, jint id) { return engine(h)->setOutputDevice(id) ? JNI_TRUE : JNI_FALSE; }
+extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetOutputDevice(JNIEnv *, jobject, jlong h, jint id, jint channels) { return engine(h)->setOutputDevice(id, channels) ? JNI_TRUE : JNI_FALSE; }
+extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeStartOutputTest(JNIEnv *, jobject, jlong h, jint channel, jint durationMs) { return engine(h)->startOutputTest(channel, durationMs) ? JNI_TRUE : JNI_FALSE; }
 extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSampleRate(JNIEnv *, jobject, jlong h) { return engine(h)->sampleRate(); }
 extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeFramesPerBurst(JNIEnv *, jobject, jlong h) { return engine(h)->framesPerBurst(); }
+extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeOutputChannelCount(JNIEnv *, jobject, jlong h) { return engine(h)->outputChannelCount(); }
+extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeRequestedOutputChannelCount(JNIEnv *, jobject, jlong h) { return engine(h)->requestedOutputChannelCount(); }
+extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeMultichannelFallback(JNIEnv *, jobject, jlong h) { return engine(h)->multichannelFallback() ? JNI_TRUE : JNI_FALSE; }
+extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeOutputDeviceId(JNIEnv *, jobject, jlong h) { return engine(h)->outputDeviceId(); }
 extern "C" JNIEXPORT jlong JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeUnderruns(JNIEnv *, jobject, jlong h) { return engine(h)->underruns(); }
 extern "C" JNIEXPORT jfloat JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeCpuLoad(JNIEnv *, jobject, jlong h) { return engine(h)->cpuLoad(); }
 extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeLoadedTracks(JNIEnv *, jobject, jlong h) { return engine(h)->loadedTracks(); }
