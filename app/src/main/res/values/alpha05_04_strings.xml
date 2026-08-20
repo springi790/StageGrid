@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="multichannel_routing_title">Ruteo multicanal</string>
+    <string name="multichannel_routing_summary">Salida activa: %1$d canales · solicitado: %2$d</string>
+    <string name="multichannel_fallback_warning">Android abrió menos canales de los solicitados. Los buses no disponibles se repliegan de forma segura a 1/2.</string>
+    <string name="preset_four_out">Preset 4 salidas · Tracks 1/2 · Click 3 · Guide 4</string>
+    <string name="preset_six_out">Preset 6 salidas · Main 1/2 · Voces 3/4 · Click 5 · Guide 6</string>
+    <string name="preset_eight_out">Preset 8 salidas · grupos 1/2, 3/4, 5/6 · Click 7 · Guide 8</string>
+    <string name="output_bus">Bus de salida</string>
+    <string name="output_bus_pair">Salidas %1$d/%2$d</string>
+    <string name="generated_click_routing">Click generado</string>
+    <string name="generated_click_routing_help">El Click nativo puede usar un bus diferente a los tracks.</string>
+    <string name="usb_multichannel_available">Multicanal disponible</string>
+    <string name="usb_stereo_only">Estéreo</string>
+    <string name="device_channel_capability">%1$d canales anunciados · StageGrid intentará %2$d</string>
+    <string name="negotiated_output">Stream abierto: %1$d canales a %2$d Hz</string>
+    <string name="requested_output_channels">Canales solicitados: %1$d</string>
+    <string name="output_test_title">Probar salidas</string>
+    <string name="output_test_help">Reproduce un tono corto y bajo únicamente por la salida seleccionada. Baja el volumen del sistema/interfaz antes de probar.</string>
+    <string name="test_output_channel">Probar salida %1$d</string>
+    <string name="output_fallback_active">Fallback multicanal activo</string>
+    <string name="routing_notice">%1$s</string>
+</resources>
