@@ -41,11 +41,17 @@ class LibraryRepository(private val db: StageGridDatabase) {
     }
 
     /**
-     * Merges a validated portable snapshot by stable IDs. New-device restore is therefore a normal
-     * empty-library merge, while restoring on an existing device replaces matching records without
-     * deleting unrelated local songs or setlists.
+     * Merges a validated portable snapshot by stable IDs. Matching songs/setlists are replaced
+     * exactly (including their child rows), while unrelated local library records remain intact.
      */
     suspend fun restoreSnapshot(snapshot: LibrarySnapshot) = db.withTransaction {
+        snapshot.songs.forEach { song ->
+            db.trackDao().clearForSong(song.id)
+            db.sectionDao().clearForSong(song.id)
+        }
+        snapshot.setlists.forEach { setlist ->
+            db.setlistSongDao().clear(setlist.id)
+        }
         db.songDao().insertAll(snapshot.songs)
         db.trackDao().insertAll(snapshot.tracks)
         db.sectionDao().insertAll(snapshot.sections)
