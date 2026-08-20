@@ -5,6 +5,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -13,12 +14,13 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import dev.stagegrid.R
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.waveform.WaveformPeakCache
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +30,7 @@ import java.io.File
 private sealed interface WaveformUiState {
     data object Loading : WaveformUiState
     data class Ready(val data: WaveformPeakCache.PeakData) : WaveformUiState
-    data class Failed(val message: String) : WaveformUiState
+    data class Failed(val message: String?) : WaveformUiState
 }
 
 /**
@@ -53,7 +55,7 @@ fun SongWaveformOverview(
             }
         }.fold(
             onSuccess = { WaveformUiState.Ready(it) },
-            onFailure = { WaveformUiState.Failed(it.message ?: "Waveform unavailable") },
+            onFailure = { WaveformUiState.Failed(it.message) },
         )
     }
 
@@ -61,17 +63,22 @@ fun SongWaveformOverview(
     val waveform = MaterialTheme.colorScheme.onSurfaceVariant
     val playhead = MaterialTheme.colorScheme.primary
     val boundary = MaterialTheme.colorScheme.outline
+    val description = stringResource(R.string.waveform_description)
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(96.dp)
-            .semantics { contentDescription = "Song waveform overview" },
+            .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
         when (val state = uiState) {
-            WaveformUiState.Loading -> Text("Generating waveform…", style = MaterialTheme.typography.labelMedium)
-            is WaveformUiState.Failed -> Text(state.message, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            WaveformUiState.Loading -> Text(stringResource(R.string.waveform_generating), style = MaterialTheme.typography.labelMedium)
+            is WaveformUiState.Failed -> Text(
+                state.message?.takeIf { it.isNotBlank() } ?: stringResource(R.string.waveform_unavailable),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
             is WaveformUiState.Ready -> {
                 val data = state.data
                 val effectiveDuration = durationMs.takeIf { it > 0L } ?: data.durationMs.coerceAtLeast(1L)
