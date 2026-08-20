@@ -1,0 +1,24 @@
+<resources>
+    <string name="backup_restore_title">Backup &amp; restore</string>
+    <string name="backup_restore_description">Save a portable copy of your library so it can be recovered after changing devices or reinstalling StageGrid.</string>
+    <string name="backup_restore_contents">Includes songs and local audio, metadata, sections, setlists, native Guide events and the installed Guide pack.</string>
+    <string name="backup_restore_provider_note">Android's picker can target a local folder, USB storage or Google Drive when Drive is available as a document provider.</string>
+    <string name="backup_create_button">Create backup</string>
+    <string name="backup_restore_button">Restore</string>
+    <string name="backup_create_running_title">Creating backup</string>
+    <string name="backup_restore_running_title">Restoring backup</string>
+    <string name="backup_progress_percent">%1$d%%</string>
+    <string name="backup_complete_title">Backup complete</string>
+    <string name="backup_complete_summary">Saved %1$d songs and %2$d setlists to:\n%3$s</string>
+    <string name="backup_restore_complete_title">Restore complete</string>
+    <string name="backup_restore_complete_summary">Restored %1$d songs, %2$d setlists and validated %3$d files.</string>
+    <string name="backup_error_title">Could not complete operation</string>
+    <string name="backup_stage_preparing">Preparing library</string>
+    <string name="backup_stage_hashing">Checking files</string>
+    <string name="backup_stage_writing">Saving songs and data</string>
+    <string name="backup_stage_copying_archive">Reading backup</string>
+    <string name="backup_stage_validating">Validating integrity</string>
+    <string name="backup_stage_restoring_files">Restoring files</string>
+    <string name="backup_stage_restoring_library">Restoring library</string>
+    <string name="backup_stage_complete">Complete</string>
+</resources>
