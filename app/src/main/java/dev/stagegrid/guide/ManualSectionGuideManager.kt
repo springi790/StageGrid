@@ -181,21 +181,36 @@ class ManualSectionGuideManager(
         val compact = normalized.replace(Regex("[^a-z0-9]+"), " ").trim()
         if (compact.isBlank()) return "section"
 
+        // Common chart/editor shorthand: V1, C2, In2, It, P, etc. Superscript repeat marks
+        // are intentionally ignored by normalization because they describe repetitions, not cue names.
+        val noSpaces = compact.replace(" ", "")
+        Regex("^(v|c|b|p|in|it|pc)(\\d+)$").matchEntire(noSpaces)?.let { match ->
+            val base = when (match.groupValues[1]) {
+                "v" -> "verse"
+                "c" -> "chorus"
+                "b", "p" -> "bridge"
+                "in" -> "instrumental"
+                "it" -> "interlude"
+                "pc" -> "pre_chorus"
+                else -> "section"
+            }
+            return "${base}_${match.groupValues[2]}"
+        }
+
         val number = Regex("(?:^| )(\\d+)$").find(compact)?.groupValues?.getOrNull(1)
         val withoutNumber = compact.replace(Regex("(?:^| )\\d+$"), "").trim()
         val base = when (withoutNumber) {
             "i", "intro", "introduccion" -> "intro"
             "v", "verse", "verso" -> "verse"
-            "vp", "pre chorus", "prechorus", "pre coro", "precoro" -> "pre_chorus"
+            "vp", "vamp" -> "vamp"
+            "pc", "pre chorus", "prechorus", "pre coro", "precoro" -> "pre_chorus"
             "c", "chorus", "coro" -> "chorus"
             "post chorus", "postchorus", "post coro", "postcoro" -> "post_chorus"
-            "b", "bridge", "puente" -> "bridge"
+            "b", "bridge", "p", "puente" -> "bridge"
             "it", "interlude", "interludio" -> "interlude"
             "in", "instrumental", "instrumental break" -> "instrumental"
-            "p", "postlude" -> "postlude"
             "ending", "end", "final", "fin", "f" -> "ending"
             "outro" -> "outro"
-            "vamp" -> "vamp"
             "rap" -> "rap"
             "tag", "repetir" -> "tag"
             "solo" -> "solo"
