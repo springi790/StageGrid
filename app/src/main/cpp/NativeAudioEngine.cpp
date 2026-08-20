@@ -297,10 +297,6 @@ int64_t NativeAudioEngine::firstDivergenceFrames(
 }
 
 void NativeAudioEngine::cancelPendingPathFromControl() noexcept {
-    // The realtime callback briefly publishes a sentinel after it has claimed a complete pending
-    // generation. Control threads are allowed to wait; the callback is never allowed to wait.
-    // Waiting here prevents rapid successive taps from rewriting a bank that the callback has
-    // already committed to activating in this callback cycle.
     while (pendingGeneration_.load(std::memory_order_acquire) == kPathClaimedGeneration) {
         std::this_thread::yield();
     }
@@ -322,8 +318,6 @@ uint64_t NativeAudioEngine::requestHardPathReset(int64_t frame, const PathState 
 }
 
 void NativeAudioEngine::stagePathChange(const PathState &path) {
-    // Invalidate an older pending request before rewriting its inactive bank. If the callback has
-    // already claimed that generation, this control-side method waits until the handoff completes.
     cancelPendingPathFromControl();
 
     const int active = activeBank_.load(std::memory_order_acquire);
@@ -406,8 +400,6 @@ bool NativeAudioEngine::tryActivatePendingPath(int32_t numFrames) noexcept {
         return false;
     }
 
-    // Claim this exact generation before touching its read cursors. A rapid control-side request
-    // can invalidate a generation only before this CAS or after the callback finishes the handoff.
     uint64_t expected = generation;
     if (!pendingGeneration_.compare_exchange_strong(
             expected, kPathClaimedGeneration, std::memory_order_acq_rel, std::memory_order_acquire)) {
@@ -568,12 +560,31 @@ bool NativeAudioEngine::scheduleGuideCue(
     cue->route = std::clamp(route, static_cast<int>(BOTH), static_cast<int>(RIGHT));
     cue->volume = std::clamp(volume, 0.0f, 1.5f);
     cue->consumed.store(false, std::memory_order_relaxed);
-    std::atomic_store_explicit(&guideCue_, std::move(cue), std::memory_order_release);
+
+    std::lock_guard<std::mutex> lock(guideCueControlMutex_);
+    auto previous = std::atomic_exchange_explicit(&guideCue_, std::move(cue), std::memory_order_acq_rel);
+    while (guideCueReaderActive_.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    previous.reset();
     return true;
 }
 
 void NativeAudioEngine::clearGuideCue() noexcept {
-    std::atomic_store_explicit(&guideCue_, std::shared_ptr<GuideCueData>{}, std::memory_order_release);
+    // clearGuideCue is called only from non-realtime control paths. Serializing here keeps an old
+    // cue alive until a callback that may already have loaded it exits its reader section.
+    try {
+        std::lock_guard<std::mutex> lock(guideCueControlMutex_);
+        auto previous = std::atomic_exchange_explicit(
+            &guideCue_, std::shared_ptr<GuideCueData>{}, std::memory_order_acq_rel);
+        while (guideCueReaderActive_.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        previous.reset();
+    } catch (...) {
+        // Preserve noexcept for teardown/control callers. The current cue remains safe even if a
+        // control mutex operation cannot complete because shared ownership is still valid.
+    }
 }
 
 bool NativeAudioEngine::prepareCountIn(int64_t targetMs, int bars) {
@@ -743,6 +754,11 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
         callbackLoopDisabledLocally_ = false;
     }
     const PathState callbackPath = loadPathState(active);
+
+    // Publish the reader section before loading the shared cue. A control-side exchange that sees
+    // this flag retains the previous shared object until this callback is done, so destruction of
+    // GuideCueData/vector storage cannot occur on the realtime thread.
+    guideCueReaderActive_.store(true, std::memory_order_release);
     const auto guideCue = std::atomic_load_explicit(&guideCue_, std::memory_order_acquire);
 
     bool anySolo = false;
@@ -834,6 +850,12 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
     }
     playheadFrame_.store(frame, std::memory_order_release);
     if (renderedFrames > 0) outputFrameCounter_.fetch_add(static_cast<uint64_t>(renderedFrames), std::memory_order_relaxed);
+
+    // Release callback-local shared ownership before clearing the reader flag. The control thread
+    // still owns either the active pointer or the exchanged previous pointer, so this reset cannot
+    // perform the final deletion on the realtime thread.
+    const_cast<std::shared_ptr<GuideCueData>&>(guideCue).reset();
+    guideCueReaderActive_.store(false, std::memory_order_release);
 
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
     const double budget = static_cast<double>(numFrames) / std::max(1, stream->getSampleRate());
