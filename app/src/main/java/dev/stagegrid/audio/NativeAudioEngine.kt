@@ -37,6 +37,7 @@ class NativeAudioEngine : Closeable {
     fun positionMs(): Long = nativePositionMs(handle)
     fun durationMs(): Long = nativeDurationMs(handle)
     fun isPlaying(): Boolean = nativeIsPlaying(handle)
+    fun sampleRate(): Int = nativeSampleRate(handle).coerceAtLeast(1)
     fun setTrackVolume(index: Int, value: Float) = nativeSetTrackVolume(handle, index, value)
     fun setTrackMute(index: Int, value: Boolean) = nativeSetTrackMute(handle, index, value)
     fun setTrackSolo(index: Int, value: Boolean) = nativeSetTrackSolo(handle, index, value)
@@ -52,6 +53,21 @@ class NativeAudioEngine : Closeable {
     fun scheduleJump(atMs: Long, targetMs: Long, disableLoopAfterJump: Boolean = true) =
         nativeScheduleJump(handle, atMs, targetMs, disableLoopAfterJump)
     fun clearScheduledJump() = nativeClearScheduledJump(handle)
+    fun scheduleGuideCue(
+        monoSamples: FloatArray,
+        atMs: Long,
+        suppressUntilMs: Long,
+        route: StereoRoute,
+        volume: Float,
+    ): Boolean = nativeScheduleGuideCue(
+        handle,
+        monoSamples,
+        atMs.coerceAtLeast(0L),
+        suppressUntilMs.coerceAtLeast(0L),
+        route.nativeCode,
+        volume.coerceIn(0f, 1.5f),
+    )
+    fun clearGuideCue() = nativeClearGuideCue(handle)
     fun prepareCountIn(targetMs: Long, bars: Int): Boolean =
         nativePrepareCountIn(handle, targetMs.coerceAtLeast(0L), bars.coerceIn(1, 2))
     fun countInRemainingMs(): Long = nativeCountInRemainingMs(handle).coerceAtLeast(0L)
@@ -103,6 +119,8 @@ class NativeAudioEngine : Closeable {
     private external fun nativeSetLoop(handle: Long, enabled: Boolean, startMs: Long, endMs: Long)
     private external fun nativeScheduleJump(handle: Long, atMs: Long, targetMs: Long, disableLoopAfterJump: Boolean)
     private external fun nativeClearScheduledJump(handle: Long)
+    private external fun nativeScheduleGuideCue(handle: Long, samples: FloatArray, atMs: Long, suppressUntilMs: Long, route: Int, volume: Float): Boolean
+    private external fun nativeClearGuideCue(handle: Long)
     private external fun nativePrepareCountIn(handle: Long, targetMs: Long, bars: Int): Boolean
     private external fun nativeCountInRemainingMs(handle: Long): Long
     private external fun nativeSetOutputDevice(handle: Long, deviceId: Int): Boolean
