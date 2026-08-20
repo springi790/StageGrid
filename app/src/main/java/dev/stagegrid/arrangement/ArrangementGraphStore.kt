@@ -91,6 +91,7 @@ class ArrangementGraphStore(private val filesDir: File) {
                 )
             }
         }
+        require(nodes.map { it.id }.toSet().size == nodes.size) { "Arrangement contains duplicate node IDs" }
         return ArrangementGraph(
             songId = songId,
             nodes = nodes,
