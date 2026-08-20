@@ -9,9 +9,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 concurrency:
   group: android-ci-${{ github.ref }}
   cancel-in-progress: true
@@ -25,7 +22,6 @@ jobs:
 
       - name: Setup Java
         id: java_setup
-        continue-on-error: true
         uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -33,7 +29,6 @@ jobs:
 
       - name: Prepare stable debug signing key
         id: debug_signing
-        continue-on-error: true
         shell: bash
         run: |
           base64 --decode ci/stagegrid-debug.keystore.b64 > app/stagegrid-debug.keystore
@@ -44,7 +39,6 @@ jobs:
 
       - name: Setup Android SDK
         id: android_sdk_setup
-        continue-on-error: true
         uses: android-actions/setup-android@v4
         with:
           packages: ''
@@ -52,8 +46,6 @@ jobs:
 
       - name: Install Android SDK packages
         id: android_sdk_install
-        if: steps.android_sdk_setup.outcome == 'success'
-        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -69,81 +61,68 @@ jobs:
             sdkmanager --channel=3 "$PLATFORM_PACKAGE" "build-tools;37.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
           } 2>&1 | tee ci-sdk-install.log
 
-      - name: Unit tests and debug APK
-        id: gradle_build
-        if: steps.java_setup.outcome == 'success' && steps.debug_signing.outcome == 'success' && steps.android_sdk_setup.outcome == 'success' && steps.android_sdk_install.outcome == 'success'
+      - name: Prepare Gradle wrapper
+        shell: bash
+        run: chmod +x gradlew
+
+      - name: Unit tests
+        id: unit_tests
         continue-on-error: true
         shell: bash
         run: |
-          chmod +x gradlew
           set -o pipefail
-          ./gradlew testDebugUnitTest assembleDebug --stacktrace 2>&1 | tee ci-gradle-build.log
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee ci-unit-tests.log
 
-      - name: Publish CI result marker
-        if: always() && github.event_name == 'push'
+      - name: Build debug APK
+        id: assemble_debug
+        continue-on-error: true
         shell: bash
         run: |
-          FAILED=0
-          for OUTCOME in \
-            "${{ steps.java_setup.outcome }}" \
-            "${{ steps.debug_signing.outcome }}" \
-            "${{ steps.android_sdk_setup.outcome }}" \
-            "${{ steps.android_sdk_install.outcome }}" \
-            "${{ steps.gradle_build.outcome }}"; do
-            if [ "$OUTCOME" = "failure" ]; then FAILED=1; fi
-          done
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee ci-assemble-debug.log
 
+      - name: Write CI diagnostic summary
+        if: always()
+        shell: bash
+        run: |
           {
-            if [ "$FAILED" -eq 0 ] && [ "${{ steps.gradle_build.outcome }}" = "success" ]; then
-              echo "result: success"
-            else
-              echo "result: failure"
-            fi
+            echo "StageGrid Android CI"
             echo "ref: $GITHUB_REF"
             echo "sha: $GITHUB_SHA"
-            echo "java_setup: ${{ steps.java_setup.outcome }}"
-            echo "debug_signing: ${{ steps.debug_signing.outcome }}"
-            echo "android_sdk_setup: ${{ steps.android_sdk_setup.outcome }}"
-            echo "android_sdk_install: ${{ steps.android_sdk_install.outcome }}"
-            echo "gradle_build: ${{ steps.gradle_build.outcome }}"
-          } > ci/last-build-result.txt
-
-          if [ "$FAILED" -ne 0 ] || [ "${{ steps.gradle_build.outcome }}" != "success" ]; then
-            {
-              cat ci/last-build-result.txt
+            echo "unit_tests: ${{ steps.unit_tests.outcome }}"
+            echo "assemble_debug: ${{ steps.assemble_debug.outcome }}"
+            echo
+            if [ -f ci-unit-tests.log ]; then
+              echo "===== UNIT TESTS (tail) ====="
+              tail -n 300 ci-unit-tests.log
               echo
-              if [ -f ci-sdk-install.log ]; then
-                echo "===== SDK INSTALL LOG ====="
-                tail -n 220 ci-sdk-install.log
-                echo
-              fi
-              if [ -f ci-gradle-build.log ]; then
-                echo "===== GRADLE LOG ====="
-                tail -n 500 ci-gradle-build.log
-              fi
-            } > ci/last-build-failure.txt
-          else
-            rm -f ci/last-build-failure.txt
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- ci/last-build-result.txt
-          if [ -f ci/last-build-failure.txt ]; then git add -- ci/last-build-failure.txt; fi
-          if git ls-files --error-unmatch ci/last-build-failure.txt >/dev/null 2>&1 && [ ! -f ci/last-build-failure.txt ]; then
-            git rm --ignore-unmatch ci/last-build-failure.txt
-          fi
-          git commit -m "ci: publish Android build result [skip ci]" || true
-          git push || true
-
-      - name: Fail job when a required stage failed
-        if: always() && (steps.java_setup.outcome == 'failure' || steps.debug_signing.outcome == 'failure' || steps.android_sdk_setup.outcome == 'failure' || steps.android_sdk_install.outcome == 'failure' || steps.gradle_build.outcome == 'failure')
-        shell: bash
-        run: exit 1
+            fi
+            if [ -f ci-assemble-debug.log ]; then
+              echo "===== ASSEMBLE DEBUG (tail) ====="
+              tail -n 500 ci-assemble-debug.log
+              echo
+            fi
+            if [ -f ci-sdk-install.log ]; then
+              echo "===== SDK INSTALL (tail) ====="
+              tail -n 100 ci-sdk-install.log
+            fi
+          } > ci-diagnostics.txt
 
       - name: Upload APK
-        if: success()
+        if: steps.assemble_debug.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: stagegrid-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagegrid-ci-diagnostics
+          path: ci-diagnostics.txt
+
+      - name: Fail job when validation failed
+        if: steps.unit_tests.outcome == 'failure' || steps.assemble_debug.outcome == 'failure'
+        shell: bash
+        run: exit 1
