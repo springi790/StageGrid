@@ -83,6 +83,8 @@ object NativeGuideEventStore {
 
     fun readDetectedLanguage(file: File): String? = readRoot(file)?.optNullableString("detectedLanguage")
 
+    fun readSectionCueSource(file: File): String? = readRoot(file)?.optNullableString("sectionCueSource")
+
     fun readSectionProposals(file: File): List<StoredSectionProposal> {
         val root = readRoot(file) ?: return emptyList()
         val sections = root.optJSONArray("sections") ?: return emptyList()
@@ -148,6 +150,16 @@ object NativeGuideEventStore {
                 )
             }
             root.put("sections", sections)
+            file.writeText(root.toString(2))
+        }
+    }
+
+    fun markManualSectionCues(file: File) {
+        if (!file.isFile) return
+        runCatching {
+            val root = JSONObject(file.readText())
+            root.put("sectionCueSource", "manual")
+            root.put("automaticRecognition", "experimental")
             file.writeText(root.toString(2))
         }
     }
