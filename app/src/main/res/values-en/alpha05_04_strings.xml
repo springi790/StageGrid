@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="multichannel_routing_title">Multichannel routing</string>
+    <string name="multichannel_routing_summary">Active output: %1$d channels · requested: %2$d</string>
+    <string name="multichannel_fallback_warning">Android opened fewer channels than requested. Unavailable buses are safely folded back to 1/2.</string>
+    <string name="preset_four_out">4-out preset · Tracks 1/2 · Click 3 · Guide 4</string>
+    <string name="preset_six_out">6-out preset · Main 1/2 · Vocals 3/4 · Click 5 · Guide 6</string>
+    <string name="preset_eight_out">8-out preset · groups 1/2, 3/4, 5/6 · Click 7 · Guide 8</string>
+    <string name="output_bus">Output bus</string>
+    <string name="output_bus_pair">Outputs %1$d/%2$d</string>
+    <string name="generated_click_routing">Generated Click</string>
+    <string name="generated_click_routing_help">Native Click can use a different output bus from the tracks.</string>
+    <string name="usb_multichannel_available">Multichannel available</string>
+    <string name="usb_stereo_only">Stereo</string>
+    <string name="device_channel_capability">%1$d advertised channels · StageGrid will request %2$d</string>
+    <string name="negotiated_output">Opened stream: %1$d channels at %2$d Hz</string>
+    <string name="requested_output_channels">Requested channels: %1$d</string>
+    <string name="output_test_title">Test outputs</string>
+    <string name="output_test_help">Plays a short, low-level tone only through the selected output. Lower the system/interface volume before testing.</string>
+    <string name="test_output_channel">Test output %1$d</string>
+    <string name="output_fallback_active">Multichannel fallback active</string>
+    <string name="routing_notice">%1$s</string>
+</resources>
