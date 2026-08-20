@@ -173,7 +173,8 @@ class NativeGuideReanalyzer(
             section.name == proposal.name &&
                 section.startMs == proposal.startMs &&
                 section.endMs == expectedEnd.coerceAtLeast(proposal.startMs + 1L) &&
-                section.sortOrder == index
+                section.sortOrder == index &&
+                section.colorArgb == AUTO_SECTION_COLORS[index % AUTO_SECTION_COLORS.size]
         }
     }
 
@@ -181,7 +182,7 @@ class NativeGuideReanalyzer(
         sections.size == 1 && sections[0].name == "Full Song" && sections[0].startMs == 0L && sections[0].endMs == durationMs
 
     private companion object {
-        const val MAX_TRACKS = 32
+        const val MAX_TRACKS = 64
         val AUTO_SECTION_COLORS = longArrayOf(
             0xFF5B8CFF, 0xFF2FBF9F, 0xFF9C6CFF, 0xFFF39C55, 0xFFE85D75, 0xFF4FB6E9,
         )
