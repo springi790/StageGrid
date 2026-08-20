@@ -119,12 +119,14 @@ object NativeGuideRenderer {
         analysis: GuideCueAnalyzer.Result,
         outputLanguage: String?,
         sectionProposals: List<GuideCueAnalyzer.SectionProposal>,
+        sectionSource: String = "recognized",
     ) {
         val root = JSONObject()
             .put("version", 2)
             .put("detectedLanguage", analysis.dominantLanguage ?: JSONObject.NULL)
             .put("outputLanguage", outputLanguage ?: JSONObject.NULL)
             .put("candidateCount", analysis.candidateCount)
+            .put("sectionSource", sectionSource)
         val cues = JSONArray()
         analysis.cues.forEach { cue ->
             cues.put(
