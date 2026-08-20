@@ -29,7 +29,6 @@ class LibraryRepository(private val db: StageGridDatabase) {
         SongBundle(song, db.trackDao().getForSong(songId), db.sectionDao().getForSong(songId))
     }
 
-    /** Stable, transactionally consistent snapshot used by portable backups. */
     suspend fun snapshot(): LibrarySnapshot = db.withTransaction {
         LibrarySnapshot(
             songs = db.songDao().getAll(),
@@ -40,18 +39,12 @@ class LibraryRepository(private val db: StageGridDatabase) {
         )
     }
 
-    /**
-     * Merges a validated portable snapshot by stable IDs. Matching songs/setlists are replaced
-     * exactly (including their child rows), while unrelated local library records remain intact.
-     */
     suspend fun restoreSnapshot(snapshot: LibrarySnapshot) = db.withTransaction {
         snapshot.songs.forEach { song ->
             db.trackDao().clearForSong(song.id)
             db.sectionDao().clearForSong(song.id)
         }
-        snapshot.setlists.forEach { setlist ->
-            db.setlistSongDao().clear(setlist.id)
-        }
+        snapshot.setlists.forEach { setlist -> db.setlistSongDao().clear(setlist.id) }
         db.songDao().insertAll(snapshot.songs)
         db.trackDao().insertAll(snapshot.tracks)
         db.sectionDao().insertAll(snapshot.sections)
@@ -70,18 +63,10 @@ class LibraryRepository(private val db: StageGridDatabase) {
     }
 
     suspend fun updateSong(song: SongEntity) = db.songDao().update(song)
-
     suspend fun updateTrack(track: TrackEntity) = db.trackDao().update(track)
-
-    /** Insert or replace a section. Section IDs are stable across manual edits. */
     suspend fun saveSection(section: SectionEntity) = db.sectionDao().insert(section)
-
     suspend fun getSections(songId: String): List<SectionEntity> = db.sectionDao().getForSong(songId)
 
-    /**
-     * Replaces only the untouched import fallback section. This prevents metadata edits from
-     * overwriting a section map the user already created or adjusted manually.
-     */
     suspend fun replacePlaceholderSections(
         songId: String,
         durationMs: Long,
@@ -99,8 +84,21 @@ class LibraryRepository(private val db: StageGridDatabase) {
         true
     }
 
-    suspend fun deleteSection(section: SectionEntity) = db.sectionDao().delete(section)
+    /** Replaces an auto-generated map only if nobody changed it since the caller inspected it. */
+    suspend fun replaceSectionsIfUnchanged(
+        songId: String,
+        expectedCurrent: List<SectionEntity>,
+        replacements: List<SectionEntity>,
+    ): Boolean = db.withTransaction {
+        if (replacements.isEmpty()) return@withTransaction false
+        val current = db.sectionDao().getForSong(songId)
+        if (current != expectedCurrent) return@withTransaction false
+        db.sectionDao().clearForSong(songId)
+        db.sectionDao().insertAll(replacements)
+        true
+    }
 
+    suspend fun deleteSection(section: SectionEntity) = db.sectionDao().delete(section)
     suspend fun deleteSong(song: SongEntity) = db.songDao().delete(song)
 
     suspend fun createSetlist(name: String): SetlistEntity {
