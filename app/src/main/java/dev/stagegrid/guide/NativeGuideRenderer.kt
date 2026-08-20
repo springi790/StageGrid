@@ -9,13 +9,6 @@ import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.roundToInt
 
-/**
- * Renders recognized Guide events into a clean app-generated PCM WAV.
- *
- * The resulting track is still played by the shared native multitrack clock, so it stays sample
- * aligned with the stems. The event JSON is kept beside the song so a later arrangement engine can
- * relocate the same native cues when sections are reordered instead of re-analyzing speech.
- */
 object NativeGuideRenderer {
     const val TRACK_NAME = "StageGrid Native Guide"
 
@@ -119,14 +112,14 @@ object NativeGuideRenderer {
         analysis: GuideCueAnalyzer.Result,
         outputLanguage: String?,
         sectionProposals: List<GuideCueAnalyzer.SectionProposal>,
-        sectionSource: String = "recognized",
+        sectionCueSource: String = "recognized",
     ) {
         val root = JSONObject()
             .put("version", 2)
             .put("detectedLanguage", analysis.dominantLanguage ?: JSONObject.NULL)
             .put("outputLanguage", outputLanguage ?: JSONObject.NULL)
             .put("candidateCount", analysis.candidateCount)
-            .put("sectionSource", sectionSource)
+            .put("sectionCueSource", sectionCueSource)
         val cues = JSONArray()
         analysis.cues.forEach { cue ->
             cues.put(
@@ -163,9 +156,7 @@ object NativeGuideRenderer {
                     .put("reason", diagnostic.reason),
             )
         }
-        root.put("cues", cues)
-            .put("sections", sections)
-            .put("diagnostics", diagnostics)
+        root.put("cues", cues).put("sections", sections).put("diagnostics", diagnostics)
         file.parentFile?.mkdirs()
         file.writeText(root.toString(2))
     }
