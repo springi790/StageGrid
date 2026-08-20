@@ -40,7 +40,7 @@ public:
     void scheduleJump(int64_t atMs, int64_t targetMs, bool disableLoopAfterJump);
     void clearScheduledJump();
     bool scheduleGuideCue(const std::vector<float>& monoSamples, int64_t atMs, int64_t suppressUntilMs, int route, float volume);
-    void clearGuideCue();
+    void clearGuideCue() noexcept;
     bool prepareCountIn(int64_t targetMs, int bars);
     int64_t countInRemainingMs() const;
     bool setOutputDevice(int32_t deviceId);
@@ -157,8 +157,8 @@ private:
     std::atomic<int64_t> gridOffsetFrame_{0};
     std::atomic<int64_t> trackGateUntilFrame_{-1};
 
-    // The cue's vector is built off-callback. The callback marks its short read section; control
-    // exchanges ownership and waits outside realtime before allowing the previous cue to destruct.
+    // Dynamic section-call PCM is built on a background thread and published as an immutable cue.
+    // Ownership handoff hardening is tracked separately from the callback's audio rendering logic.
     std::shared_ptr<GuideCueData> guideCue_;
     std::mutex guideCueControlMutex_;
     std::atomic<bool> guideCueReaderActive_{false};
