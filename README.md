@@ -2,65 +2,114 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Stems, Native Click, Native Guide and the musical timeline share one real-time audio clock instead of independent Android media players.
 
-> **Current development release: `0.3.0-alpha01` — expanded Android decoder/import layer.**
+> **Current development release: `0.3.0-alpha05` — complete expanded decoder / waveform / cache layer.**
 >
-> This is the first 0.3 development build. It inherits the 0.2 live-performance feature set while beginning the expanded decoder/cache roadmap. Moving development to 0.3 does **not** imply that the previous 0.2 hardware qualification gate has been completed.
+> Alpha05 intentionally collapses the remaining planned 0.3 alphas into one integration build. It inherits the 0.2 live-performance feature set; moving development forward does **not** waive the physical-hardware qualification gates from earlier versions.
 
 ## Product principle
 
 **A musician should be able to use the basic live workflow without understanding audio-engineering terminology.** Common performance actions stay visible; technical controls remain progressively disclosed.
 
-## New in 0.3.0-alpha01
+## New in 0.3.0-alpha05
 
-### MP3 + M4A + AAC import normalization
+### Expanded import normalization
 
-StageGrid now has one Android-platform compressed-audio normalization path instead of an MP3-only decoder.
+StageGrid keeps compressed/container decoding at the import boundary:
 
 ```text
-WAV ───────────────────────────────→ app-private playback WAV
+WAV ───────────────────────────────────────────→ app-private playback WAV
 MP3 ─┐
-M4A ─┼→ MediaExtractor/MediaCodec → 16-bit PCM WAV → app-private playback WAV
-AAC ─┘
+M4A ─┤
+AAC ─┼→ Android MediaExtractor / MediaCodec ───→ 16-bit PCM WAV
+FLAC ─┤
+OGG ─┘
 ```
 
-The conversion remains an **import-time** operation. `MediaExtractor` and `MediaCodec` never run in the Oboe realtime callback, so live playback continues to use the deterministic WAV streaming path and shared native clock.
+Implemented:
 
-Implemented in alpha01:
+- WAV remains the direct native playback source path.
+- MP3, M4A, AAC, FLAC and OGG are accepted as import sources.
+- Non-WAV sources normalize once to 16-bit PCM RIFF/WAV before a playable track is registered.
+- Android encoder-delay/padding metadata is trimmed when exposed by the platform.
+- PCM16 decoder output is consumed directly; PCM-float decoder output is converted to PCM16.
+- sample rate/channel bounds and classic RIFF output-size limits are validated.
+- temporary/partial decode files are removed on failure.
+- `Mp3ToWavDecoder` remains as a compatibility facade over the shared platform normalizer.
 
-- WAV remains the native import/playback source path.
-- MP3, M4A and AAC are accepted as playable import sources.
-- MP3/M4A/AAC normalize once to 16-bit PCM WAV in app-private storage.
-- Android encoder-delay/padding metadata is trimmed when the platform exposes it.
-- format-specific import warnings summarize which compressed sources were normalized.
-- FLAC and OGG remain detectable and are reported clearly, but are not promoted to playable status yet.
-- the previous `Mp3ToWavDecoder` API remains as a compatibility facade over the new platform decoder.
-- pure Kotlin format-policy regression coverage protects the playable/planned boundary.
+Platform codec availability still matters: an unusual codec/container combination that Android cannot expose/decode fails import cleanly instead of entering the live engine.
 
-App version: `0.3.0-alpha01` (`versionCode 19`).
+### Regenerable waveform peak cache
 
-## Inherited 0.2 live foundation
+Waveforms are not generated in the Oboe callback. `WaveformPeakCache` reads the retained playback WAV files on an I/O dispatcher and creates a bounded song overview cache at:
 
-The 0.3 line keeps the existing 0.2 behavior, including:
+```text
+library/<song-id>/cache/waveform-overview.sgpk
+```
 
-- safe performance-session recovery that always restores stopped;
-- Native Guide local sample-pack recognition and reconstruction;
-- source-language-first Guide matching and English ambiguity hardening;
-- persistent Guide fingerprints and in-place Guide reanalysis;
+The peak cache:
+
+- stores min/max amplitude buckets instead of another audio copy;
+- maps every stem by absolute source time onto the common song timeline;
+- supports PCM integer WAV and 32-bit IEEE-float WAV inputs used by StageGrid;
+- is versioned and source-signature checked;
+- is written through a temporary file before replacement;
+- can be deleted at any time and regenerated from the retained playback WAV files.
+
+### Waveform UI
+
+The Player now shows a waveform overview with:
+
+- synchronized playhead;
+- section-boundary markers;
+- tap-to-seek when transport policy allows seeking.
+
+The Section Editor shows the same waveform as a read-only visual reference while preserving its existing bar/beat editing controls.
+
+### Storage and cache manager
+
+Settings now includes **Storage and cache** accounting for:
+
+- complete local StageGrid usage;
+- library data;
+- playback-ready audio;
+- regenerable caches;
+- local Guide resources;
+- local song count.
+
+The clear-cache action removes only regenerable `library/<song>/cache` data. It does not delete playback audio, songs, Room records, Guide content or external `.stagebackup` snapshots.
+
+App version: `0.3.0-alpha05` (`versionCode 23`).
+
+## Inherited live foundation
+
+The current source retains the existing StageGrid live workflow:
+
+- Room song/track/section/setlist library;
+- ZIP/folder/multi-file SAF import;
+- app-private deterministic playback media;
+- one Oboe stereo output stream and one shared transport clock;
+- streaming WAV decoder workers with preallocated SPSC buffers;
+- double-buffered Loop/section path preparation and synchronized handoff;
+- volume/mute/solo/pan and `L / L+R / R` routing;
+- Native Click, subdivisions and section count-in;
 - Musical Grid and editable sections;
-- double-buffered section/Loop path preparation and synchronized handoff;
-- arrangement-aware destination Guide phrases;
-- Setlist Live navigation and bounded next-song filesystem-cache warming;
-- portable `.stagebackup` creation/restore with size + SHA-256 validation;
-- stereo Android/USB output selection and `L / L+R / R` routing.
+- local Native Guide recognition/reconstruction, language switching, reanalysis and persistent fingerprints;
+- arrangement-aware destination Guide lead-bar phrases;
+- Setlist Live Previous/Next plus bounded filesystem-cache warming;
+- safe stopped session recovery;
+- portable `.stagebackup` creation/restore with byte-size + SHA-256 validation;
+- Android/USB stereo output-device selection.
 
 ## Current live workflow
 
 ```text
 Import ZIP / folder / audio files
         ↓
-normalize compressed sources locally when needed
+normalize non-WAV sources locally
         ↓
-local playback WAV files
+app-private playback WAV files
+        ↓
+optional regenerable waveform peak cache
         ↓
 Click → Musical Grid
 Guide → optional local cue recognition
@@ -87,97 +136,34 @@ Left  → Click + Guide
 Right → Tracks
 ```
 
-## Library, import and portability
+## Audio formats in 0.3.0-alpha05
 
-Implemented:
+| Source | Import behavior | Live engine input |
+| --- | --- | --- |
+| WAV | retained/copied | WAV |
+| MP3 | platform decode once | PCM16 WAV |
+| M4A | platform decode once | PCM16 WAV |
+| AAC | platform decode once | PCM16 WAV |
+| FLAC | platform decode once | PCM16 WAV |
+| OGG | platform decode once | PCM16 WAV |
 
-- Kotlin / Jetpack Compose Android application.
-- Room library for songs, tracks, sections and setlists.
-- ZIP, folder and multi-file import through Android Storage Access Framework.
-- Linked document-provider folder browsing, including Google Drive when exposed by Android.
-- Imported audio copied into app-private storage for deterministic offline playback.
-- ZIP-slip protection, bounded extraction and safe filenames.
-- Optional `song.json` metadata/section markers.
-- Post-import metadata editing.
-- Import percentage, pipeline stage and current-file detail.
-- Safe local multitrack deletion with confirmation and staged file rollback around the Room operation.
-- Deleting a local song does not modify external `.stagebackup` snapshots.
-
-### Audio formats currently playable in 0.3.0-alpha01
-
-- WAV RIFF PCM: supported integer PCM depths handled by the parser.
-- WAV 32-bit IEEE float where supported.
-- MP3 through one-time Android `MediaExtractor` / `MediaCodec` normalization to PCM WAV.
-- M4A when Android exposes a decodable audio track through the platform media stack.
-- AAC when Android exposes a decodable audio track through the platform media stack.
-
-FLAC and OGG are recognized by the import policy but remain planned for a later 0.3 alpha while the production path/licensing and device behavior are evaluated.
-
-Compressed decoding never runs in the Oboe callback. StageGrid does not independently strip musical silence from each stem because intentional rests/count-ins must preserve the common timeline.
-
-## Native audio engine
-
-Implemented:
-
-- one native Oboe stereo output stream;
-- one master output-frame playhead shared by every stem;
-- streaming decoder threads and preallocated SPSC buffers;
-- two decoder banks per track for prepared Loop/section path changes;
-- active audio continues while the inactive bank prepares a replacement path;
-- synchronized all-track handoff after readiness/alignment checks;
-- stale/unsafe prepared paths are rejected instead of being applied late;
-- play, pause, stop and seek;
-- master volume;
-- per-track volume, mute, solo, pan and `L / L+R / R` route;
-- native sample-clock Click with 1/4, 1/8, 1/8T and 1/16 subdivisions;
-- native 1/2-bar section count-in;
-- Android/USB stereo output-device selection;
-- diagnostics for sample rate, burst size, underruns, callback load and path swaps/misses.
-
-Manual section choices wait for the explicit `endMs` of the **current** section and then enter the requested section at its explicit `startMs`.
+StageGrid deliberately does **not** decode compressed media in the realtime callback. Independently encoded stems can still contain source-specific timing differences; stems exported as WAV from one common timeline remain the safest stage source.
 
 ## Native Guide
 
-StageGrid does not bundle third-party Guide audio. A user-supplied/licensed sample ZIP is installed locally through Android's document picker.
+StageGrid does not bundle third-party Guide audio. A user-supplied/licensed sample ZIP is installed locally.
 
-Supported pack language layouts currently include Spanish, English, French and Portuguese when present in the installed pack.
+Supported pack language layouts currently include Spanish, English, French and Portuguese when present. Recognition is sample/template matching rather than general-purpose speech-to-text.
 
-```text
-Original Guide stem
-       ↓
-offline sample/fingerprint matching
-       ↓
-recognized structured events
-       ├─ SECTION
-       ├─ COUNT
-       └─ DYNAMIC
-       ↓
-native-guide-events.json
-       ↓
-StageGrid Native Guide.wav
-       ↓
-optional arrangement-aware destination phrase
-```
-
-Recognition is sample/template matching, **not general-purpose speech-to-text**.
-
-Implemented Native Guide behavior includes source-language probing, phase-robust fingerprints, structured event sidecars, generated Guide WAV, automatic editable section proposals, per-song output-language switching, reanalysis, persistent fingerprints and arrangement-aware destination lead-bar phrases.
-
-## Setlist Live
-
-A selected non-empty setlist can enter Setlist Live mode. Player shows current song, next song, setlist position, Previous/Next and Exit Setlist.
-
-NEXT/PREV stop and unload the previous native song before loading the destination in a stopped state. The next song receives a bounded warm preload into the Android/Linux filesystem cache. This can reduce startup latency but is **not** a second native decoder graph, gapless transition or crossfade.
+Implemented behavior includes phase-robust fingerprints, source-language probing, structured SECTION/COUNT/DYNAMIC events, generated Native Guide WAV, automatic editable section proposals, output-language switching, persistent fingerprints, reanalysis and arrangement-aware destination phrases.
 
 ## Portable backup and restore
 
-Settings can create a self-contained `.stagebackup` through Android SAF. The destination can be a local folder, compatible removable storage, Google Drive when exposed as a DocumentsProvider, or another writable provider.
+Settings can create a self-contained `.stagebackup` through Android SAF. The destination can be local storage, compatible removable storage, Google Drive when exposed as a DocumentsProvider, or another writable provider.
 
-A backup includes app-private song directories/audio, song/track/mixer metadata, sections, setlists/order, Native Guide sidecars/generated files and the currently installed user-supplied Guide pack.
+Backups contain the retained song directories/audio, Room song/track/section/setlist state, Guide sidecars/generated files and the installed user-supplied Guide pack. Payload entries are validated by byte size + SHA-256 before restore installation.
 
-Every payload file is declared with byte size + SHA-256. Restore stages and validates the complete archive before installing it, rebuilds device-specific app-private paths and preserves unrelated local library records.
-
-Backups are explicit snapshots, not continuous/bidirectional Drive synchronization.
+Waveform caches are regenerable performance artifacts. Their absence does not make a restored song unplayable.
 
 ## Build requirements
 
@@ -203,60 +189,46 @@ Debug APK:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Local data and privacy
+## Tests and qualification
 
-- No StageGrid account required.
-- No analytics SDK.
-- No ads.
-- No broad storage permission.
-- StageGrid does not upload song audio or Guide samples itself.
-- Imported songs, session snapshots, Guide packs and fingerprint caches live in app-private storage.
-- SAF access is limited to files/folders explicitly selected by the user.
-- Drive access is performed by Android/Google Drive's document provider; StageGrid does not receive Drive credentials.
+GitHub Actions is configured to run `testDebugUnitTest` and `assembleDebug` for pull requests.
 
-## Tests and CI
+0.3 adds regression coverage for the final import-format policy and waveform cache behavior, including different-duration stems mapped to the same absolute song timeline and safe cache eviction/regeneration.
 
-GitHub Actions runs `testDebugUnitTest` and `assembleDebug` before release PRs are merged into `main`.
+**CI success is not stage qualification.** Physical Android testing is still required for real platform codec behavior, long/high-track-count songs, repeated live transitions, USB devices, process death, backups and prolonged performance use.
 
-Coverage includes stem classification, import-format policy, WAV parsing, Musical Grid conversion/snapping, manual section-boundary policy, Native Guide recognition/section inference, quiet anti-phase Guide recognition, English/Spanish source-language isolation, Click stable-train selection, Guide arrangement timing/sequence selection, setlist navigation and native/JNI compilation.
+## Known limitations of 0.3.0-alpha05
 
-Physical-device qualification is still required before StageGrid is considered stage-ready.
-
-## Known limitations of 0.3.0-alpha01
-
-- M4A/AAC support intentionally relies on the Android platform codec stack; unusual codecs inside an `.m4a` container (for example a codec not supported by the device) can still fail import with a recoverable error.
-- FLAC and OGG are detected but are not playable yet.
-- Import normalization currently writes classic RIFF/WAV and therefore rejects a decoded cache that would exceed the RIFF data-size limit.
-- Independently encoded compressed stems can contain codec delay or source-specific timing differences. StageGrid trims Android gapless metadata when available, but WAV stems exported from one common timeline remain the safest live-performance source.
-- Waveform peak-cache generation and storage cache management are still pending in 0.3.
-- Guide recognition remains sample/template matching and still requires representative physical-device validation.
-- COUNT cue recognition remains less robust than longer SECTION phrases.
+- FLAC/OGG/M4A/AAC/MP3 normalization relies on the Android device's platform extractor/decoder availability for the actual source codec/container.
+- Normalized output uses classic RIFF/WAV; decoded data larger than the classic RIFF limit is rejected.
+- Waveform generation is intentionally lazy; the first view of a song after import/cache cleanup can take longer while peaks are built.
+- The waveform is an overview cache, not a destructive audio editor.
+- Guide recognition remains sample/template matching and COUNT cues remain naturally more ambiguous than longer SECTION calls.
 - Session recovery is approximate and always returns stopped; it is not sample-exact crash continuation.
-- Arrangement-aware Guide relocation still uses the destination's original lead bar; the arbitrary virtual arrangement graph remains planned for 0.5.
-- Setlist preload warms the OS file cache; it is not gapless dual-engine preload/crossfade.
-- USB output selection is stereo-only; arbitrary 4/8/custom multichannel routing remains planned for 0.4.
-- Tempo/pitch DSP, MIDI, pads, automation and SMPTE/LTC are later milestones.
-- Physical-device/high-track-count stress validation remains required.
+- Arrangement-aware Guide relocation is still based on the original destination lead bar; the arbitrary virtual arrangement graph remains planned for 0.5.
+- Setlist preload warms the OS file cache; it is not the future dual-song gapless/crossfade engine.
+- USB routing remains stereo-only in 0.3. Arbitrary 4/8/custom routing is the 0.4 milestone.
+- Tempo/pitch DSP, MIDI, pads, automation, SMPTE/LTC, portable project interchange and LAN remote remain later milestones.
 
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/STATUS.md`](docs/STATUS.md).
+See [`docs/ROADMAP.md`](docs/ROADMAP.md), [`docs/STATUS.md`](docs/STATUS.md) and [`VALIDATION.md`](VALIDATION.md).
 
 ## Release history
 
+### 0.3.0-alpha05
+
+**Complete 0.3 integration alpha** — platform normalization for MP3/M4A/AAC/FLAC/OGG, versioned absolute-timeline waveform peak cache, Player/Section Editor waveform UI, storage accounting and safe regenerable-cache eviction.
+
 ### 0.3.0-alpha01
 
-**Expanded Android decoder/import foundation** — unified import-time MP3/M4A/AAC normalization, explicit format policy, gapless metadata trimming when available, clear FLAC/OGG planned-state reporting and regression coverage for the new import boundary.
+**Expanded decoder/import foundation** — shared Android import-time normalizer for MP3/M4A/AAC and centralized import format policy.
 
 ### 0.2.0-alpha10.2
 
-**English Guide recognition isolation** — bounded source-language probing, language-scoped main matching, preserved Spanish thresholds, stricter English ambiguity rejection and removal of the expensive alpha10.1 recovery pass.
-
-### 0.2.0-alpha10.1
-
-**Recognition hardening before beta** — adaptive Guide candidate discovery, phase-robust fingerprints, language-aware recovery matching, wider timing tolerance and stable Click-train grid anchoring.
+**English Guide recognition isolation** — bounded source-language probing, language-scoped main matching, preserved Spanish thresholds and stricter English ambiguity rejection.
 
 ### 0.2.0-alpha10
 
-**Beta-readiness sprint: session recovery + Guide reanalysis/cache + richer dynamic Guide phrases** — includes planned alpha08/alpha09/alpha10 work in one integration sprint.
+**Beta-readiness integration sprint** — session recovery, Guide reanalysis/cache and richer arrangement-aware Guide phrases.
 
 ### 0.2.0-alpha07
 
@@ -264,51 +236,23 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/STATUS.md`](docs/STATUS.md).
 
 ### 0.2.0-alpha06
 
-**Portable backup/restore + first arrangement-aware Guide layer** — `.stagebackup`, SHA-256 validation and live destination section-name Guide cue.
+**Portable backup/restore + arrangement-aware Guide foundation**.
 
-### 0.2.0-alpha05.1
+### 0.2.0-alpha05 / alpha05.1
 
-**Manual section-boundary transition hotfix** — current section finishes at explicit `endMs`; requested destination enters at explicit `startMs`.
+**Double-buffered live paths + authored section-boundary transition policy**.
 
-### 0.2.0-alpha05
+### 0.2.0-alpha01–alpha04.2
 
-**Double-buffered live path hardening** — two decoder banks per track, background path preparation, synchronized handoff and stale-path rejection.
+**Musical Grid, simplified live UX, count-in and Native Guide foundation**.
 
-### 0.2.0-alpha04.2
+### 0.1.2 / 0.1.3
 
-**Per-song Guide language + import progress/performance pass**.
-
-### 0.2.0-alpha04.1
-
-**Delayed Native Guide section recovery after BPM becomes available**.
-
-### 0.2.0-alpha04
-
-**Native Guide recognition + automatic editable section proposals**.
-
-### 0.2.0-alpha03
-
-**Native count-in + initial section transition scheduling**.
-
-### 0.2.0-alpha02
-
-**Simplified live UX and routing presets**.
-
-### 0.2.0-alpha01
-
-**Musical Grid + visual Section Editor**.
-
-### 0.1.3
-
-**Native Click + stereo routing**.
-
-### 0.1.2
-
-**Shared-clock local WAV + MP3 normalization MVP**.
+**Shared-clock local playback MVP, MP3 import normalization, Native Click and stereo routing**.
 
 ## Release documentation policy
 
-Every StageGrid alpha, beta or release updates this README with the current version, new functionality, implemented behavior, known limitations and release history. `docs/ROADMAP.md` describes what comes next; `docs/STATUS.md` defines the exact implementation boundary.
+Every StageGrid alpha, beta or release updates this README with the current version, implemented behavior, known limitations and release history. `docs/ROADMAP.md` describes what comes next; `docs/STATUS.md` defines the exact implementation boundary.
 
 ## License
 
