@@ -55,8 +55,7 @@ class ManualNativeGuideSync(
 
         val preservedNonSection = existingAnalysis?.cues.orEmpty()
             .filter { it.kind != GuidePackManager.CueKind.SECTION }
-        val combinedCues = (preservedNonSection + manual.cues)
-            .sortedBy { it.cueMs }
+        val combinedCues = (preservedNonSection + manual.cues).sortedBy { it.cueMs }
         val combinedAnalysis = GuideCueAnalyzer.Result(
             cues = combinedCues,
             dominantLanguage = existingAnalysis?.dominantLanguage ?: outputLanguage,
@@ -66,13 +65,7 @@ class ManualNativeGuideSync(
 
         val existingNative = bundle.tracks.firstOrNull { it.name == NativeGuideRenderer.TRACK_NAME }
         if (existingNative == null && bundle.tracks.size >= MAX_TRACKS) {
-            return Result(
-                generatedSectionCues = manual.cues.size,
-                missingSectionNames = manual.missingSectionNames,
-                outputLanguage = outputLanguage,
-                createdNativeTrack = false,
-                changed = false,
-            )
+            return Result(manual.cues.size, manual.missingSectionNames, outputLanguage, false, false)
         }
 
         val audioDir = File(filesDir, "library/$songId/audio").apply { mkdirs() }
@@ -141,7 +134,7 @@ class ManualNativeGuideSync(
                 analysis = combinedAnalysis,
                 outputLanguage = rendered.outputLanguage,
                 sectionProposals = manual.proposals,
-                sectionSource = "manual",
+                sectionCueSource = "manual",
             )
             if (sidecar.exists()) sidecar.delete()
             if (!sidecarTemp.renameTo(sidecar)) {
