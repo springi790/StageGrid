@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -21,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -49,6 +52,7 @@ import kotlin.math.roundToInt
 
 private enum class WorkspaceSheet { QUICK_MIX, ARRANGEMENT, SETLIST }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LiveWorkspaceScreen(
     state: PlayerState,
@@ -89,7 +93,10 @@ fun LiveWorkspaceScreen(
     BoxWithConstraints(modifier.fillMaxSize()) {
         val tablet = maxWidth >= 720.dp
         if (tablet) {
-            Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                Modifier.fillMaxSize().padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 PerformanceSurface(
                     state = state,
                     arrangement = arrangement,
@@ -180,7 +187,7 @@ fun LiveWorkspaceScreen(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),
                 )
             }
-            Spacer(Modifier.padding(bottom = 12.dp))
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
@@ -215,23 +222,31 @@ private fun PerformanceSurface(
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
-                Text(song.title, style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (song.artist.isNotBlank()) Text(song.artist, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    song.title,
+                    style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (song.artist.isNotBlank()) {
+                    Text(song.artist, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
-            Text(formatWorkspaceTime(state.positionMs) + " / " + formatWorkspaceTime(state.durationMs), fontWeight = FontWeight.SemiBold)
+            Text("${formatWorkspaceTime(state.positionMs)} / ${formatWorkspaceTime(state.durationMs)}", fontWeight = FontWeight.SemiBold)
         }
 
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = state.isPlaying, onClick = {}, label = { Text(state.engineState.name) })
-            FilterChip(
-                selected = state.outputChannelCount > 2,
-                onClick = {},
-                label = { Text(stringResource(R.string.workspace_android_channels, state.outputChannelCount)) },
-            )
-            if (arrangement.active) FilterChip(selected = true, onClick = {}, label = { Text(stringResource(R.string.workspace_arrangement)) })
-            if (arrangement.queuedNode != null) FilterChip(selected = true, onClick = {}, label = { Text("${stringResource(R.string.workspace_queued)} → ${arrangement.queuedNode?.label}") })
-            if (state.loopSectionId != null) FilterChip(selected = true, onClick = {}, label = { Text("LOOP") })
-            if (setlistLive.nextReady) FilterChip(selected = true, onClick = {}, label = { Text(stringResource(R.string.workspace_preloaded)) })
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            StatusChip(state.engineState.name, state.isPlaying)
+            StatusChip(stringResource(R.string.workspace_android_channels, state.outputChannelCount), state.outputChannelCount > 2)
+            if (arrangement.active) StatusChip(stringResource(R.string.workspace_arrangement), true)
+            arrangement.queuedNode?.let { StatusChip("${stringResource(R.string.workspace_queued)} → ${it.label}", true) }
+            if (state.loopSectionId != null) StatusChip("LOOP", true)
+            if (state.crossfadeInProgress) StatusChip(stringResource(R.string.workspace_crossfade), true)
+            if (setlistLive.nextReady && state.preloadedSongId != null) StatusChip(stringResource(R.string.workspace_preloaded), true)
         }
 
         Card(Modifier.fillMaxWidth()) {
@@ -240,16 +255,18 @@ private fun PerformanceSurface(
                 positionMs = state.positionMs,
                 durationMs = state.durationMs,
                 sections = state.sections,
-                onSeek = onSeek,
+                onSeek = if (state.crossfadeInProgress || state.isCountingIn) null else onSeek,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
 
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.workspace_now), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(arrangement.activeNode?.label ?: state.currentSection?.name ?: "—", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                if (arrangement.active && arrangement.iteration > 1) Text(stringResource(R.string.workspace_iteration, arrangement.iteration), style = MaterialTheme.typography.labelMedium)
+                if (arrangement.active && arrangement.iteration > 1) {
+                    Text(stringResource(R.string.workspace_iteration, arrangement.iteration), style = MaterialTheme.typography.labelMedium)
+                }
             }
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.workspace_next), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -266,6 +283,7 @@ private fun PerformanceSurface(
                     FilterChip(
                         selected = active || queued,
                         onClick = { onArrangementNode(node.id) },
+                        enabled = !state.crossfadeInProgress && !state.isCountingIn,
                         label = {
                             Text(buildString {
                                 append(node.label)
@@ -277,11 +295,7 @@ private fun PerformanceSurface(
                 }
             } else {
                 items(state.sections, key = { it.id }) { section ->
-                    FilterChip(
-                        selected = state.currentSection?.id == section.id || state.queuedSectionId == section.id,
-                        onClick = {},
-                        label = { Text(section.name) },
-                    )
+                    StatusChip(section.name, state.currentSection?.id == section.id || state.queuedSectionId == section.id)
                 }
             }
         }
@@ -291,24 +305,37 @@ private fun PerformanceSurface(
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(stringResource(R.string.workspace_transport), fontWeight = FontWeight.Bold)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onPlayPause, modifier = Modifier.weight(1.4f)) {
+                    Button(
+                        onClick = onPlayPause,
+                        enabled = !state.crossfadeInProgress,
+                        modifier = Modifier.weight(1.4f),
+                    ) {
                         Text(if (state.isPlaying) stringResource(R.string.workspace_pause) else stringResource(R.string.workspace_play), fontWeight = FontWeight.Bold)
                     }
-                    OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.workspace_stop)) }
+                    OutlinedButton(onClick = onStop, enabled = !state.crossfadeInProgress, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.workspace_stop))
+                    }
                     Button(
                         onClick = onStopAll,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    ) { Text(stringResource(R.string.workspace_stop_all)) }
+                    ) {
+                        Text(stringResource(R.string.workspace_stop_all))
+                    }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     FilterChip(selected = state.clickEnabled, onClick = { onClick(!state.clickEnabled) }, label = { Text(stringResource(R.string.workspace_click)) })
                     FilterChip(selected = state.guideEnabled, onClick = { onGuide(!state.guideEnabled) }, label = { Text(stringResource(R.string.workspace_guide)) })
                     if (!arrangement.active) {
                         OutlinedButton(onClick = onArrangementStart) { Text(stringResource(R.string.workspace_arrangement_start)) }
                     } else {
                         OutlinedButton(onClick = onArrangementStop) { Text(stringResource(R.string.workspace_arrangement_stop)) }
-                        if (arrangement.activeNode?.infinite == true) OutlinedButton(onClick = onArrangementExitLoop) { Text(stringResource(R.string.workspace_exit_loop)) }
+                        if (arrangement.activeNode?.infinite == true) {
+                            OutlinedButton(onClick = onArrangementExitLoop) { Text(stringResource(R.string.workspace_exit_loop)) }
+                        }
                     }
                 }
                 Text(stringResource(R.string.workspace_master, (state.masterVolume * 100).roundToInt()))
@@ -323,9 +350,16 @@ private fun PerformanceSurface(
                 OutlinedButton(onClick = onOpenSetlist, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.workspace_setlist)) }
             }
         } else {
-            OutlinedButton(onClick = onOpenArrangement, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.workspace_edit_arrangement)) }
+            OutlinedButton(onClick = onOpenArrangement, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.workspace_edit_arrangement))
+            }
         }
     }
+}
+
+@Composable
+private fun StatusChip(label: String, selected: Boolean) {
+    FilterChip(selected = selected, onClick = {}, label = { Text(label) })
 }
 
 @Composable
@@ -344,7 +378,7 @@ private fun QuickMixPanel(
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(visibleTracks, key = { it.second.id }) { (index, track) ->
                     Column {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(track.name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             FilterChip(selected = track.muted, onClick = { onTrackMute(index, !track.muted) }, label = { Text(stringResource(R.string.workspace_mute)) })
                             FilterChip(selected = track.solo, onClick = { onTrackSolo(index, !track.solo) }, label = { Text(stringResource(R.string.workspace_solo)) })
@@ -397,7 +431,10 @@ private fun ArrangementNodeEditor(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(node.label, fontWeight = FontWeight.SemiBold)
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 TextButton(onClick = { onMove(node.id, -1) }, enabled = canMoveBefore) { Text("←") }
                 TextButton(onClick = { onMove(node.id, 1) }, enabled = canMoveAfter) { Text("→") }
                 listOf(1, 2, 4, -1).forEach { repeat ->
@@ -413,7 +450,7 @@ private fun ArrangementNodeEditor(
                     FilterChip(
                         selected = node.preRollBars == bars,
                         onClick = { onPreRoll(node.id, bars) },
-                        label = { Text(if (bars == 0) "Pre 0" else "Pre ${bars}") },
+                        label = { Text(if (bars == 0) "Pre 0" else "Pre $bars") },
                     )
                 }
             }
@@ -437,10 +474,21 @@ private fun SetlistPanel(
             } else {
                 Text(state.setlistName, fontWeight = FontWeight.SemiBold)
                 Text("${state.currentIndex + 1} / ${state.totalSongs} · ${state.currentSongTitle.orEmpty()}")
-                state.nextSongTitle?.let { Text("${stringResource(R.string.workspace_next)}: $it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                state.nextSongTitle?.let {
+                    Text("${stringResource(R.string.workspace_next)}: $it", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                when {
+                    state.preloadingNext -> Text("${stringResource(R.string.workspace_preloaded)}…", color = MaterialTheme.colorScheme.primary)
+                    state.nextReady -> Text(stringResource(R.string.workspace_preloaded), color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold)
+                }
+                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onPrevious, enabled = state.hasPrevious, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.workspace_previous_song)) }
-                    Button(onClick = onNext, enabled = state.hasNext, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.workspace_next_song)) }
+                    OutlinedButton(onClick = onPrevious, enabled = state.hasPrevious, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.workspace_previous_song))
+                    }
+                    Button(onClick = onNext, enabled = state.hasNext, modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.workspace_next_song))
+                    }
                 }
                 TextButton(onClick = onExit) { Text(stringResource(R.string.close)) }
             }
@@ -449,8 +497,6 @@ private fun SetlistPanel(
 }
 
 private fun formatWorkspaceTime(ms: Long): String {
-    val total = (ms.coerceAtLeast(0L) / 1000L)
-    val minutes = total / 60
-    val seconds = total % 60
-    return "%d:%02d".format(minutes, seconds)
+    val total = ms.coerceAtLeast(0L) / 1000L
+    return "%d:%02d".format(total / 60L, total % 60L)
 }
