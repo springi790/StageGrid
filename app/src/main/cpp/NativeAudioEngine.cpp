@@ -29,6 +29,7 @@ NativeAudioEngine::NativeAudioEngine() {
 NativeAudioEngine::~NativeAudioEngine() {
     std::lock_guard<std::mutex> lock(controlMutex_);
     playing_.store(false, std::memory_order_release);
+    clearGuideCue();
     stopDecoderThreads();
     closeStreamLocked();
     tracks_.clear();
@@ -79,6 +80,7 @@ bool NativeAudioEngine::loadSong(const std::vector<std::string>& paths, const st
     }
     std::lock_guard<std::mutex> lock(controlMutex_);
     playing_.store(false, std::memory_order_release);
+    clearGuideCue();
     stopDecoderThreads();
     tracks_.clear();
     if (!openStreamLocked()) return false;
@@ -120,6 +122,7 @@ bool NativeAudioEngine::loadSong(const std::vector<std::string>& paths, const st
 void NativeAudioEngine::unloadSong() {
     std::lock_guard<std::mutex> lock(controlMutex_);
     playing_.store(false, std::memory_order_release);
+    clearGuideCue();
     cancelPendingPathFromControl();
     stopDecoderThreads();
     tracks_.clear();
@@ -451,6 +454,7 @@ void NativeAudioEngine::pause() {
 
 void NativeAudioEngine::stop() {
     const bool wasPlaying = playing_.exchange(false, std::memory_order_acq_rel);
+    clearGuideCue();
     trackGateUntilFrame_.store(-1, std::memory_order_release);
     PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
     path.loopEnabled = false;
@@ -466,6 +470,7 @@ void NativeAudioEngine::stop() {
 void NativeAudioEngine::seekToMs(int64_t ms) {
     const int64_t target = std::clamp<int64_t>(msToFrames(ms), 0, durationFrames_.load(std::memory_order_acquire));
     const bool resume = playing_.exchange(false, std::memory_order_acq_rel);
+    clearGuideCue();
     trackGateUntilFrame_.store(-1, std::memory_order_release);
     PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
     path.jumpAtFrame = -1;
@@ -508,6 +513,7 @@ void NativeAudioEngine::setClickRoute(int route) {
 }
 
 void NativeAudioEngine::setLoop(bool enabled, int64_t startMs, int64_t endMs) {
+    clearGuideCue();
     trackGateUntilFrame_.store(-1, std::memory_order_release);
     PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
     path.jumpAtFrame = -1;
@@ -536,11 +542,38 @@ void NativeAudioEngine::scheduleJump(int64_t atMs, int64_t targetMs, bool disabl
 }
 
 void NativeAudioEngine::clearScheduledJump() {
+    clearGuideCue();
     PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
     path.jumpAtFrame = -1;
     path.jumpTargetFrame = -1;
     path.disableLoopAfterJump = false;
     stagePathChange(path);
+}
+
+bool NativeAudioEngine::scheduleGuideCue(
+    const std::vector<float>& monoSamples,
+    int64_t atMs,
+    int64_t suppressUntilMs,
+    int route,
+    float volume
+) {
+    const int sr = std::max(1, outputSampleRate_.load(std::memory_order_acquire));
+    if (monoSamples.empty() || monoSamples.size() > static_cast<size_t>(sr * 8)) return false;
+    if (atMs < 0 || suppressUntilMs <= atMs) return false;
+
+    auto cue = std::make_shared<GuideCueData>();
+    cue->monoSamples = monoSamples;
+    cue->startFrame = msToFrames(atMs);
+    cue->suppressUntilFrame = msToFrames(suppressUntilMs);
+    cue->route = std::clamp(route, static_cast<int>(BOTH), static_cast<int>(RIGHT));
+    cue->volume = std::clamp(volume, 0.0f, 1.5f);
+    cue->consumed.store(false, std::memory_order_relaxed);
+    std::atomic_store_explicit(&guideCue_, std::move(cue), std::memory_order_release);
+    return true;
+}
+
+void NativeAudioEngine::clearGuideCue() noexcept {
+    std::atomic_store_explicit(&guideCue_, std::shared_ptr<GuideCueData>{}, std::memory_order_release);
 }
 
 bool NativeAudioEngine::prepareCountIn(int64_t targetMs, int bars) {
@@ -550,6 +583,7 @@ bool NativeAudioEngine::prepareCountIn(int64_t targetMs, int bars) {
         return false;
     }
 
+    clearGuideCue();
     const int safeBars = std::clamp(bars, 1, 2);
     const int sr = std::max(1, outputSampleRate_.load(std::memory_order_acquire));
     const int beatsPerBar = std::max(1, beatsPerBar_.load(std::memory_order_acquire));
@@ -582,6 +616,7 @@ int64_t NativeAudioEngine::countInRemainingMs() const {
 bool NativeAudioEngine::setOutputDevice(int32_t deviceId) {
     std::lock_guard<std::mutex> lock(controlMutex_);
     const bool resume = playing_.exchange(false, std::memory_order_acq_rel);
+    clearGuideCue();
     cancelPendingPathFromControl();
 
     const int active = activeBank_.load(std::memory_order_acquire);
@@ -708,6 +743,7 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
         callbackLoopDisabledLocally_ = false;
     }
     const PathState callbackPath = loadPathState(active);
+    const auto guideCue = std::atomic_load_explicit(&guideCue_, std::memory_order_acquire);
 
     bool anySolo = false;
     for (const auto &track : tracks_) anySolo = anySolo || track->solo.load(std::memory_order_relaxed);
@@ -723,6 +759,8 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
         if (gateUntil >= 0 && frame >= gateUntil) {
             trackGateUntilFrame_.store(-1, std::memory_order_relaxed);
         }
+        const bool guideCueEnabled = guideCue && !guideCue->consumed.load(std::memory_order_relaxed) &&
+            frame >= guideCue->startFrame && frame < guideCue->suppressUntilFrame;
 
         for (const auto &track : tracks_) {
             float l = 0.0f, r = 0.0f;
@@ -735,6 +773,7 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
             if (anySolo && !track->solo.load(std::memory_order_relaxed)) continue;
             if (track->type == CLICK) continue;
             if (track->type == GUIDE && !guideEnabled_.load(std::memory_order_relaxed)) continue;
+            if (track->type == GUIDE && guideCueEnabled) continue;
 
             const float volume = track->volume.load(std::memory_order_relaxed);
             const int route = track->outputRoute.load(std::memory_order_relaxed);
@@ -751,6 +790,20 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
             }
         }
         if (trackUnderrun) underruns_.fetch_add(1, std::memory_order_relaxed);
+
+        if (guideCueEnabled && guideEnabled_.load(std::memory_order_relaxed)) {
+            const int64_t cueOffset = frame - guideCue->startFrame;
+            if (cueOffset >= 0 && cueOffset < static_cast<int64_t>(guideCue->monoSamples.size())) {
+                const float cueSample = guideCue->monoSamples[static_cast<size_t>(cueOffset)] * guideCue->volume;
+                if (guideCue->route == LEFT) mixL += cueSample;
+                else if (guideCue->route == RIGHT) mixR += cueSample;
+                else {
+                    mixL += cueSample;
+                    mixR += cueSample;
+                }
+            }
+        }
+
         const float click = generatedClickSample(frame);
         const int clickRoute = clickRoute_.load(std::memory_order_relaxed);
         if (clickRoute == LEFT) mixL += click;
@@ -764,7 +817,15 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
         out[i * 2 + 1] = clampUnit(mixR * master);
         renderedFrames++;
 
-        frame = nextTimelineFrame(frame, callbackPath, callbackJumpConsumed_, callbackLoopDisabledLocally_);
+        const int64_t previousFrame = frame;
+        const int64_t nextFrame = nextTimelineFrame(frame, callbackPath, callbackJumpConsumed_, callbackLoopDisabledLocally_);
+        if (guideCue && !guideCue->consumed.load(std::memory_order_relaxed)) {
+            if (previousFrame + 1 >= guideCue->suppressUntilFrame ||
+                (previousFrame >= guideCue->startFrame && nextFrame != previousFrame + 1)) {
+                guideCue->consumed.store(true, std::memory_order_release);
+            }
+        }
+        frame = nextFrame;
         if (frame >= duration) {
             frame = duration;
             playing_.store(false, std::memory_order_release);
