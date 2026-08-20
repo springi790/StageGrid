@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dev.stagegrid.audio.ClickSubdivision
+import dev.stagegrid.model.OutputBus
 import dev.stagegrid.model.StereoRoute
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -19,6 +20,7 @@ class AppSettingsRepository(private val context: Context) {
         val performanceLock: Boolean = false,
         val clickSubdivision: ClickSubdivision = ClickSubdivision.QUARTER,
         val clickRoute: StereoRoute = StereoRoute.BOTH,
+        val clickBus: OutputBus = OutputBus.OUT_1_2,
         val countInBars: Int = 0,
         /** auto follows the detected Guide language; es/en/fr/pt force an installed language. */
         val nativeGuideLanguage: String = "auto",
@@ -32,6 +34,7 @@ class AppSettingsRepository(private val context: Context) {
                 it.subdivisionsPerBeat == (values[CLICK_SUBDIVISION] ?: ClickSubdivision.QUARTER.subdivisionsPerBeat)
             } ?: ClickSubdivision.QUARTER,
             clickRoute = StereoRoute.fromStorage(values[CLICK_ROUTE] ?: StereoRoute.BOTH.name),
+            clickBus = OutputBus.fromStorage(values[CLICK_BUS] ?: OutputBus.OUT_1_2.nativeCode),
             countInBars = (values[COUNT_IN_BARS] ?: 0).coerceIn(0, 2),
             nativeGuideLanguage = (values[NATIVE_GUIDE_LANGUAGE] ?: "auto")
                 .takeIf { it in setOf("auto", "es", "en", "fr", "pt") } ?: "auto",
@@ -54,6 +57,10 @@ class AppSettingsRepository(private val context: Context) {
         context.stageGridDataStore.edit { it[CLICK_ROUTE] = route.name }
     }
 
+    suspend fun setClickBus(bus: OutputBus) {
+        context.stageGridDataStore.edit { it[CLICK_BUS] = bus.nativeCode }
+    }
+
     suspend fun setCountInBars(bars: Int) {
         context.stageGridDataStore.edit { it[COUNT_IN_BARS] = bars.coerceIn(0, 2) }
     }
@@ -68,6 +75,7 @@ class AppSettingsRepository(private val context: Context) {
         val PERFORMANCE_LOCK = booleanPreferencesKey("performance_lock")
         val CLICK_SUBDIVISION = intPreferencesKey("click_subdivision")
         val CLICK_ROUTE = stringPreferencesKey("click_route")
+        val CLICK_BUS = intPreferencesKey("click_bus")
         val COUNT_IN_BARS = intPreferencesKey("count_in_bars")
         val NATIVE_GUIDE_LANGUAGE = stringPreferencesKey("native_guide_language")
     }
