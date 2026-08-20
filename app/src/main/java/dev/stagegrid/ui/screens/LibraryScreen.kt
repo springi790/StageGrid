@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +40,7 @@ fun LibraryScreen(
     onOpenCloud: () -> Unit,
     onLoadSong: (String) -> Unit,
     onEditSong: (SongEntity) -> Unit,
+    onDeleteSong: (SongEntity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var query by remember { mutableStateOf("") }
@@ -77,7 +80,12 @@ fun LibraryScreen(
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(visible, key = { it.id }) { song ->
-                    SongCard(song = song, onLoadSong = onLoadSong, onEditSong = onEditSong)
+                    SongCard(
+                        song = song,
+                        onLoadSong = onLoadSong,
+                        onEditSong = onEditSong,
+                        onDeleteSong = onDeleteSong,
+                    )
                 }
             }
         }
@@ -85,7 +93,12 @@ fun LibraryScreen(
 }
 
 @Composable
-private fun SongCard(song: SongEntity, onLoadSong: (String) -> Unit, onEditSong: (SongEntity) -> Unit) {
+private fun SongCard(
+    song: SongEntity,
+    onLoadSong: (String) -> Unit,
+    onEditSong: (SongEntity) -> Unit,
+    onDeleteSong: (SongEntity) -> Unit,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text(song.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
@@ -100,6 +113,12 @@ private fun SongCard(song: SongEntity, onLoadSong: (String) -> Unit, onEditSong:
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { onLoadSong(song.id) }) { Text(stringResource(R.string.load)) }
                 OutlinedButton(onClick = { onEditSong(song) }) { Text(stringResource(R.string.edit)) }
+                TextButton(
+                    onClick = { onDeleteSong(song) },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Text(stringResource(R.string.delete_song))
+                }
             }
         }
     }
