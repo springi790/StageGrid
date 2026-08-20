@@ -7,11 +7,10 @@ import kotlin.math.max
 import kotlin.math.sqrt
 
 /**
- * Finds the first strong click transient in a PCM/float WAV reference track.
+ * Locates the beginning of a stable Click pulse train instead of trusting one isolated transient.
  *
- * This deliberately does NOT trim arbitrary leading silence from every stem. Musical rests and
- * count-ins are part of the arrangement. The detected offset is stored as the musical-grid origin
- * and used by the native click generator.
+ * This deliberately does NOT trim leading silence from stems. The selected offset is only the
+ * musical-grid origin used by StageGrid's native Click and section snapping.
  */
 object ClickGridAnalyzer {
     data class Result(
@@ -21,8 +20,10 @@ object ClickGridAnalyzer {
         val noiseFloor: Float,
     )
 
+    private data class Onset(val frame: Long, val energy: Float)
+
     private const val MAX_SCAN_SECONDS = 30
-    private const val MIN_ABSOLUTE_THRESHOLD = 0.015f
+    private const val MIN_ABSOLUTE_THRESHOLD = 0.008f
 
     fun analyze(file: File): Result? {
         RandomAccessFile(file, "r").use { raf ->
@@ -52,29 +53,74 @@ object ClickGridAnalyzer {
             }
             if (windowIndex == 0 || globalPeak < MIN_ABSOLUTE_THRESHOLD) return null
 
-            // Estimate the floor from the quietest 20% of analysis windows. This is resilient to
-            // a click track that begins immediately and avoids assuming the first seconds are quiet.
             val sorted = envelope.copyOf(windowIndex).sorted()
             val floorCount = max(1, sorted.size / 5)
             val noiseFloor = sorted.take(floorCount).average().toFloat()
-            val threshold = max(MIN_ABSOLUTE_THRESHOLD, max(noiseFloor * 8f, globalPeak * 0.16f))
+            // A later accented click should not hide quieter early pulses.
+            val threshold = max(MIN_ABSOLUTE_THRESHOLD, max(noiseFloor * 6f, globalPeak * 0.06f))
 
+            val coarse = mutableListOf<Pair<Long, Float>>()
             var previous = 0f
+            var lastCandidateWindow = -100
             for (i in 0 until windowIndex) {
                 val current = envelope[i]
-                val rising = current >= threshold && current >= previous * 1.8f
-                if (rising) {
-                    val coarseFrame = i.toLong() * windowFrames
-                    val refined = refineTransient(raf, wav, coarseFrame, threshold * 0.55f)
-                    val offsetMs = refined * 1000L / wav.sampleRate
-                    val separation = if (noiseFloor > 0.00001f) current / noiseFloor else current / 0.00001f
-                    val confidence = ((separation - 2f) / 18f).coerceIn(0f, 1f)
-                    return Result(offsetMs, confidence, globalPeak, noiseFloor)
+                val crossed = current >= threshold && previous < threshold * 0.78f
+                val sharpRise = current >= threshold && current >= previous * 1.35f
+                if ((crossed || sharpRise) && i - lastCandidateWindow >= 3) {
+                    coarse += i.toLong() * windowFrames to current
+                    lastCandidateWindow = i
                 }
                 previous = current
             }
-            return null
+            if (coarse.isEmpty()) return null
+
+            val onsets = coarse.map { (coarseFrame, energy) ->
+                Onset(
+                    frame = refineTransient(raf, wav, coarseFrame, threshold * 0.45f),
+                    energy = energy,
+                )
+            }.distinctBy { it.frame / max(1, wav.sampleRate / 500) }
+
+            val selected = chooseStableTrainStart(onsets, wav.sampleRate) ?: onsets.first()
+            val offsetMs = selected.frame * 1000L / wav.sampleRate
+            val separation = selected.energy / noiseFloor.coerceAtLeast(0.00001f)
+            val baseConfidence = ((separation - 2f) / 18f).coerceIn(0f, 1f)
+            val periodicBonus = if (isStableTrainStart(selected.frame, onsets, wav.sampleRate)) 0.20f else 0f
+            return Result(
+                offsetMs = offsetMs,
+                confidence = (baseConfidence + periodicBonus).coerceIn(0f, 1f),
+                peak = globalPeak,
+                noiseFloor = noiseFloor,
+            )
         }
+    }
+
+    private fun chooseStableTrainStart(onsets: List<Onset>, sampleRate: Int): Onset? {
+        if (onsets.size < 4) return null
+        for (i in 0 until minOf(onsets.size, 32)) {
+            if (isStableTrainStart(onsets[i].frame, onsets.drop(i), sampleRate)) return onsets[i]
+        }
+        return null
+    }
+
+    private fun isStableTrainStart(startFrame: Long, onsets: List<Onset>, sampleRate: Int): Boolean {
+        if (onsets.size < 4) return false
+        val minimumInterval = sampleRate * 80L / 1000L
+        val maximumInterval = sampleRate * 2_000L / 1000L
+        val startIndex = onsets.indexOfFirst { it.frame == startFrame }.takeIf { it >= 0 } ?: 0
+        val maxBaseIndex = minOf(onsets.lastIndex, startIndex + 4)
+        for (j in startIndex + 1..maxBaseIndex) {
+            val interval = onsets[j].frame - startFrame
+            if (interval !in minimumInterval..maximumInterval) continue
+            val tolerance = max(sampleRate / 100L, (interval * 12L) / 100L) // >=10 ms, 12%.
+            var hits = 0
+            for (multiple in 1..4) {
+                val expected = startFrame + interval * multiple
+                if (onsets.any { abs(it.frame - expected) <= tolerance }) hits++
+            }
+            if (hits >= 3) return true
+        }
+        return false
     }
 
     private fun refineTransient(raf: RandomAccessFile, wav: WavInfo, coarseFrame: Long, threshold: Float): Long {
@@ -124,7 +170,7 @@ object ClickGridAnalyzer {
                     formatCode = readU16(raf)
                     channels = readU16(raf)
                     sampleRate = readU32(raf).toInt()
-                    readU32(raf) // byte rate
+                    readU32(raf)
                     blockAlign = readU16(raf)
                     bitsPerSample = readU16(raf)
                     if (formatCode == 0xFFFE && size >= 40) {
@@ -134,7 +180,7 @@ object ClickGridAnalyzer {
                 }
                 "data" -> {
                     dataOffset = chunkStart
-                    dataBytes = size
+                    dataBytes = minOf(size, (raf.length() - chunkStart).coerceAtLeast(0L))
                 }
             }
             raf.seek((chunkStart + size + (size and 1L)).coerceAtMost(raf.length()))
@@ -144,25 +190,24 @@ object ClickGridAnalyzer {
         if (formatCode !in setOf(1, 3)) return null
         if (channels !in 1..8 || sampleRate !in 8_000..384_000) return null
         if (bitsPerSample !in setOf(8, 16, 24, 32) || blockAlign <= 0 || dataBytes <= 0) return null
+        if (formatCode == 3 && bitsPerSample != 32) return null
         val minimumAlign = channels * ((bitsPerSample + 7) / 8)
         if (blockAlign < minimumAlign) return null
         return WavInfo(formatCode, channels, sampleRate, bitsPerSample, blockAlign, dataOffset, dataBytes / blockAlign)
     }
 
-    /** Reads one complete interleaved frame from the current file position. */
     private fun readNextFramePeak(raf: RandomAccessFile, wav: WavInfo): Float {
         val bytesPerSample = (wav.bitsPerSample + 7) / 8
         var peak = 0f
         repeat(wav.channels) {
             val sample = when {
                 wav.formatCode == 3 && wav.bitsPerSample == 32 -> {
-                    val bits = readU32(raf).toInt()
-                    Float.fromBits(bits).takeIf { it.isFinite() }?.coerceIn(-1f, 1f) ?: 0f
+                    Float.fromBits(readU32(raf).toInt()).takeIf { it.isFinite() }?.coerceIn(-1f, 1f) ?: 0f
                 }
                 wav.bitsPerSample == 8 -> (raf.readUnsignedByte() - 128) / 128f
                 wav.bitsPerSample == 16 -> readS16(raf) / 32768f
                 wav.bitsPerSample == 24 -> readS24(raf) / 8388608f
-                wav.bitsPerSample == 32 -> readS32(raf) / 2147483648f
+                wav.bitsPerSample == 32 -> readU32(raf).toInt() / 2147483648f
                 else -> 0f
             }
             peak = max(peak, abs(sample))
@@ -177,17 +222,21 @@ object ClickGridAnalyzer {
         raf.readFully(bytes)
         return bytes.toString(Charsets.US_ASCII)
     }
-    private fun readU16(raf: RandomAccessFile): Int = raf.readUnsignedByte() or (raf.readUnsignedByte() shl 8)
+
+    private fun readU16(raf: RandomAccessFile): Int =
+        raf.readUnsignedByte() or (raf.readUnsignedByte() shl 8)
+
     private fun readS16(raf: RandomAccessFile): Int {
-        val u = readU16(raf)
-        return if (u and 0x8000 != 0) u - 0x10000 else u
+        val value = readU16(raf)
+        return if (value and 0x8000 != 0) value - 0x10000 else value
     }
+
     private fun readS24(raf: RandomAccessFile): Int {
-        var v = raf.readUnsignedByte() or (raf.readUnsignedByte() shl 8) or (raf.readUnsignedByte() shl 16)
-        if (v and 0x800000 != 0) v = v or -0x1000000
-        return v
+        var value = raf.readUnsignedByte() or (raf.readUnsignedByte() shl 8) or (raf.readUnsignedByte() shl 16)
+        if (value and 0x800000 != 0) value = value or -0x1000000
+        return value
     }
-    private fun readS32(raf: RandomAccessFile): Int = readU32(raf).toInt()
+
     private fun readU32(raf: RandomAccessFile): Long {
         val b0 = raf.readUnsignedByte().toLong()
         val b1 = raf.readUnsignedByte().toLong()
