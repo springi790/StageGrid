@@ -73,12 +73,12 @@ class AudioEngineController(
                     val position = rawPosition.coerceAtLeast(0L)
                     val actuallyPlaying = native.isPlaying()
                     val countInRemaining = native.countInRemainingMs()
+                    val crossedQueued = current.queuedSectionId?.let { queuedId ->
+                        val queued = current.sections.firstOrNull { it.id == queuedId }
+                        queued != null && position >= queued.startMs && position < queued.endMs
+                    } ?: false
+                    if (crossedQueued) guideCueRequestSerial.incrementAndGet()
                     _state.update { previous ->
-                        val crossedQueued = previous.queuedSectionId?.let { queuedId ->
-                            val queued = previous.sections.firstOrNull { it.id == queuedId }
-                            queued != null && position >= queued.startMs && position < queued.endMs
-                        } ?: false
-                        if (crossedQueued) guideCueRequestSerial.incrementAndGet()
                         previous.copy(
                             positionMs = position,
                             countInRemainingMs = countInRemaining,
@@ -186,6 +186,25 @@ class AudioEngineController(
                 }
             }
         }
+    }
+
+    /** Stops decoder threads and closes WAV readers before portable restore replaces private files. */
+    fun unloadForLibraryRestore() {
+        cancelArrangementGuideCue()
+        native.pause()
+        native.unloadSong()
+        audioManager.abandonAudioFocusRequest(focusRequest)
+        context.stopService(Intent(context, PlaybackService::class.java))
+        val previous = _state.value
+        _state.value = PlayerState(
+            clickEnabled = previous.clickEnabled,
+            guideEnabled = previous.guideEnabled,
+            clickSubdivision = previous.clickSubdivision,
+            clickRoute = previous.clickRoute,
+            countInBars = previous.countInBars,
+            masterVolume = previous.masterVolume,
+            selectedOutputDeviceId = previous.selectedOutputDeviceId,
+        )
     }
 
     fun stopAll() {
