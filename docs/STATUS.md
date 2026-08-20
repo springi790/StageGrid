@@ -1,4 +1,4 @@
-# Implementation status — 0.2.0-alpha10
+# Implementation status — 0.2.0-alpha10.1
 
 This document describes what exists in source. It intentionally does not promote planned work to implemented status.
 
@@ -66,6 +66,19 @@ This document describes what exists in source. It intentionally does not promote
 - Automatic section proposals and delayed section recovery after BPM becomes available.
 - Per-song Native Guide language switching without reimporting stems or repeating recognition.
 
+### Alpha10.1 recognition hardening
+
+- Guide fingerprint envelopes accumulate per-channel energy before averaging, preventing stereo phase cancellation from erasing speech energy.
+- Persistent fingerprint cache format is versioned to v2 and older fingerprints are rebuilt automatically.
+- Candidate discovery combines strong and relaxed activity thresholds so one loud call is less likely to hide quieter calls elsewhere in the Guide.
+- Local onset candidates are added for compressed/continuous Guide audio that does not fully return to silence between calls.
+- Template search tolerance is widened from roughly ±120 ms to ±240 ms.
+- Primary matching uses a semantic confidence margin so the same canonical cue in another installed language does not count as a conflicting label.
+- A conservative second matching pass is allowed after the source Guide language can be inferred.
+- Click-grid detection gathers multiple transient candidates and prefers the start of a stable periodic pulse train over an isolated early spike.
+- If no stable Click train is found, the first valid candidate remains the fallback.
+- JVM regression tests cover quiet anti-phase Guide recognition and an isolated transient before a valid Click train.
+
 ### Alpha09 Guide reanalysis / persistent cache
 
 - Guide sample fingerprints can be persisted to app-private disk storage.
@@ -110,7 +123,7 @@ This document describes what exists in source. It intentionally does not promote
 - NEXT/PREV stop/unload the old native song graph before a different song is loaded.
 - Destination songs load stopped and never auto-play because of NEXT/PREV.
 - The next song receives bounded OS filesystem-cache warming by reading the beginning of each normalized track on an IO dispatcher.
-- No second native decoder graph is kept alive for alpha10 Setlist Live.
+- No second native decoder graph is kept alive for alpha10.1 Setlist Live.
 - Navigation index/boundary policy has deterministic JVM coverage.
 
 ### UX / live operation
@@ -123,6 +136,8 @@ This document describes what exists in source. It intentionally does not promote
 
 ## Implemented but not yet stage-qualified
 
+- Alpha10.1 Guide-recognition improvements across a broad set of real-world Guide encodes, gain structures and stereo layouts.
+- Stable Click-train grid anchoring against real imported Click references with count-ins/noise/accent variation.
 - Double-buffered Loop/section transitions under representative high stem counts.
 - Alpha10 multi-cue arrangement-aware Guide phrases on physical devices under rapid repeated destination changes.
 - Persistent Guide-cache speed/invalidations across real device storage/process-restart scenarios.
@@ -150,12 +165,14 @@ This document describes what exists in source. It intentionally does not promote
 
 ## Beta readiness
 
-`0.2.0-alpha10` is intended to be the final broad alpha integration before `0.2.0-beta01`, assuming physical-device feedback does not reveal an architectural blocker.
+`0.2.0-alpha10.1` is the current pre-beta candidate. It exists specifically because field feedback exposed recognition variability after the broad alpha10 sprint.
 
-Beta01 should focus on usability, onboarding, accessibility, recoverable errors and fixes from alpha10 field feedback rather than adding another large subsystem.
+If representative failing songs improve without introducing false-positive Guide calls or incorrect grid origins, the next planned version is `0.2.0-beta01`.
+
+Beta01 should focus on usability, onboarding, accessibility, recoverable errors and fixes from field feedback rather than adding another large subsystem.
 
 Beta02 should focus on qualification/stability: high-track-count stress, repeated live transitions, process death, backups, low storage, Setlist Live and USB stereo behavior.
 
 ## Qualification status
 
-StageGrid `0.2.0-alpha10` remains a development alpha. CI verifies unit tests and debug assembly, but a successful build is not equivalent to stage qualification. Stable 0.2 and later 1.0 gates require representative physical Android hardware and prolonged live-use validation.
+StageGrid `0.2.0-alpha10.1` remains a development alpha. CI verifies unit tests and debug assembly, but a successful build is not equivalent to stage qualification. Stable 0.2 and later 1.0 gates require representative physical Android hardware and prolonged live-use validation.
