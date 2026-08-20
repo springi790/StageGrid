@@ -8,6 +8,25 @@ object ArrangementRuntime {
         val finished: Boolean,
     )
 
+    /**
+     * Chooses the node that becomes active when Arrangement is enabled.
+     *
+     * While stopped, the authored arrangement order is authoritative: playback must begin from the
+     * first arranged node even if the transport playhead is currently sitting inside another
+     * section. While already playing, keeping the current musical section is less disruptive, so
+     * the matching arranged node is used when possible.
+     */
+    fun startingNode(
+        graph: ArrangementGraph,
+        currentSectionId: String?,
+        isPlaying: Boolean,
+    ): ArrangementNode? {
+        val ordered = graph.normalized().nodes
+        if (ordered.isEmpty()) return null
+        if (!isPlaying) return ordered.first()
+        return ordered.firstOrNull { it.sectionId == currentSectionId } ?: ordered.first()
+    }
+
     fun advance(
         graph: ArrangementGraph,
         activeNodeId: String,
