@@ -17,6 +17,7 @@ import dev.stagegrid.guide.NativeGuideEventStore
 import dev.stagegrid.guide.NativeGuideRenderer
 import dev.stagegrid.model.OutputBus
 import dev.stagegrid.model.SectionEntity
+import dev.stagegrid.model.SongBundle
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.model.TrackEntity
 import dev.stagegrid.model.TrackType
@@ -50,6 +51,7 @@ class AudioEngineController(
     private var preferredOutputDeviceId: Int? = null
     private var preferredOutputChannels: Int = 2
     private var outputSwitchInProgress = false
+    private var preloadedBundle: SongBundle? = null
 
     private val focusRequest: AudioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
         .setAudioAttributes(
@@ -107,8 +109,18 @@ class AudioEngineController(
     /** Loads a song stopped. initialPositionMs is used only for safe session recovery. */
     fun loadSong(songId: String, initialPositionMs: Long = 0L) {
         cancelArrangementGuideCue()
+        native.clearPreloaded()
+        preloadedBundle = null
         scope.launch {
-            _state.update { it.copy(engineState = EngineState.LOADING, errorMessage = null) }
+            _state.update {
+                it.copy(
+                    engineState = EngineState.LOADING,
+                    preloadedSongId = null,
+                    preloadedSongTitle = null,
+                    crossfadeInProgress = false,
+                    errorMessage = null,
+                )
+            }
             val bundle = withContext(Dispatchers.IO) { repository.getSongBundle(songId) }
             if (bundle == null) {
                 _state.update { it.copy(engineState = EngineState.ERROR, errorMessage = "Song not found") }
@@ -166,6 +178,116 @@ class AudioEngineController(
         }
     }
 
+    /** Prepares a complete second song deck without replacing or pausing the current song. */
+    fun preloadSong(songId: String) {
+        val current = _state.value
+        if (songId == current.song?.id || songId == current.preloadedSongId) return
+        scope.launch {
+            val bundle = withContext(Dispatchers.IO) { repository.getSongBundle(songId) }
+            if (bundle == null) {
+                _state.update { it.copy(errorMessage = "Next song could not be found for preload.") }
+                return@launch
+            }
+            val beatsPerBar = bundle.song.timeSignature.substringBefore('/').toIntOrNull()?.coerceIn(1, 32) ?: 4
+            val ok = withContext(Dispatchers.Default) {
+                native.preloadSong(bundle.tracks, bundle.song.bpm, beatsPerBar, bundle.song.gridOffsetMs)
+            }
+            if (!ok) {
+                preloadedBundle = null
+                _state.update {
+                    it.copy(
+                        preloadedSongId = null,
+                        preloadedSongTitle = null,
+                        errorMessage = native.diagnostics().lastError.ifBlank { "Next song preload failed." },
+                    )
+                }
+                return@launch
+            }
+            val snapshot = _state.value
+            native.configurePreloaded(
+                clickEnabled = snapshot.clickEnabled,
+                guideEnabled = snapshot.guideEnabled,
+                clickSubdivision = snapshot.clickSubdivision.subdivisionsPerBeat,
+                clickRoute = snapshot.clickRoute,
+                clickBus = snapshot.clickBus,
+            )
+            preloadedBundle = bundle
+            _state.update {
+                it.copy(
+                    preloadedSongId = bundle.song.id,
+                    preloadedSongTitle = bundle.song.title,
+                    errorMessage = null,
+                )
+            }
+        }
+    }
+
+    fun clearPreloadedSong() {
+        native.clearPreloaded()
+        preloadedBundle = null
+        _state.update { it.copy(preloadedSongId = null, preloadedSongTitle = null, crossfadeInProgress = false) }
+    }
+
+    /**
+     * Starts the prepared deck muted, overlaps both native streams, then swaps deck ownership.
+     * This is intentionally executed off the main thread because the gain ramp is time based.
+     */
+    fun promotePreloadedSong(crossfadeMs: Int = 700) {
+        val bundle = preloadedBundle ?: return
+        val before = _state.value
+        if (before.crossfadeInProgress) return
+        val focus = audioManager.requestAudioFocus(focusRequest)
+        if (focus != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            _state.update { it.copy(errorMessage = "Audio focus was not granted by Android.") }
+            return
+        }
+        val serviceIntent = Intent(context, PlaybackService::class.java).setAction(PlaybackService.ACTION_ENSURE_FOREGROUND)
+        ContextCompat.startForegroundService(context, serviceIntent)
+        cancelArrangementGuideCue()
+        scope.launch {
+            _state.update { it.copy(crossfadeInProgress = true, errorMessage = null) }
+            val ok = withContext(Dispatchers.Default) {
+                native.promotePreloaded(crossfadeMs = crossfadeMs, targetMasterVolume = before.masterVolume)
+            }
+            if (!ok) {
+                _state.update {
+                    it.copy(
+                        crossfadeInProgress = false,
+                        errorMessage = native.diagnostics().lastError.ifBlank { "Preloaded song could not be promoted." },
+                    )
+                }
+                return@launch
+            }
+            preloadedBundle = null
+            val diagnostics = native.diagnostics()
+            val duration = native.durationMs().takeIf { it > 0L } ?: bundle.song.durationMs
+            _state.value = PlayerState(
+                engineState = EngineState.PLAYING,
+                song = bundle.song,
+                tracks = bundle.tracks,
+                sections = bundle.sections,
+                positionMs = native.positionMs().coerceAtLeast(0L),
+                durationMs = duration,
+                clickEnabled = before.clickEnabled,
+                guideEnabled = before.guideEnabled,
+                clickSubdivision = before.clickSubdivision,
+                clickRoute = before.clickRoute,
+                clickBus = before.clickBus,
+                countInBars = before.countInBars,
+                masterVolume = before.masterVolume,
+                selectedOutputDeviceId = before.selectedOutputDeviceId,
+                requestedOutputChannels = diagnostics.requestedOutputChannelCount,
+                outputChannelCount = diagnostics.outputChannelCount,
+                outputFallback = diagnostics.multichannelFallback,
+                outputNotice = before.outputNotice,
+                preloadedSongId = null,
+                preloadedSongTitle = null,
+                crossfadeInProgress = false,
+            )
+            scope.launch(Dispatchers.IO) { repository.markPlayed(bundle.song.id) }
+        }
+    }
+
     fun play() {
         val current = _state.value
         if (current.song == null || current.engineState == EngineState.LOADING) return
@@ -215,6 +337,7 @@ class AudioEngineController(
         cancelArrangementGuideCue()
         native.pause()
         native.unloadSong()
+        preloadedBundle = null
         audioManager.abandonAudioFocusRequest(focusRequest)
         context.stopService(Intent(context, PlaybackService::class.java))
         val previous = _state.value
