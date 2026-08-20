@@ -26,6 +26,8 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
     private var loadedSongId: String? = null
     private var previousPositionMs: Long = 0L
     private var previousSectionId: String? = null
+    private var previousPlaying = false
+    private var previousCountingIn = false
 
     init {
         viewModel.viewModelScope.launch {
@@ -37,6 +39,8 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
         val song = player.song
         if (song == null) {
             loadedSongId = null
+            previousPlaying = false
+            previousCountingIn = false
             _state.value = ArrangementRuntimeState()
             return
         }
@@ -48,6 +52,8 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
             _state.value = ArrangementRuntimeState(graph = reconcile(graph, player))
             previousPositionMs = player.positionMs
             previousSectionId = player.currentSection?.id
+            previousPlaying = player.isPlaying
+            previousCountingIn = player.isCountingIn
             return
         }
 
@@ -55,13 +61,24 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
         if (!runtime.active || runtime.graph == null) {
             previousPositionMs = player.positionMs
             previousSectionId = player.currentSection?.id
+            previousPlaying = player.isPlaying
+            previousCountingIn = player.isCountingIn
             return
         }
 
+        // Starting Arrangement while stopped must never seek to the next node on its own.
+        // Arm the active node only when normal playback actually begins, or when a pre-roll/count-in
+        // finishes and the song enters its audible section.
+        val playbackBecameReady = player.isPlaying && !player.isCountingIn && (!previousPlaying || previousCountingIn)
+        if (playbackBecameReady && runtime.queuedNodeId == null) {
+            configureActiveNode(player, runtime)
+        }
+
         val currentSection = player.currentSection
-        val queued = runtime.queuedNode
+        val latestRuntime = _state.value
+        val queued = latestRuntime.queuedNode
         if (queued != null && currentSection?.id == queued.sectionId && previousSectionId != currentSection.id) {
-            _state.value = runtime.copy(
+            _state.value = latestRuntime.copy(
                 activeNodeId = queued.id,
                 queuedNodeId = null,
                 iteration = 1,
@@ -69,21 +86,22 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
             )
             configureActiveNode(player, _state.value)
         } else {
-            val active = runtime.activeNode
-            val activeSection = runtime.graph.sectionFor(active, player.sections)
+            val activeRuntime = _state.value
+            val active = activeRuntime.activeNode
+            val activeSection = activeRuntime.graph?.sectionFor(active, player.sections)
             val loopWrapped = activeSection != null &&
                 previousSectionId == activeSection.id && currentSection?.id == activeSection.id &&
                 previousPositionMs > activeSection.startMs + (activeSection.endMs - activeSection.startMs) / 2 &&
                 player.positionMs < activeSection.startMs + (activeSection.endMs - activeSection.startMs) / 3
 
             if (loopWrapped && active != null) {
-                val nextIteration = runtime.iteration + 1
+                val nextIteration = activeRuntime.iteration + 1
                 if (!active.infinite && nextIteration >= active.repeatCount) {
-                    _state.value = runtime.copy(iteration = nextIteration)
+                    _state.value = activeRuntime.copy(iteration = nextIteration)
                     app.audio.exitLoop()
                     queueNext(player, _state.value.copy(iteration = active.repeatCount))
                 } else {
-                    _state.value = runtime.copy(iteration = nextIteration)
+                    _state.value = activeRuntime.copy(iteration = nextIteration)
                 }
             }
 
@@ -95,6 +113,8 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
         }
         previousPositionMs = player.positionMs
         previousSectionId = currentSection?.id
+        previousPlaying = player.isPlaying
+        previousCountingIn = player.isCountingIn
     }
 
     private fun reconcile(graph: ArrangementGraph, player: PlayerState): ArrangementGraph {
@@ -123,8 +143,10 @@ private class ArrangementUiController(private val viewModel: StageGridViewModel)
             error = null,
         )
         val section = graph.sectionFor(active, player.sections) ?: return
-        if (!player.isPlaying && active.preRollBars > 0) {
-            launchStoppedNodeWithPreRoll(active.id, section.id, active.preRollBars)
+        if (!player.isPlaying) {
+            // When stopped, arming Arrangement is state-only. A configured pre-roll is the only
+            // operation allowed to initiate transport, and it targets the current active node.
+            if (active.preRollBars > 0) launchStoppedNodeWithPreRoll(active.id, section.id, active.preRollBars)
             return
         }
         if (player.currentSection?.id != active.sectionId) app.audio.queueOrJumpSection(section)
