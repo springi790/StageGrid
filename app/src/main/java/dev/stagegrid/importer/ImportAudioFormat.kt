@@ -5,10 +5,10 @@ import java.util.Locale
 /**
  * Import-time audio format policy.
  *
- * StageGrid keeps compressed decoding out of the realtime engine. Formats marked
- * [normalizeToWav] are decoded once during import into the app-private PCM WAV cache.
- * FLAC/OGG stay discoverable so the importer can report them clearly while their
- * production path is evaluated for a later 0.3 milestone.
+ * StageGrid keeps compressed/container decoding out of the realtime engine. Formats marked
+ * [normalizeToWav] are decoded once during import into app-private PCM WAV before playback.
+ * The 0.3 final-alpha policy uses Android's platform extractor/decoder for MP3, AAC/M4A and the
+ * FLAC/OGG families when the device exposes a compatible decoder.
  */
 enum class ImportAudioFormat(
     val extension: String,
@@ -20,8 +20,8 @@ enum class ImportAudioFormat(
     MP3("mp3", "MP3", playable = true, normalizeToWav = true),
     M4A("m4a", "M4A", playable = true, normalizeToWav = true),
     AAC("aac", "AAC", playable = true, normalizeToWav = true),
-    FLAC("flac", "FLAC", playable = false, normalizeToWav = false),
-    OGG("ogg", "OGG", playable = false, normalizeToWav = false),
+    FLAC("flac", "FLAC", playable = true, normalizeToWav = true),
+    OGG("ogg", "OGG", playable = true, normalizeToWav = true),
     ;
 
     companion object {
