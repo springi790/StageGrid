@@ -17,7 +17,21 @@ class AudioDeviceManager(context: Context) {
         val sampleRates: List<Int>,
         val isUsb: Boolean,
         val isBluetooth: Boolean,
-    )
+    ) {
+        val maxChannelCount: Int
+            get() = channelCounts.filter { it > 0 }.maxOrNull() ?: 2
+
+        /** StageGrid 0.4 uses stereo-pair buses and therefore negotiates an even count up to 8. */
+        val preferredStageGridChannels: Int
+            get() = when {
+                maxChannelCount >= 8 -> 8
+                maxChannelCount >= 6 -> 6
+                maxChannelCount >= 4 -> 4
+                else -> 2
+            }
+
+        val supportsMultichannel: Boolean get() = preferredStageGridChannels > 2
+    }
 
     private val audioManager = context.getSystemService(AudioManager::class.java)
     private val _outputs = MutableStateFlow<List<OutputDevice>>(emptyList())
@@ -55,7 +69,11 @@ class AudioDeviceManager(context: Context) {
                     ),
                 )
             }
-            .sortedWith(compareByDescending<OutputDevice> { it.isUsb }.thenBy { it.productName })
+            .sortedWith(
+                compareByDescending<OutputDevice> { it.isUsb }
+                    .thenByDescending { it.preferredStageGridChannels }
+                    .thenBy { it.productName },
+            )
     }
 
     fun close() = audioManager.unregisterAudioDeviceCallback(callback)
