@@ -127,17 +127,33 @@ Delivered from physical-device feedback:
 - Click-grid analysis prefers the beginning of a stable periodic pulse train instead of blindly accepting one isolated early transient;
 - regression tests for quiet anti-phase Guide audio and an isolated spike before a valid Click train.
 
+### 0.2.0-alpha10.2 — English Guide recognition isolation
+
+Delivered after field feedback showed Spanish recognition behaving reliably while English sources produced repeated `Vamp` / `Rap` false positives and longer analysis:
+
+- bounded source-language probe before the full recognition pass;
+- probe uses only a small evenly distributed candidate subset and SECTION templates;
+- full matching is restricted to the inferred source language when evidence is strong;
+- all-language fallback remains when language evidence is weak;
+- Spanish thresholds are preserved from alpha10.1;
+- English uses a stricter ambiguity margin for short SECTION calls;
+- alpha10.1's expensive rejected-candidate second full pass is removed;
+- regression tests cover English isolation and non-regression of Spanish recognition.
+
+COUNT recognition remains an explicit beta-polish item because very short spoken numbers are more ambiguous than SECTION phrases.
+
 This is the final planned recognition-specific alpha before beta unless representative failing Guide stems expose another release-blocking matcher defect.
 
 ## 0.2 beta plan
 
 ### 0.2.0-beta01 — usability / field-feedback beta
 
-Primary work after alpha10.1 feedback:
+Primary work after alpha10.2 feedback:
 
 - first-run onboarding for import, Click/Guide, common routing, sections, Setlist Live and backup/restore;
 - accessibility pass: large touch targets, labels/content descriptions, contrast/focus and small-screen layout checks;
 - clearer recoverable error states and progress/cancellation policy where cancellation is safe;
+- polish COUNT cue recognition and presentation without destabilizing reliable SECTION recognition;
 - polish around session recovery, Guide reanalysis and Setlist Live based on physical-device feedback;
 - no major new audio architecture unless testing exposes a blocker.
 
