@@ -58,6 +58,7 @@ fun PlayerScreen(
     onClick: (Boolean) -> Unit,
     onGuide: (Boolean) -> Unit,
     onNativeGuideLanguage: (String) -> Unit,
+    onReanalyzeNativeGuide: () -> Unit,
     onClickSubdivision: (ClickSubdivision) -> Unit,
     onClickRoute: (StereoRoute) -> Unit,
     onSetlistPrevious: () -> Unit,
@@ -79,7 +80,6 @@ fun PlayerScreen(
         MusicalGrid.from(song.bpm, song.timeSignature, song.gridOffsetMs)
     }
     val musicalPosition = grid?.positionAt(state.positionMs)
-
     var dragging by remember { mutableStateOf(false) }
     var seekFraction by remember { mutableFloatStateOf(0f) }
     var showAdvanced by remember { mutableStateOf(false) }
@@ -100,9 +100,7 @@ fun PlayerScreen(
                 val bpmLabel = song.bpm?.let { stringResource(R.string.simple_bpm_value, "%.0f".format(it)) }
                 val positionLabel = musicalPosition?.let { stringResource(R.string.simple_bar_beat_value, it.bar, it.beat) }
                 val simpleMeta = listOfNotNull(bpmLabel, positionLabel).joinToString("  ·  ")
-                if (simpleMeta.isNotBlank()) {
-                    Text(simpleMeta, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-                }
+                if (simpleMeta.isNotBlank()) Text(simpleMeta, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
             }
             if (state.engineState == EngineState.PLAYING) {
                 Text(stringResource(R.string.live), color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
@@ -113,20 +111,9 @@ fun PlayerScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.setlist_live_title), fontWeight = FontWeight.Bold)
-                    Text(
-                        setlistLive.setlistName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    Text(setlistLive.setlistName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     if (setlistLive.currentIndex >= 0 && setlistLive.totalSongs > 0) {
-                        Text(
-                            stringResource(
-                                R.string.setlist_live_song_position,
-                                setlistLive.currentIndex + 1,
-                                setlistLive.totalSongs,
-                            ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Text(stringResource(R.string.setlist_live_song_position, setlistLive.currentIndex + 1, setlistLive.totalSongs), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(Modifier.weight(1f)) {
@@ -139,19 +126,9 @@ fun PlayerScreen(
                         }
                     }
                     when {
-                        setlistLive.preloadingNext -> Text(
-                            stringResource(R.string.setlist_live_next_preparing),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        setlistLive.nextReady -> Text(
-                            stringResource(R.string.setlist_live_next_ready),
-                            color = MaterialTheme.colorScheme.secondary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        !setlistLive.hasNext -> Text(
-                            stringResource(R.string.setlist_live_no_next),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        setlistLive.preloadingNext -> Text(stringResource(R.string.setlist_live_next_preparing), color = MaterialTheme.colorScheme.primary)
+                        setlistLive.nextReady -> Text(stringResource(R.string.setlist_live_next_ready), color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold)
+                        !setlistLive.hasNext -> Text(stringResource(R.string.setlist_live_no_next), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     setlistLive.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -159,20 +136,14 @@ fun PlayerScreen(
                             onClick = onSetlistPrevious,
                             enabled = setlistLive.hasPrevious && state.engineState != EngineState.LOADING && !state.isCountingIn,
                             modifier = Modifier.weight(1f),
-                        ) {
-                            Text(stringResource(R.string.setlist_live_previous))
-                        }
+                        ) { Text(stringResource(R.string.setlist_live_previous)) }
                         Button(
                             onClick = onSetlistNext,
                             enabled = setlistLive.hasNext && state.engineState != EngineState.LOADING && !state.isCountingIn,
                             modifier = Modifier.weight(1f),
-                        ) {
-                            Text(stringResource(R.string.setlist_live_next), fontWeight = FontWeight.Bold)
-                        }
+                        ) { Text(stringResource(R.string.setlist_live_next), fontWeight = FontWeight.Bold) }
                     }
-                    OutlinedButton(onClick = onExitSetlistLive, modifier = Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.setlist_live_exit))
-                    }
+                    OutlinedButton(onClick = onExitSetlistLive, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.setlist_live_exit)) }
                 }
             }
         }
@@ -204,13 +175,8 @@ fun PlayerScreen(
 
                 state.queuedSectionId?.let { queuedId ->
                     if (!state.isCountingIn) {
-                        val queued = state.sections.firstOrNull { it.id == queuedId }
-                        queued?.let {
-                            Text(
-                                stringResource(R.string.queued_section_boundary, it.name),
-                                color = MaterialTheme.colorScheme.tertiary,
-                                fontWeight = FontWeight.SemiBold,
-                            )
+                        state.sections.firstOrNull { it.id == queuedId }?.let {
+                            Text(stringResource(R.string.queued_section_boundary, it.name), color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -222,10 +188,7 @@ fun PlayerScreen(
                 Slider(
                     value = seekFraction.coerceIn(0f, 1f),
                     onValueChange = { dragging = true; seekFraction = it },
-                    onValueChangeFinished = {
-                        dragging = false
-                        onSeek((seekFraction * state.durationMs).toLong())
-                    },
+                    onValueChangeFinished = { dragging = false; onSeek((seekFraction * state.durationMs).toLong()) },
                     enabled = !state.isCountingIn,
                 )
             }
@@ -233,10 +196,7 @@ fun PlayerScreen(
 
         if (state.sections.isNotEmpty()) {
             Text(stringResource(R.string.jump_to_section), fontWeight = FontWeight.SemiBold)
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 state.sections.forEach { section ->
                     val selected = state.currentSection?.id == section.id
                     val queued = state.queuedSectionId == section.id
@@ -254,9 +214,7 @@ fun PlayerScreen(
             onClick = onEditSections,
             enabled = !state.isPlaying && grid != null,
             modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.edit_song_sections), fontWeight = FontWeight.SemiBold)
-        }
+        ) { Text(stringResource(R.string.edit_song_sections), fontWeight = FontWeight.SemiBold) }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = onPlayPause, modifier = Modifier.weight(1.6f)) {
@@ -267,9 +225,7 @@ fun PlayerScreen(
                 onClick = if (state.loopSectionId == null) onLoop else onExitLoop,
                 modifier = Modifier.weight(1f),
                 enabled = !state.isCountingIn,
-            ) {
-                Text(if (state.loopSectionId == null) stringResource(R.string.loop) else stringResource(R.string.exit_loop))
-            }
+            ) { Text(if (state.loopSectionId == null) stringResource(R.string.loop) else stringResource(R.string.exit_loop)) }
         }
 
         Card(Modifier.fillMaxWidth()) {
@@ -304,73 +260,81 @@ fun PlayerScreen(
                 Text(stringResource(R.string.section_count_in), fontWeight = FontWeight.SemiBold)
                 Text(stringResource(R.string.section_count_in_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = state.countInBars == 0,
-                        onClick = { onCountInBars(0) },
-                        label = { Text(stringResource(R.string.count_in_off)) },
-                    )
-                    FilterChip(
-                        selected = state.countInBars == 1,
-                        onClick = { onCountInBars(1) },
-                        label = { Text(stringResource(R.string.one_bar)) },
-                    )
-                    FilterChip(
-                        selected = state.countInBars == 2,
-                        onClick = { onCountInBars(2) },
-                        label = { Text(stringResource(R.string.two_bars)) },
-                    )
+                    FilterChip(selected = state.countInBars == 0, onClick = { onCountInBars(0) }, label = { Text(stringResource(R.string.count_in_off)) })
+                    FilterChip(selected = state.countInBars == 1, onClick = { onCountInBars(1) }, label = { Text(stringResource(R.string.one_bar)) })
+                    FilterChip(selected = state.countInBars == 2, onClick = { onCountInBars(2) }, label = { Text(stringResource(R.string.two_bars)) })
                 }
                 if (state.countInBars > 0) {
                     OutlinedButton(
                         onClick = onPlaySectionWithCountIn,
                         enabled = !state.isPlaying && state.currentSection != null && grid != null,
                         modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.play_section_with_count_in))
-                    }
+                    ) { Text(stringResource(R.string.play_section_with_count_in)) }
                 }
             }
         }
 
-        if (nativeGuide.available && nativeGuide.songId == song.id) {
+        if ((nativeGuide.available || nativeGuide.canReanalyze) && nativeGuide.songId == song.id) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.native_guide_song_title), fontWeight = FontWeight.Bold)
-                    Text(
-                        stringResource(R.string.native_guide_events_count, nativeGuide.eventCount),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(stringResource(R.string.native_guide_song_language), fontWeight = FontWeight.SemiBold)
-                    Text(stringResource(R.string.native_guide_language_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                    if (nativeGuide.rendering) {
-                        Text(
-                            stringResource(R.string.native_guide_regenerating, nativeGuide.renderPercent),
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        LinearProgressIndicator(
-                            progress = { nativeGuide.renderPercent.coerceIn(0, 100) / 100f },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                    if (nativeGuide.available) {
+                        Text(stringResource(R.string.native_guide_events_count, nativeGuide.eventCount), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
-                        Row(
-                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            nativeGuide.languages.forEach { language ->
-                                FilterChip(
-                                    selected = nativeGuide.currentLanguage == language,
-                                    onClick = { onNativeGuideLanguage(language) },
-                                    enabled = !state.isPlaying && !state.isCountingIn,
-                                    label = { Text(guideLanguageLabel(language)) },
-                                )
-                            }
+                        Text(stringResource(R.string.native_guide_reanalysis_available), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+
+                    when {
+                        nativeGuide.reanalyzing -> {
+                            Text(
+                                stringResource(R.string.native_guide_reanalyzing, nativeGuide.reanalyzePercent),
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            LinearProgressIndicator(
+                                progress = { nativeGuide.reanalyzePercent.coerceIn(0, 100) / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                         }
-                        if (state.isPlaying || state.isCountingIn) {
-                            Text(stringResource(R.string.native_guide_change_stop_first), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        } else if (nativeGuide.languages.size <= 1) {
-                            Text(stringResource(R.string.native_guide_pack_missing_languages), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        nativeGuide.rendering -> {
+                            Text(
+                                stringResource(R.string.native_guide_regenerating, nativeGuide.renderPercent),
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            LinearProgressIndicator(
+                                progress = { nativeGuide.renderPercent.coerceIn(0, 100) / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        else -> {
+                            if (nativeGuide.available) {
+                                Text(stringResource(R.string.native_guide_song_language), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.native_guide_language_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    nativeGuide.languages.forEach { language ->
+                                        FilterChip(
+                                            selected = nativeGuide.currentLanguage == language,
+                                            onClick = { onNativeGuideLanguage(language) },
+                                            enabled = !state.isPlaying && !state.isCountingIn,
+                                            label = { Text(guideLanguageLabel(language)) },
+                                        )
+                                    }
+                                }
+                            }
+                            if (nativeGuide.canReanalyze) {
+                                OutlinedButton(
+                                    onClick = onReanalyzeNativeGuide,
+                                    enabled = !state.isPlaying && !state.isCountingIn,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) { Text(stringResource(R.string.native_guide_reanalyze_button), fontWeight = FontWeight.SemiBold) }
+                                Text(stringResource(R.string.native_guide_reanalyze_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (state.isPlaying || state.isCountingIn) {
+                                Text(stringResource(R.string.native_guide_change_stop_first), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else if (nativeGuide.available && nativeGuide.languages.size <= 1) {
+                                Text(stringResource(R.string.native_guide_pack_missing_languages), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                     nativeGuide.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -390,31 +354,20 @@ fun PlayerScreen(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(stringResource(R.string.advanced_options), fontWeight = FontWeight.Bold)
                     Text(
-                        stringResource(
-                            R.string.grid_status,
-                            song.bpm?.let { "%.2f".format(it) } ?: "—",
-                            song.gridOffsetMs,
-                        ),
+                        stringResource(R.string.grid_status, song.bpm?.let { "%.2f".format(it) } ?: "—", song.gridOffsetMs),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(stringResource(R.string.click_output), fontWeight = FontWeight.SemiBold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         StereoRoute.entries.forEach { route ->
-                            FilterChip(
-                                selected = state.clickRoute == route,
-                                onClick = { onClickRoute(route) },
-                                label = { Text(routeLabel(route)) },
-                            )
+                            FilterChip(selected = state.clickRoute == route, onClick = { onClickRoute(route) }, label = { Text(routeLabel(route)) })
                         }
                     }
                 }
             }
         }
 
-        Button(onClick = onStopAll, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.stop_all), fontWeight = FontWeight.ExtraBold)
-        }
-
+        Button(onClick = onStopAll, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.stop_all), fontWeight = FontWeight.ExtraBold) }
         state.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
