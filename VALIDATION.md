@@ -1,6 +1,6 @@
 # StageGrid validation record
 
-This file distinguishes checks that were actually executed for this source package from checks that still require a complete Android toolchain/device.
+This file distinguishes checks actually executed during implementation from checks that still require the complete Android toolchain and physical hardware.
 
 ## Previously executed foundation checks
 
@@ -12,57 +12,60 @@ This file distinguishes checks that were actually executed for this source packa
   - 16 files generated
   - 48 kHz mono format verified
   - expected impulse at 30 seconds verified in every file
-- C++ native engine/JNI syntax compilation against minimal Oboe/JNI/Android-log API stubs — **PASS** during implementation.
-- Android resource XML/manifest parse — **PASS** in the recorded foundation validation.
-- Spanish/default vs English string-key parity — **PASS** in the recorded foundation validation.
-- `R.string` reference coverage — **PASS** in the recorded foundation validation.
-- duplicate Kotlin import scan — **PASS** in the recorded foundation validation.
-- unfinished-marker source scan — **PASS** in the recorded foundation validation.
+- C++ native engine/JNI syntax compilation against minimal Oboe/JNI/Android-log API stubs — **PASS** during foundation implementation.
+- Android resource XML/manifest parse, ES/EN string parity, `R.string` coverage and source hygiene checks were recorded as **PASS** for the earlier foundation.
 
-## 0.3.0-alpha01 validation executed in the current implementation environment
-
-### Import format policy — PASS
-
-`ImportAudioFormat.kt` was compiled with the locally available Kotlin compiler and executable checks verified:
-
-- case-insensitive M4A recognition;
-- case-insensitive AAC recognition;
-- MP3/M4A/AAC are playable and require normalization;
-- FLAC remains detected but not playable;
-- detected extension set is exactly `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`.
-
-The executable check completed with:
-
-```text
-ImportAudioFormat checks: PASS
-```
+## 0.3.0-alpha01 validation already completed
 
 ### Shared platform decoder static type/syntax check — PASS
 
-`PlatformAudioToWavDecoder.kt` was compiled with `kotlinc` against minimal stubs for:
+`PlatformAudioToWavDecoder.kt` was compiled with `kotlinc` against minimal stubs for Android media APIs and `WavMetadataReader`.
 
-- `android.media.AudioFormat`;
-- `android.media.MediaCodec`;
-- `android.media.MediaExtractor`;
-- `android.media.MediaFormat`;
-- `WavMetadataReader`.
+This validated Kotlin syntax/type usage for the decoder implementation. It did **not** claim that a real Android codec stack decoded representative media.
 
-The compile completed successfully. Only unused-parameter warnings from the intentionally minimal stubs were emitted.
+## 0.3.0-alpha05 validation executed in the current implementation environment
 
-This check validates Kotlin syntax/type usage for the new decoder implementation. It does **not** claim that a real Android codec stack decoded MP3/M4A/AAC media.
+### Final import format policy — PASS
 
-## Physical Android decoder validation still required for 0.3.0-alpha01
+A pure Kotlin executable check compiled `ImportAudioFormat` and verified:
 
-Representative device tests must cover:
+- WAV/MP3/M4A/AAC/FLAC/OGG are recognized;
+- every format is currently marked playable;
+- every non-WAV format requires import-time normalization;
+- WAV remains the direct playback source path.
 
-- MP3 import regression;
-- M4A/AAC-LC import through typical Android codec stacks;
-- different M4A metadata/container layouts;
-- common raw/ADTS AAC sources where supported by `MediaExtractor`;
-- encoder delay/padding trimming and stem alignment;
-- malformed/unsupported compressed input cleanup;
-- long files and near-RIFF-limit normalized output;
-- Click/Guide analysis against normalized M4A/AAC stems.
+### Waveform peak-cache algorithm — PASS
+
+`WaveformPeakCache` compiled with the local Kotlin/JVM compiler and an executable synthetic-WAV check verified:
+
+- a 2-second stem with an impulse at 1.0 seconds maps near the 50% peak bucket;
+- a 1-second stem with an impulse at 0.5 seconds maps near the 25% bucket of the same 2-second shared song timeline;
+- shorter stems therefore are **not** visually stretched to the longest stem duration;
+- `loadOrGenerate` writes the peak cache;
+- cache deletion removes the regenerable peak file;
+- retained playback WAV remains present after cache deletion;
+- the cache can regenerate afterward.
+
+Executable result:
+
+```text
+StageGrid 0.3 pure Kotlin checks: PASS
+```
+
+### Storage cache safety — PASS
+
+A pure Kotlin executable check compiled `StorageCacheManager` with the waveform cache and verified:
+
+- local song/audio/cache/Guide accounting is discovered from the expected app-private paths;
+- `clearRegenerableCaches()` removes song cache data;
+- playback WAV data remains present;
+- installed Guide-pack data remains present.
+
+Executable result:
+
+```text
+StageGrid storage cache check: PASS
+```
 
 ## Full Android build status in this implementation environment
 
@@ -74,27 +77,73 @@ The current host does not provide the complete Android SDK/NDK/Gradle dependency
 ./gradlew assembleDebug
 ```
 
-No APK is described as compiled by this environment. The repository includes a GitHub Actions workflow that runs `testDebugUnitTest` and `assembleDebug` for pull requests and the protected release flow.
+The repository GitHub Actions workflow is configured to run `testDebugUnitTest` and `assembleDebug` for pull requests.
 
-## Historical MP3 importer validation
+## Physical Android validation required for 0.3.0-alpha05
 
-- The original `Mp3ToWavDecoder.kt` was syntax/type-checked against minimal Android media API stubs during the 0.1.2 implementation.
-- MP3 decoding used Android `MediaExtractor` + `MediaCodec` only during import and wrote a standard 16-bit PCM RIFF/WAV cache before the native engine saw the track.
-- In 0.3.0-alpha01 that API is retained as a compatibility facade over the shared `PlatformAudioToWavDecoder`.
+### Import formats
 
-## Native click / stereo routing historical checks
+Test at least one representative file of each source type:
 
-- `ClickGridAnalyzer.kt` compiled on the host with `kotlinc` — **PASS**.
-- Synthetic 48 kHz PCM test with a click transient at 123 ms — **PASS**; detected offset: 123 ms.
-- Native core self-test after routing/click changes — **PASS**.
-- Default/English string-resource parity after the new controls — **PASS**.
-- `R.string` coverage after the new controls — **PASS**.
-- Room schema version increased to 2 with a 1→2 migration adding `songs.gridOffsetMs` and `tracks.outputRoute`.
+- WAV;
+- MP3;
+- M4A/AAC-LC;
+- raw/common AAC where `MediaExtractor` exposes it;
+- FLAC;
+- OGG/Vorbis and, if relevant to your source library/device, OGG/Opus.
 
-## Hardware qualification still required
+For each imported compressed/container source verify:
 
-Even after a successful Android build, stage readiness requires physical-device tests for long-run underruns/drift, USB reconnect behavior, output-device latency, compressed-import timing and 16/32-stem stress. See `docs/TESTING.md` and `docs/STATUS.md`.
+- import completes or gives a clear recoverable per-file error;
+- resulting song duration is sensible;
+- all stems start in sync;
+- intentional leading silence/count-ins remain intact;
+- Click analysis still aligns correctly when Click came from a normalized source;
+- Native Guide analysis still works when Guide came from a normalized source.
+
+### Waveform
+
+Verify on a real phone:
+
+- opening Player generates a waveform the first time;
+- generation does not interrupt currently playing audio;
+- playhead follows transport while playing/paused/seeking;
+- tapping different waveform positions seeks correctly;
+- section boundary lines are visually aligned with authored sections;
+- opening Section Editor shows the same waveform without changing position by accidental taps;
+- long songs and 16/32+ stems do not cause an ANR or excessive memory growth.
+
+### Storage/cache
+
+Verify in Settings:
+
+- storage totals appear and are plausible;
+- opening a waveform increases regenerable-cache usage;
+- **Clear regenerable cache** reduces that value;
+- songs still load/play afterward;
+- Native Guide still works;
+- an external `.stagebackup` file is untouched;
+- reopening the song regenerates its waveform.
+
+### Regression / live-use checks
+
+Re-run the existing critical live paths:
+
+- Play/Pause/Stop/Seek;
+- Native Click subdivisions/routing;
+- Native Guide on/off and language behavior;
+- manual section jump at authored section boundary;
+- Loop / Exit Loop;
+- Setlist Live Previous/Next;
+- session recovery after process death (must restore stopped);
+- backup + restore;
+- USB stereo select/disconnect/reconnect;
+- representative high-track-count playback while watching diagnostics for underruns.
+
+## Hardware qualification still required beyond 0.3
+
+Even after a successful Android build, StageGrid is not stage-qualified until synchronization, prolonged playback, high-track-count load, USB behavior, process death and backup recovery are validated on representative physical devices. Later 0.4–0.9 systems add their own qualification requirements.
 
 ## Windows Gradle bootstrap
 
-`gradlew.bat` prefers `curl.exe -fL` with retries on Windows and falls back to PowerShell only when curl is unavailable. The downloaded Gradle 9.5.1 archive is SHA-256 verified before extraction.
+`gradlew.bat` prefers `curl.exe -fL` with retries on Windows and falls back to PowerShell when curl is unavailable. The downloaded Gradle archive is SHA-256 verified before extraction.
