@@ -2,7 +2,7 @@
     <string name="backup_restore_title">Backup &amp; restore</string>
     <string name="backup_restore_description">Save a portable copy of your library so it can be recovered after changing devices or reinstalling StageGrid.</string>
     <string name="backup_restore_contents">Includes songs and local audio, metadata, sections, setlists, native Guide events and the installed Guide pack.</string>
-    <string name="backup_restore_provider_note">Android's picker can target a local folder, USB storage or Google Drive when Drive is available as a document provider.</string>
+    <string name="backup_restore_provider_note">Android’s picker can target a local folder, USB storage or Google Drive when Drive is available as a document provider.</string>
     <string name="backup_create_button">Create backup</string>
     <string name="backup_restore_button">Restore</string>
     <string name="backup_create_running_title">Creating backup</string>
