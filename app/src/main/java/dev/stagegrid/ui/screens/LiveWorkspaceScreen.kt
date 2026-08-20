@@ -176,7 +176,7 @@ fun LiveWorkspaceScreen(
                     onMove = onArrangementMove,
                     onRepeat = onArrangementRepeat,
                     onPreRoll = onArrangementPreRoll,
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp).padding(horizontal = 12.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 640.dp).padding(horizontal = 12.dp),
                 )
                 WorkspaceSheet.SETLIST -> SetlistPanel(
                     state = setlistLive,
@@ -284,11 +284,13 @@ private fun PerformanceSurface(
                         onClick = { onArrangementNode(node.id) },
                         enabled = !state.crossfadeInProgress && !state.isCountingIn,
                         label = {
-                            Text(buildString {
-                                append(node.label)
-                                if (node.repeatCount < 0) append("  ∞")
-                                else if (node.repeatCount > 1) append("  ×${node.repeatCount}")
-                            })
+                            Text(
+                                when {
+                                    node.repeatCount < 0 -> "${node.label} · ${stringResource(R.string.arrangement_until_continue)}"
+                                    node.repeatCount > 1 -> "${node.label} · ${stringResource(R.string.arrangement_times_short, node.repeatCount)}"
+                                    else -> node.label
+                                },
+                            )
                         },
                     )
                 }
@@ -333,7 +335,7 @@ private fun PerformanceSurface(
                     } else {
                         OutlinedButton(onClick = onArrangementStop) { Text(stringResource(R.string.workspace_arrangement_stop)) }
                         if (arrangement.activeNode?.infinite == true) {
-                            OutlinedButton(onClick = onArrangementExitLoop) { Text(stringResource(R.string.workspace_exit_loop)) }
+                            Button(onClick = onArrangementExitLoop) { Text(stringResource(R.string.workspace_exit_loop)) }
                         }
                     }
                 }
@@ -401,17 +403,35 @@ private fun ArrangementEditor(
     val nodes = arrangement.graph?.nodes.orEmpty()
     Card(modifier) {
         Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.workspace_edit_arrangement), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                itemsIndexed(nodes, key = { _, node -> node.id }) { index, node ->
-                    ArrangementNodeEditor(
-                        node = node,
-                        canMoveBefore = index > 0,
-                        canMoveAfter = index < nodes.lastIndex,
-                        onMove = onMove,
-                        onRepeat = onRepeat,
-                        onPreRoll = onPreRoll,
-                    )
+            Text(
+                stringResource(R.string.arrangement_simple_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                stringResource(R.string.arrangement_simple_help),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (nodes.isEmpty()) {
+                Text(
+                    stringResource(R.string.arrangement_no_sections),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 16.dp),
+                )
+            } else {
+                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    itemsIndexed(nodes, key = { _, node -> node.id }) { index, node ->
+                        ArrangementNodeEditor(
+                            position = index + 1,
+                            node = node,
+                            canMoveBefore = index > 0,
+                            canMoveAfter = index < nodes.lastIndex,
+                            onMove = onMove,
+                            onRepeat = onRepeat,
+                            onPreRoll = onPreRoll,
+                        )
+                    }
                 }
             }
         }
@@ -420,6 +440,7 @@ private fun ArrangementEditor(
 
 @Composable
 private fun ArrangementNodeEditor(
+    position: Int,
     node: ArrangementNode,
     canMoveBefore: Boolean,
     canMoveAfter: Boolean,
@@ -428,30 +449,99 @@ private fun ArrangementNodeEditor(
     onPreRoll: (String, Int) -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(node.label, fontWeight = FontWeight.SemiBold)
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "$position.",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(node.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        when {
+                            node.repeatCount < 0 -> stringResource(R.string.arrangement_summary_until_continue)
+                            node.repeatCount == 1 -> stringResource(R.string.arrangement_summary_once)
+                            else -> stringResource(R.string.arrangement_summary_times, node.repeatCount)
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Text(stringResource(R.string.arrangement_order_label), fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { onMove(node.id, -1) },
+                    enabled = canMoveBefore,
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.arrangement_move_up)) }
+                OutlinedButton(
+                    onClick = { onMove(node.id, 1) },
+                    enabled = canMoveAfter,
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.arrangement_move_down)) }
+            }
+
+            Text(stringResource(R.string.arrangement_repeat_label), fontWeight = FontWeight.SemiBold)
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                TextButton(onClick = { onMove(node.id, -1) }, enabled = canMoveBefore) { Text("←") }
-                TextButton(onClick = { onMove(node.id, 1) }, enabled = canMoveAfter) { Text("→") }
                 listOf(1, 2, 4, -1).forEach { repeat ->
                     FilterChip(
                         selected = node.repeatCount == repeat,
                         onClick = { onRepeat(node.id, repeat) },
-                        label = { Text(if (repeat < 0) "∞" else "${repeat}×") },
+                        label = {
+                            Text(
+                                when (repeat) {
+                                    1 -> stringResource(R.string.arrangement_once)
+                                    2 -> stringResource(R.string.arrangement_twice)
+                                    4 -> stringResource(R.string.arrangement_four_times)
+                                    else -> stringResource(R.string.arrangement_until_continue)
+                                },
+                            )
+                        },
                     )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (node.repeatCount < 0) {
+                Text(
+                    stringResource(R.string.arrangement_infinite_help),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Text(stringResource(R.string.arrangement_entry_label), fontWeight = FontWeight.SemiBold)
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 (0..2).forEach { bars ->
                     FilterChip(
                         selected = node.preRollBars == bars,
                         onClick = { onPreRoll(node.id, bars) },
-                        label = { Text(if (bars == 0) "Pre 0" else "Pre $bars") },
+                        label = {
+                            Text(
+                                when (bars) {
+                                    0 -> stringResource(R.string.arrangement_no_entry)
+                                    1 -> stringResource(R.string.arrangement_one_bar_entry)
+                                    else -> stringResource(R.string.arrangement_two_bar_entry)
+                                },
+                            )
+                        },
                     )
                 }
+            }
+            if (node.preRollBars > 0) {
+                Text(
+                    stringResource(R.string.arrangement_entry_help),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
