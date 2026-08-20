@@ -22,4 +22,19 @@
     <string name="guide_language_en">Inglés</string>
     <string name="guide_language_fr">Francés</string>
     <string name="guide_language_pt">Portugués</string>
+    <string name="waveform_generating">Generando forma de onda…</string>
+    <string name="waveform_unavailable">Forma de onda no disponible</string>
+    <string name="waveform_description">Vista general de la forma de onda de la canción</string>
+    <string name="storage_title">Almacenamiento y caché</string>
+    <string name="storage_description">La caché de formas de onda es regenerable. Limpiarla no borra canciones ni respaldos.</string>
+    <string name="storage_total">Uso total de StageGrid: %1$s</string>
+    <string name="storage_library">Biblioteca: %1$s</string>
+    <string name="storage_audio">Audio listo para reproducción: %1$s</string>
+    <string name="storage_cache">Caché regenerable: %1$s</string>
+    <string name="storage_guide">Guía y recursos locales: %1$s</string>
+    <string name="storage_songs">Canciones locales: %1$d</string>
+    <string name="storage_calculating">Calculando almacenamiento…</string>
+    <string name="storage_clear_cache">Limpiar caché regenerable</string>
+    <string name="storage_clearing">Limpiando caché…</string>
+    <string name="storage_reclaimed">Espacio liberado: %1$s</string>
 </resources>
