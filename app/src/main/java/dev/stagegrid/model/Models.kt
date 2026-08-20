@@ -23,6 +23,28 @@ enum class StereoRoute(val nativeCode: Int) {
     }
 }
 
+/**
+ * Stereo-pair output bus used by the 0.4 routing matrix.
+ *
+ * A track keeps its existing [StereoRoute] inside the selected pair, so BOTH means stereo across
+ * the pair while LEFT/RIGHT become mono assignments to either physical output. This keeps the
+ * simple 1/2 workflow intact while extending the same model through eight outputs.
+ */
+enum class OutputBus(val nativeCode: Int, val firstPhysicalChannel: Int) {
+    OUT_1_2(0, 1),
+    OUT_3_4(1, 3),
+    OUT_5_6(2, 5),
+    OUT_7_8(3, 7);
+
+    val lastPhysicalChannel: Int get() = firstPhysicalChannel + 1
+
+    companion object {
+        fun fromStorage(value: Int): OutputBus = entries.firstOrNull { it.nativeCode == value } ?: OUT_1_2
+        fun availableForChannels(channelCount: Int): List<OutputBus> =
+            entries.filter { it.lastPhysicalChannel <= channelCount.coerceAtLeast(2) }
+    }
+}
+
 @Entity(tableName = "songs")
 data class SongEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
@@ -68,8 +90,10 @@ data class TrackEntity(
     val muted: Boolean = false,
     val solo: Boolean = false,
     val pan: Float = 0f,
-    /** Stereo output assignment: BOTH, LEFT or RIGHT. */
+    /** Route inside [outputBus]: BOTH, LEFT or RIGHT. */
     val outputRoute: String = StereoRoute.BOTH.name,
+    /** Persistent stereo-pair bus: 0=1/2, 1=3/4, 2=5/6, 3=7/8. */
+    val outputBus: Int = OutputBus.OUT_1_2.nativeCode,
 )
 
 @Entity(
