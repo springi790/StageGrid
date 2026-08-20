@@ -50,7 +50,8 @@ fun SettingsScreen(
     diagnosticsProvider: () -> NativeAudioEngine.Diagnostics,
     onLiveMode: (Boolean) -> Unit,
     onPerformanceLock: (Boolean) -> Unit,
-    onOutput: (Int) -> Unit,
+    onOutput: (Int, Int) -> Unit,
+    onTestOutput: (Int) -> Unit,
     onInstallGuidePack: () -> Unit,
     onNativeGuideLanguage: (String) -> Unit,
     onCreateBackup: () -> Unit,
@@ -222,29 +223,79 @@ fun SettingsScreen(
         item {
             Text(stringResource(R.string.audio_outputs), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Text(stringResource(R.string.bluetooth_latency_warning), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                stringResource(R.string.negotiated_output, diagnostics.outputChannelCount, diagnostics.sampleRate),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            Text(
+                stringResource(R.string.requested_output_channels, diagnostics.requestedOutputChannelCount),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (diagnostics.multichannelFallback) {
+                Text(stringResource(R.string.multichannel_fallback_warning), color = MaterialTheme.colorScheme.tertiary)
+            }
         }
         items(outputs, key = { it.id }) { device ->
             Card(Modifier.fillMaxWidth()) {
-                Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column(Modifier.weight(1f)) {
-                        Text(device.productName, fontWeight = FontWeight.SemiBold)
-                        val type = when {
-                            device.isUsb -> stringResource(R.string.usb)
-                            device.isBluetooth -> stringResource(R.string.bluetooth)
-                            else -> stringResource(R.string.android_audio)
+                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text(device.productName, fontWeight = FontWeight.SemiBold)
+                            val type = when {
+                                device.isUsb -> stringResource(R.string.usb)
+                                device.isBluetooth -> stringResource(R.string.bluetooth)
+                                else -> stringResource(R.string.android_audio)
+                            }
+                            Text(
+                                stringResource(
+                                    R.string.device_details,
+                                    type,
+                                    device.maxChannelCount,
+                                    device.sampleRates.maxOrNull() ?: 0,
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                stringResource(
+                                    R.string.device_channel_capability,
+                                    device.maxChannelCount,
+                                    device.preferredStageGridChannels,
+                                ),
+                                color = if (device.supportsMultichannel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
+                        OutlinedButton(
+                            onClick = { onOutput(device.id, device.preferredStageGridChannels) },
+                            enabled = selectedOutputId != device.id,
+                        ) {
+                            Text(if (selectedOutputId == device.id) stringResource(R.string.selected) else stringResource(R.string.select))
+                        }
+                    }
+                    if (selectedOutputId == device.id) {
                         Text(
-                            stringResource(
-                                R.string.device_details,
-                                type,
-                                device.channelCounts.maxOrNull() ?: 0,
-                                device.sampleRates.maxOrNull() ?: 0,
-                            ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            if (diagnostics.outputChannelCount > 2) stringResource(R.string.usb_multichannel_available)
+                            else stringResource(R.string.usb_stereo_only),
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
-                    OutlinedButton(onClick = { onOutput(device.id) }, enabled = selectedOutputId != device.id) {
-                        Text(if (selectedOutputId == device.id) stringResource(R.string.selected) else stringResource(R.string.select))
+                }
+            }
+        }
+        item {
+            Text(stringResource(R.string.output_test_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.output_test_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        repeat(diagnostics.outputChannelCount.coerceIn(2, 8)) { index ->
+                            OutlinedButton(onClick = { onTestOutput(index) }) {
+                                Text(stringResource(R.string.test_output_channel, index + 1))
+                            }
+                        }
                     }
                 }
             }
@@ -255,6 +306,9 @@ fun SettingsScreen(
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(stringResource(R.string.sample_rate_value, diagnostics.sampleRate))
                     Text(stringResource(R.string.buffer_burst_value, diagnostics.framesPerBurst))
+                    Text(stringResource(R.string.negotiated_output, diagnostics.outputChannelCount, diagnostics.sampleRate))
+                    Text(stringResource(R.string.requested_output_channels, diagnostics.requestedOutputChannelCount))
+                    if (diagnostics.multichannelFallback) Text(stringResource(R.string.output_fallback_active), color = MaterialTheme.colorScheme.tertiary)
                     Text(stringResource(R.string.underruns_value, diagnostics.underruns))
                     Text(stringResource(R.string.cpu_load_value, diagnostics.cpuLoad * 100f))
                     Text(stringResource(R.string.loaded_tracks_value, diagnostics.loadedTracks))
