@@ -22,4 +22,19 @@
     <string name="guide_language_en">English</string>
     <string name="guide_language_fr">French</string>
     <string name="guide_language_pt">Portuguese</string>
+    <string name="waveform_generating">Generating waveform…</string>
+    <string name="waveform_unavailable">Waveform unavailable</string>
+    <string name="waveform_description">Song waveform overview</string>
+    <string name="storage_title">Storage and cache</string>
+    <string name="storage_description">Waveform cache is regenerable. Clearing it does not delete songs or backups.</string>
+    <string name="storage_total">Total StageGrid usage: %1$s</string>
+    <string name="storage_library">Library: %1$s</string>
+    <string name="storage_audio">Playback-ready audio: %1$s</string>
+    <string name="storage_cache">Regenerable cache: %1$s</string>
+    <string name="storage_guide">Guide and local resources: %1$s</string>
+    <string name="storage_songs">Local songs: %1$d</string>
+    <string name="storage_calculating">Calculating storage…</string>
+    <string name="storage_clear_cache">Clear regenerable cache</string>
+    <string name="storage_clearing">Clearing cache…</string>
+    <string name="storage_reclaimed">Space reclaimed: %1$s</string>
 </resources>
