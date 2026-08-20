@@ -39,6 +39,8 @@ public:
     void setLoop(bool enabled, int64_t startMs, int64_t endMs);
     void scheduleJump(int64_t atMs, int64_t targetMs, bool disableLoopAfterJump);
     void clearScheduledJump();
+    bool scheduleGuideCue(const std::vector<float>& monoSamples, int64_t atMs, int64_t suppressUntilMs, int route, float volume);
+    void clearGuideCue() noexcept;
     bool prepareCountIn(int64_t targetMs, int bars);
     int64_t countInRemainingMs() const;
     bool setOutputDevice(int32_t deviceId);
@@ -79,6 +81,15 @@ private:
         std::atomic<int64_t> jumpAtFrame{-1};
         std::atomic<int64_t> jumpTargetFrame{-1};
         std::atomic<bool> disableLoopAfterJump{false};
+    };
+
+    struct GuideCueData {
+        std::vector<float> monoSamples;
+        int64_t startFrame{0};
+        int64_t suppressUntilFrame{0};
+        int route{BOTH};
+        float volume{1.0f};
+        std::atomic<bool> consumed{false};
     };
 
     struct TrackState {
@@ -148,6 +159,10 @@ private:
     std::atomic<int64_t> gridOffsetFrame_{0};
     std::atomic<int64_t> trackGateUntilFrame_{-1};
 
+    // A manual live section choice can publish one short preloaded spoken Guide cue. The PCM vector
+    // is allocated/copied on a control/background thread; the realtime callback only reads it.
+    std::shared_ptr<GuideCueData> guideCue_;
+
     // Live path changes use the inactive bank. Control threads publish a complete path snapshot,
     // decoder threads preload it, and only the realtime callback switches all tracks together.
     static constexpr uint64_t kPathClaimedGeneration = ~uint64_t{0};
@@ -156,8 +171,8 @@ private:
     std::array<std::atomic<int64_t>, 2> bankStartFrames_{};
     std::atomic<uint64_t> generationCounter_{1};
     std::atomic<int> activeBank_{0};
-    std::atomic<int> pendingBank_{-1};
     std::atomic<uint64_t> pendingGeneration_{0};
+    std::atomic<int> pendingBank_{-1};
     std::atomic<uint64_t> pendingStartOutputFrame_{0};
     std::atomic<int64_t> pendingSafeOutputFrames_{-1};
     std::atomic<uint64_t> outputFrameCounter_{0};
