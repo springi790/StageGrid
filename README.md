@@ -1,207 +1,167 @@
 # StageGrid
 
-StageGrid is a native Android, local-first multitrack player for live performance. Stems, Native Click, Native Guide and the musical timeline share one authoritative real-time audio clock.
+StageGrid is a native Android, local-first multitrack player for live performance. Stems, Native Click, Native Guide, sections and live arrangements stay tied to a shared native audio timeline instead of independent Android media players.
 
-> **Current development release: `0.4.0-alpha05` — USB multichannel routing integration alpha.**
+> **Current development release: `0.5.0-alpha05` — Arrangement Engine + Live Workspace integration alpha.**
 >
-> This build collapses the complete planned 0.4 feature scope into the final alpha. It is feature-complete source for the milestone, but real 4/8-output behavior still requires physical USB-interface qualification.
+> This build intentionally collapses the complete planned 0.5 feature sprint into the final alpha. Physical USB qualification from 0.4 remains deferred and is not implied by moving development forward.
 
-## Product rule
+## New in 0.5.0-alpha05
 
-The common live workflow stays preset-driven. A musician should not need to understand Android channel masks or audio HAL internals to route a show.
+### Live Workspace
 
-## New in 0.4.0-alpha05
+The normal performance path is now centered on a responsive Live Workspace instead of a generic tab-style Player.
 
-### 2 / 4 / 6 / 8-channel output negotiation
+**Phone**
 
-StageGrid now asks Oboe/AAudio for the best even output count advertised by the selected device, up to eight channels.
+- waveform, NOW/NEXT, sections and transport stay on the main surface;
+- Quick Mix, Arrangement and Setlist open as bottom sheets;
+- large Play/Pause, Stop and Stop All remain reachable without navigating away;
+- Click, Guide, master level, queued section and preload status stay visible.
 
-```text
-8 requested → try 8 → 6 → 4 → 2
-6 requested → try 6 → 4 → 2
-4 requested → try 4 → 2
-2 requested → try 2
-```
+**Tablet**
 
-The app reports the **requested** and **actually opened** channel counts separately. If Android cannot open the full interface width, StageGrid uses the lower working stream rather than treating the device as unusable.
+- performance surface remains on the left;
+- Quick Mix and Setlist can remain visible simultaneously on the right;
+- layout switches automatically at a 720 dp width boundary.
 
-### Persistent output buses
+The existing detailed Player is retained as **Advanced** for section editing, Native Guide language/reanalysis, detailed count-in, Click subdivision/routing and other configuration. Advanced disappears under Performance Lock so stage operation stays uncluttered.
 
-Each track now has:
+### Virtual arrangement graph
 
-- a stereo-pair **bus**: `1/2`, `3/4`, `5/6`, `7/8`;
-- the existing route inside that bus: `L`, `L+R`, `R`.
-
-Examples:
+Each song can now have a persistent arrangement sidecar:
 
 ```text
-Bus 1/2 + L+R → stereo outputs 1 + 2
-Bus 3/4 + L   → mono output 3
-Bus 3/4 + R   → mono output 4
-Bus 7/8 + R   → mono output 8
+library/<song-id>/arrangement.json
 ```
 
-If a song is assigned to a bus unavailable on the current fallback stream, that bus folds to `1/2` so a track does not silently disappear.
+An arrangement is a sequence of stable section nodes. Each node can currently define:
 
-Track bus assignments persist in Room schema v3. Existing 0.3 libraries migrate with every track on bus `1/2`, while preserving their previous `L / L+R / R` route.
+- order;
+- finite repetition (`1x`, `2x`, `4x`, internally up to 16x);
+- infinite repetition (`∞`);
+- 0/1/2-bar pre-roll;
+- Guide-enabled metadata reserved for node-aware Guide policy.
 
-### Mixer presets
+The graph is independent of the WAV file order. Reordering a node changes the live path without modifying audio files.
 
-The simple stereo workflows remain available, plus:
+Arrangement execution reuses StageGrid's existing synchronized section/loop path preparation. The UI never becomes the audio clock.
 
-- **4-out:** Tracks 1/2 · Click 3 · Guide 4;
-- **6-out:** Main 1/2 · Vocals 3/4 · Click 5 · Guide 6;
-- **8-out:** rhythm 1/2 · instruments 3/4 · vocals/other 5/6 · Click 7 · Guide 8;
-- **Custom:** choose bus and L/L+R/R per track.
+### Boundary-safe live arrangement behavior
 
-Presets requiring more channels are disabled when Android actually opened fewer channels.
+- finite repeats use the existing synchronized section loop path;
+- infinite nodes continue until **Exit at boundary** is requested;
+- Exit disables the active loop and queues the next node at the authored section boundary;
+- tapping another arrangement node queues that destination through the existing prepared section-jump path;
+- a stopped node with pre-roll uses Native Click count-in before its section begins.
 
-Native Click has its own persistent bus. Native Guide and arrangement-generated Guide phrases follow the Guide track's current bus/route.
+### Real next-song preload
 
-### Output test
+Setlist Live no longer treats reading a small part of each file as a complete preload.
 
-Settings exposes numbered output-test buttons for the negotiated stream. The native engine generates a short, bounded low-level tone only on the selected physical channel. This is intended for verifying actual interface channel order before configuring stage routing.
-
-### USB disconnect / reconnect
-
-When the selected interface disappears:
-
-- StageGrid falls back to Android stereo;
-- non-1/2 buses fold to 1/2;
-- a live stream-loss event does not automatically resume sound;
-- the preferred interface is remembered for the current process;
-- reconnect restoration supports the previous Android device ID and best-effort product-name/type matching if Android assigns a new ID.
-
-### Backup compatibility
-
-`.stagebackup` remains format version 1.
-
-- 0.4 backups include optional `outputBus` per track;
-- 0.4 restores it when present;
-- older 0.3 backups have no `outputBus` and therefore restore safely to bus `1/2`.
-
-App version: **`0.4.0-alpha05` (`versionCode 28`)**.
-
-## Realtime architecture
+`NativeAudioEngine` now owns two native engine handles:
 
 ```text
-app-private playback WAVs
-        ↓
-decoder worker per stem
-        ↓
-preallocated SPSC buffers
-        ↓
-        one shared output-frame clock
-        ↓
-track mixer + Native Click + Native Guide
-        ↓
-fixed 8-slot output matrix
-        ↓
-negotiated 2/4/6/8-channel Oboe stream
+ACTIVE deck   → current song
+STANDBY deck  → fully loaded next song
 ```
 
-Disk I/O, Room, SAF, compressed decoding and waveform generation never run inside the Oboe callback.
+The standby deck prepares its WAV readers, decoder workers, mixer state, Click/Guide state and output configuration while the active song remains available.
 
-## Inherited 0.3 feature set
+When Next is pressed:
 
-0.4 retains:
+- if the current song is playing and the standby deck is ready, the streams overlap and master gains crossfade;
+- if transport is stopped/paused, the prepared deck is promoted silently and remains stopped;
+- if real preload is unavailable on that Android/device combination, Setlist Live can fall back to the normal safe song-load path.
+
+Default Setlist Live crossfade: **700 ms**.
+
+Two simultaneous low-latency streams are device/HAL dependent. A successful CI build does not prove that every phone/interface permits the dual-deck overlap path.
+
+### Arrangement backup behavior
+
+Arrangement sidecars live inside each StageGrid song directory, and `.stagebackup` already includes song-directory payloads. No destructive backup-format migration is required for 0.5.
+
+### Version
+
+- `versionName`: **`0.5.0-alpha05`**
+- `versionCode`: **33**
+- debug watermark: **`StageGrid 0.5.0-alpha05 • DEBUG`**
+
+## Inherited 0.4 output layer
+
+0.5 retains the 0.4 multichannel source implementation:
+
+- Android/USB output discovery;
+- 2/4/6/8-channel Oboe negotiation;
+- persistent stereo-pair buses `1/2`, `3/4`, `5/6`, `7/8`;
+- L / L+R / R routing inside a bus;
+- 4/6/8-out presets and custom routing;
+- Native Click/Guide bus routing;
+- numbered output test tone;
+- stereo fallback and reconnect handling;
+- Room v3 migration and backup-compatible `outputBus` state.
+
+**0.4 USB hardware qualification is still pending.** The user can validate it later when a suitable multichannel interface is available.
+
+## Inherited 0.3 media layer
 
 - WAV/MP3/M4A/AAC/FLAC/OGG import policy;
 - import-time normalization of non-WAV sources to playback-ready PCM WAV;
 - versioned waveform peak cache;
-- Player waveform with playhead/section markers/tap-to-seek;
-- Section Editor waveform reference;
+- Player waveform with shared-clock playhead and section markers;
 - storage accounting and safe regenerable-cache cleanup.
 
-## Inherited live foundation
+## Architecture rule
 
-- Room song/track/section/setlist library;
-- ZIP/folder/multi-file SAF import;
-- shared-clock Oboe transport;
-- volume/mute/solo/pan;
-- Native Click and subdivisions;
-- Musical Grid and editable sections;
-- native count-in;
-- double-buffered Loop/section path changes;
-- local Native Guide recognition/reconstruction/reanalysis;
-- arrangement-aware destination Guide phrases;
-- Setlist Live;
-- safe stopped session recovery;
-- portable `.stagebackup` with byte-size + SHA-256 validation.
-
-## Debug APKs from GitHub
-
-The `Android CI` workflow runs automatically on `feature/**` pushes and builds:
+Realtime audio remains isolated from UI, Room, SAF and media decoding:
 
 ```text
-app/build/outputs/apk/debug/app-debug.apk
+Compose Live Workspace / Advanced
+              ↓
+AudioEngineController
+              ↓ JNI
+NativeAudioEngine
+   ├─ active deck
+   └─ standby deck
+              ↓
+Oboe / AAudio output stream(s)
 ```
 
-Artifact name:
+Within one song, all stems still share that song engine's authoritative output-frame clock. Cross-song crossfade deliberately overlaps two independent song engines; it does not pretend two unrelated songs share one musical timeline.
+
+## GitHub debug APK
+
+The `Android CI` workflow runs for `feature/**` pushes, executes unit tests + `assembleDebug`, and uploads:
 
 ```text
 stagegrid-debug-apk
 ```
 
-GitHub builds use the project-specific stable debug key so a new debug APK can update a previous CI debug APK without uninstalling. Debug builds also show a small automatic version watermark such as:
+GitHub debug builds use the stable StageGrid debug key, so a newer CI debug APK can update a previous CI debug APK without uninstalling it.
 
-```text
-StageGrid 0.4.0-alpha05 • DEBUG
-```
+## Qualification boundary
 
-## Build requirements
+You can test most 0.5 behavior without a USB interface:
 
-- Android Gradle Plugin 9.2.1
-- compileSdk / targetSdk 37
-- JDK 17+
-- Gradle 9.5.1
-- NDK 28.2.13676358
-- CMake 3.22.1
-- Jetpack Compose / Room / Oboe
+- Live Workspace phone layout;
+- arrangement reorder/repeat/infinite Exit;
+- pre-roll;
+- Setlist real preload/crossfade on built-in audio;
+- stopped Next must remain silent;
+- Advanced access and legacy Player tools;
+- backup/restore with arrangement sidecar;
+- ordinary stereo playback and diagnostics.
 
-Local build:
+Still deferred until suitable hardware is available:
 
-```bash
-./gradlew testDebugUnitTest assembleDebug
-```
+- physical 4/6/8-output order;
+- multichannel USB presets;
+- USB disconnect/reconnect qualification;
+- dual-deck crossfade through a multichannel external interface.
 
-## Current qualification boundary
+See [`docs/ROADMAP.md`](docs/ROADMAP.md), [`docs/STATUS.md`](docs/STATUS.md) and [`VALIDATION.md`](VALIDATION.md).
 
-Automated/JVM validation can prove model consistency and compilation. It cannot prove how a particular Android phone + USB interface exposes physical outputs.
+## Next feature version
 
-For `0.4.0-alpha05`, physical testing must verify:
-
-- requested versus negotiated channels;
-- physical output order with the test tone;
-- 4/8-out presets and custom routing;
-- disconnect/reconnect fallback;
-- routing persistence and backup round trip;
-- high-track-count underruns/drift under multichannel output.
-
-See [`docs/TESTING.md`](docs/TESTING.md), [`docs/STATUS.md`](docs/STATUS.md), [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`VALIDATION.md`](VALIDATION.md).
-
-## Known limitations
-
-- Android may expose fewer channels than the physical interface supports; StageGrid cannot bypass a phone/OEM HAL limitation.
-- Physical channel ordering can vary by interface/driver and must be verified with the output test.
-- reconnect restoration is best-effort when Android creates a completely different device identity.
-- multichannel support currently tops out at 8 physical outputs.
-- 0.5 virtual arrangements/dual-song crossfade, 0.6 DSP, 0.7 MIDI, 0.8 pads/automation/timecode and 0.9 project interchange/remote remain future milestones.
-
-## Release history
-
-### 0.4.0-alpha05
-
-**Complete 0.4 integration alpha** — 2/4/6/8-channel Oboe negotiation, persistent stereo-pair buses, 4/6/8 presets, custom routing, per-output test signal, safe stereo fallback/reconnect policy and backward-compatible routing backup metadata.
-
-### 0.3.0-alpha05
-
-**Complete 0.3 integration alpha** — expanded import normalization, waveform peak cache/UI and storage/cache manager.
-
-### 0.2.0-alpha10.2
-
-**Live workflow/Native Guide hardening culmination** — sections, double-buffered paths, Setlist Live, backup/recovery and recognition hardening.
-
-## License
-
-StageGrid-owned source is licensed under MIT. Third-party components retain their own licenses. See `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+`0.6` remains the DSP milestone: tempo/time-stretch and pitch-shift abstractions with latency compensation and synchronization-safe bypass behavior.
