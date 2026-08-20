@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="live_workspace">Espacio en vivo</string>
+    <string name="workspace_no_song">Carga una canción para abrir el espacio en vivo.</string>
+    <string name="workspace_now">AHORA</string>
+    <string name="workspace_next">SIGUIENTE</string>
+    <string name="workspace_queued">EN COLA</string>
+    <string name="workspace_arrangement">Arreglo</string>
+    <string name="workspace_arrangement_start">Iniciar arreglo</string>
+    <string name="workspace_arrangement_stop">Detener arreglo</string>
+    <string name="workspace_exit_loop">Salir al límite</string>
+    <string name="workspace_quick_mix">Mezcla rápida</string>
+    <string name="workspace_full_mix">Mixer completo</string>
+    <string name="workspace_sections">Secciones</string>
+    <string name="workspace_transport">Transporte</string>
+    <string name="workspace_play">PLAY</string>
+    <string name="workspace_pause">PAUSA</string>
+    <string name="workspace_stop">STOP</string>
+    <string name="workspace_stop_all">STOP ALL</string>
+    <string name="workspace_click">CLICK</string>
+    <string name="workspace_guide">GUIDE</string>
+    <string name="workspace_usb_channels">USB %1$d OUT</string>
+    <string name="workspace_android_channels">AUDIO %1$d OUT</string>
+    <string name="workspace_repeat_once">1×</string>
+    <string name="workspace_repeat_twice">2×</string>
+    <string name="workspace_repeat_four">4×</string>
+    <string name="workspace_repeat_infinite">∞</string>
+    <string name="workspace_preroll">Pre-roll %1$d compás(es)</string>
+    <string name="workspace_move_left">Mover antes</string>
+    <string name="workspace_move_right">Mover después</string>
+    <string name="workspace_edit_arrangement">Editar arreglo</string>
+    <string name="workspace_done">Listo</string>
+    <string name="workspace_setlist">Setlist</string>
+    <string name="workspace_previous_song">Anterior</string>
+    <string name="workspace_next_song">Siguiente</string>
+    <string name="workspace_no_next_song">Fin del set</string>
+    <string name="workspace_live_hint">Toca una sección para programarla al siguiente límite.</string>
+    <string name="workspace_master">Master %1$d%%</string>
+    <string name="workspace_mute">M</string>
+    <string name="workspace_solo">S</string>
+    <string name="workspace_iteration">Vuelta %1$d</string>
+    <string name="workspace_crossfade">Crossfade</string>
+    <string name="workspace_preloaded">PRELOAD</string>
+</resources>
