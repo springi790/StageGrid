@@ -28,6 +28,20 @@ android {
         }
     }
 
+    val ciDebugKeystore = file("stagegrid-debug.keystore")
+    signingConfigs {
+        getByName("debug") {
+            // GitHub Actions decodes a project-specific debug key here. When the file is absent,
+            // local development keeps Android's normal default debug signing behavior.
+            if (ciDebugKeystore.isFile) {
+                storeFile = ciDebugKeystore
+                storePassword = "stagegrid-debug"
+                keyAlias = "stagegrid-debug"
+                keyPassword = "stagegrid-debug"
+            }
+        }
+    }
+
     buildFeatures {
         compose = true
         prefab = true
