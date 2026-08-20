@@ -80,19 +80,14 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
-
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.documentfile)
-    implementation(libs.androidx.media3.session)
-    implementation(libs.androidx.media3.common)
-    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.kotlinx.coroutines.android)
+
+    // Oboe is consumed by CMake via Prefab.
     implementation(libs.oboe)
 
     testImplementation(libs.junit)
-    testImplementation(libs.androidx.test.core)
-    testImplementation(libs.robolectric)
-    androidTestImplementation(libs.androidx.test.ext.junit)
-    androidTestImplementation(libs.androidx.test.espresso.core)
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
 }
