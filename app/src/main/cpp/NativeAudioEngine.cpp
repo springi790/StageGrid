@@ -571,8 +571,6 @@ bool NativeAudioEngine::scheduleGuideCue(
 }
 
 void NativeAudioEngine::clearGuideCue() noexcept {
-    // clearGuideCue is called only from non-realtime control paths. Serializing here keeps an old
-    // cue alive until a callback that may already have loaded it exits its reader section.
     try {
         std::lock_guard<std::mutex> lock(guideCueControlMutex_);
         auto previous = std::atomic_exchange_explicit(
@@ -582,8 +580,8 @@ void NativeAudioEngine::clearGuideCue() noexcept {
         }
         previous.reset();
     } catch (...) {
-        // Preserve noexcept for teardown/control callers. The current cue remains safe even if a
-        // control mutex operation cannot complete because shared ownership is still valid.
+        // Teardown/control callers keep noexcept semantics. Shared ownership remains valid if the
+        // control synchronization primitive itself cannot complete.
     }
 }
 
@@ -755,10 +753,15 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
     }
     const PathState callbackPath = loadPathState(active);
 
-    // Publish the reader section before loading the shared cue. A control-side exchange that sees
-    // this flag retains the previous shared object until this callback is done, so destruction of
-    // GuideCueData/vector storage cannot occur on the realtime thread.
-    guideCueReaderActive_.store(true, std::memory_order_release);
+    struct GuideCueReaderGuard {
+        std::atomic<bool> &flag;
+        explicit GuideCueReaderGuard(std::atomic<bool> &readerFlag) : flag(readerFlag) {
+            flag.store(true, std::memory_order_release);
+        }
+        ~GuideCueReaderGuard() {
+            flag.store(false, std::memory_order_release);
+        }
+    } guideCueReaderGuard(guideCueReaderActive_);
     const auto guideCue = std::atomic_load_explicit(&guideCue_, std::memory_order_acquire);
 
     bool anySolo = false;
@@ -850,12 +853,6 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
     }
     playheadFrame_.store(frame, std::memory_order_release);
     if (renderedFrames > 0) outputFrameCounter_.fetch_add(static_cast<uint64_t>(renderedFrames), std::memory_order_relaxed);
-
-    // Release callback-local shared ownership before clearing the reader flag. The control thread
-    // still owns either the active pointer or the exchanged previous pointer, so this reset cannot
-    // perform the final deletion on the realtime thread.
-    const_cast<std::shared_ptr<GuideCueData>&>(guideCue).reset();
-    guideCueReaderActive_.store(false, std::memory_order_release);
 
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
     const double budget = static_cast<double>(numFrames) / std::max(1, stream->getSampleRate());
