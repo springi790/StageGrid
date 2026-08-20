@@ -1,154 +1,193 @@
 # StageGrid validation record
 
-This file separates checks actually executed from checks that still require GitHub's full Android build environment or physical hardware.
+This file separates checks actually executed from checks that still require Android CI or physical hardware.
 
-## Previously recorded foundation checks
+## Previously established checks
 
-- native WAV/SPSC/common-timeline self-test — **PASS**;
-- 16-stem synchronization fixture generation — **PASS**;
-- historical native C++/JNI stub compilation — **PASS** for the earlier stereo foundation;
-- 0.3 import-format policy — **PASS**;
-- 0.3 waveform absolute-timeline cache/regeneration — **PASS**;
-- 0.3 storage-cache deletion safety — **PASS**.
+Earlier milestones already recorded passing host checks for:
 
-## 0.4.0-alpha05 checks executed during this implementation
+- PCM WAV parsing;
+- SPSC ordering;
+- common-timeline source mapping;
+- import-format policy;
+- waveform peak-cache generation/regeneration;
+- safe cache cleanup;
+- OutputBus storage/availability policy.
 
-### OutputBus policy — PASS
+These do not replace physical Android qualification.
 
-The final `OutputBus` policy was compiled and executed with the local Kotlin/JVM compiler.
+## 0.5.0-alpha05 checks executed
+
+### Arrangement runtime — PASS
+
+The pure Kotlin arrangement model/runtime was compiled and exercised outside Android.
 
 Verified:
 
-- 2 channels exposes only `1/2`;
-- 4 channels exposes `1/2`, `3/4`;
-- 6 channels exposes `1/2`, `3/4`, `5/6`;
-- 8 channels exposes all four buses through `7/8`;
-- unknown persisted bus codes safely decode to `1/2`;
-- physical UI labels remain one-based and `OUT_7_8` resolves to physical outputs 7 and 8.
+- finite repeat remains on the current node until the configured count;
+- finite repeat then advances to the next node;
+- infinite repeat remains active without Exit;
+- infinite repeat advances when Exit is requested;
+- final node reports completion;
+- live reorder preserves stable node IDs and the new order.
 
-Executable result:
+During this validation a real defect was found: moved nodes retained their old numeric `order`, causing graph normalization to undo the move. `ArrangementRuntime.move()` was corrected to renumber the list before normalization.
+
+Final executable result:
 
 ```text
-StageGrid 0.4 output bus checks: PASS
+arrangement runtime PASS
 ```
 
-A matching JUnit regression file exists at `app/src/test/java/dev/stagegrid/model/OutputBusTest.kt`.
+### Compose API review — PASS for reviewed API assumptions
 
-### Database compatibility — source inspection complete
+The Live Workspace was reviewed against current Android Compose API behavior:
 
-Room was advanced to schema version 3 with migration:
+- responsive `BoxWithConstraints` is used for the phone/tablet split;
+- `Modifier.weight()` is used only inside RowScope/ColumnScope;
+- the invalid explicit top-level `foundation.layout.weight` import is not retained;
+- Material3 bottom-sheet usage is explicitly opted into where required by the dependency version.
 
-```sql
-ALTER TABLE tracks ADD COLUMN outputBus INTEGER NOT NULL DEFAULT 0
-```
+This is API/static review, not a full Android compilation claim.
 
-This is intentionally additive and defaults existing tracks to bus `1/2`. Real upgrade of an installed v2 database still requires Android-device validation.
+### Transport-safety review — PASS at source-policy level
 
-### Backup compatibility — source inspection complete
+The dual-deck promotion path was reviewed so that:
 
-Portable backup format remains version 1.
+- playing current song → standby starts muted and crossfades;
+- paused/stopped current song → standby is promoted silently and remains stopped;
+- standby master is restored to the current user master level;
+- old deck is paused/unloaded after promotion;
+- failed preload/promotion does not remove the normal Setlist load fallback.
 
-- new manifests write `outputBus`;
-- restore reads `outputBus` with a bounded `0..3` value;
-- missing field defaults to `0`, preserving pre-0.4 backups.
+Physical audio behavior still requires a device.
 
-The existing payload size/SHA-256 validation path was left intact.
+## GitHub Actions / APK
 
-### CI workflow configuration — verified
-
-`.github/workflows/android.yml` currently triggers on:
-
-- `main` / `master` pushes;
-- `feature/**` pushes;
-- pull requests;
-- manual dispatch.
-
-The workflow prepares the stable StageGrid debug signing key and runs:
+The repository workflow is configured to run automatically on `feature/**` pushes and execute:
 
 ```bash
 ./gradlew testDebugUnitTest assembleDebug --stacktrace
 ```
 
-then uploads `app-debug.apk` as `stagegrid-debug-apk` on success.
+Successful builds upload:
 
-### Latest full Android build — not claimed here yet
+```text
+stagegrid-debug-apk
+```
 
-The connected GitHub status action currently returns no normal commit-status entries for feature-branch pushes, and the available workflow-run lookup is limited to pull-request-triggered runs. Therefore this record does **not** invent a CI result for the latest 0.4 head.
+The connector used during implementation does not expose push-triggered workflow runs for this private branch reliably, so **the final 0.5 branch is not claimed as CI PASS here**. Check the `Android CI` run for `feature/0.5.0-alpha05` before installing the artifact.
 
-The feature push does trigger the workflow; success/failure must be taken from the actual Android CI run/artifact in GitHub Actions.
+## 0.5 tests you can perform without a USB interface
 
-## 0.4 code paths requiring full build validation
+### Update / library preservation
 
-The full Android/NDK build must validate together:
+1. Install the 0.5 debug APK over the existing stable-signed StageGrid debug APK.
+2. Confirm the app updates without uninstalling.
+3. Confirm existing songs, sections, setlists and mixer state remain present.
 
-- Kotlin ↔ JNI signatures for output bus, requested channels and output-test APIs;
-- Oboe multichannel stream builder calls;
-- Room v3 generated schema;
-- Compose Mixer/Settings signature changes;
-- ES/EN resource-key resolution;
-- legacy one-argument output-device call compatibility;
-- native/JNI linkage for the expanded diagnostics structure.
+### Live Workspace — phone
 
-## Physical Android/USB validation required
+1. Load a song.
+2. Confirm the primary Player tab is now **Live Workspace**.
+3. Verify title, waveform, time, NOW/NEXT and section chips are readable without opening another screen.
+4. Verify Play/Pause, Stop, Stop All, Click, Guide and master are reachable quickly.
+5. Open Quick Mix and verify track volume/mute/solo.
+6. Open Arrangement and Setlist bottom sheets.
+7. Rotate the phone and verify the UI remains usable with no clipped critical transport controls.
 
-### Channel negotiation
+### Tablet / large-window layout
 
-For a real USB interface record:
+When a tablet or sufficiently large Android window is available:
 
-- advertised channel count;
-- requested StageGrid channel count;
-- actual opened channel count;
-- sample rate;
-- frames per burst;
-- fallback state.
+1. confirm the layout switches around 720 dp;
+2. confirm performance content remains left;
+3. confirm Quick Mix/Setlist can remain visible on the right;
+4. confirm waveform and section rail remain large enough for fast touches.
 
-### Output test
+### Advanced compatibility
 
-At a safe monitor/interface level, verify each numbered test button reaches only the corresponding physical output.
+With Performance Lock disabled:
 
-### Routing matrix
+1. open **Advanced**;
+2. verify the previous detailed Player remains functional;
+3. open Section Editor;
+4. verify Click subdivision/count-in controls;
+5. if Native Guide is present, verify language/reanalysis controls remain accessible.
 
-Verify:
+Enable Performance Lock and confirm Advanced/Library/Setlists disappear from stage navigation while Live Workspace, Mixer and Settings remain.
 
-- 4-out preset: Tracks 1/2, Click 3, Guide 4;
-- 6-out preset where relevant;
-- 8-out preset where hardware allows;
-- custom bus + `L / L+R / R` assignments;
-- no unexpected duplication/crosstalk between buses.
+### Arrangement persistence
 
-### Persistence / portability
+1. Load a song with at least three authored sections.
+2. Open Arrangement.
+3. Reorder nodes.
+4. Leave/reopen the song or restart the app.
+5. Confirm the new order remains.
 
-Verify custom track bus assignments survive:
+### Finite repeat
 
-- song reload;
-- app restart;
-- Room v2→v3 upgrade;
-- new 0.4 `.stagebackup` create/restore;
-- restore of a pre-0.4 backup, which should default to 1/2.
+1. Configure a section to 2x or 4x.
+2. Start Arrangement.
+3. Confirm the section repeats the requested number of times.
+4. Confirm transition to the next node occurs at the authored section boundary.
 
-### Disconnect/reconnect
+### Infinite repeat / Exit
 
-Test interface removal while stopped and during playback.
+1. Configure one node to `∞`.
+2. Start Arrangement.
+3. Let it loop more than once.
+4. Press **Exit at boundary** during the loop.
+5. Confirm the current pass completes and the next node starts at its authored start.
 
-Expected safety behavior:
+### Pre-roll
 
-- fallback to Android stereo;
-- no missing tracks solely because they were assigned to 3/4, 5/6 or 7/8;
-- no automatic audible resume after a live stream-loss event;
-- preferred interface restored on reconnect when Android exposes a matching device again.
+1. Stop playback.
+2. Configure an arrangement node with 1 or 2 bars pre-roll.
+3. Select/start that node.
+4. Confirm Click count-in occurs before imported stems enter.
+5. Confirm the destination begins at the intended section boundary.
 
-### Performance regression
+### Real Setlist preload / crossfade
 
-With representative high-track-count content:
+Use two normal songs in a Setlist Live session.
 
-- Play/Pause/Stop/Seek;
-- Loop / Exit Loop;
-- section jump;
-- Click and Guide;
-- Setlist transitions;
-- compare underruns/callback load at stereo versus 4/8 channels;
-- verify no accumulated inter-stem drift.
+1. Load/start the first song.
+2. Wait until the UI reports `PRELOAD`/next ready.
+3. Press Next while the first song is playing.
+4. Confirm the next song begins through the prepared-deck handoff rather than a visible loading pause.
+5. Listen for a short crossfade (~700 ms) and watch for underruns.
+6. Repeat several times if possible.
 
-## Qualification statement
+Then test the safety case:
 
-`0.4.0-alpha05` is feature-complete source for the 0.4 milestone, not a claim of universal USB interface compatibility. Android audio HALs, interface descriptors and physical channel order vary by device and must be qualified on hardware before StageGrid is called stage-ready.
+1. stop/pause the current song;
+2. wait for next preload;
+3. press Next;
+4. confirm the next song becomes current **without starting audio automatically**.
+
+If the phone cannot keep two low-latency streams open, StageGrid may report preload failure and use the normal safe loading path. Record the phone model and error rather than treating that as proof of an arrangement failure.
+
+### Backup round trip
+
+1. change an arrangement order/repeat;
+2. create `.stagebackup`;
+3. restore it;
+4. reopen the song;
+5. confirm `arrangement.json` behavior/order remains.
+
+## Deferred 0.4 + 0.5 external-interface tests
+
+When a multichannel interface becomes available later, test:
+
+- advertised/requested/opened channel counts;
+- numbered physical output order;
+- 4/6/8-out presets;
+- custom bus routing;
+- interface disconnect/reconnect;
+- dual-deck preload/crossfade through the external interface;
+- high-track-count underruns while multichannel + dual-deck systems are active.
+
+## Release boundary
+
+A green GitHub APK and successful phone tests are sufficient to continue accelerated feature development. They are not equivalent to final stage qualification; 1.0 still requires prolonged representative hardware acceptance.
