@@ -26,11 +26,13 @@ class StorageCacheManager(private val filesDir: File) {
             audioBytes += directorySize(File(songRoot, "audio"))
             cacheBytes += directorySize(File(songRoot, "cache"))
         }
+
         val libraryBytes = directorySize(library)
-        val guideBytes = directorySize(File(filesDir, "guide-pack")) +
-            directorySize(File(filesDir, "guide"))
-        val allBytes = directorySize(filesDir)
+        val guideBytes = directorySize(File(filesDir, "guide-packs"))
+        val appPrivateRoot = filesDir.parentFile ?: filesDir
+        val allBytes = directorySize(appPrivateRoot)
         val otherBytes = (allBytes - libraryBytes - guideBytes).coerceAtLeast(0L)
+
         return Snapshot(
             libraryBytes = libraryBytes,
             playbackAudioBytes = audioBytes,
