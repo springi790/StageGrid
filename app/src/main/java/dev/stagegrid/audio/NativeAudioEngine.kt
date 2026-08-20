@@ -8,6 +8,8 @@ import java.io.Closeable
 
 class NativeAudioEngine : Closeable {
     private var handle: Long = nativeCreate()
+    private var standbyHandle: Long = nativeCreate()
+    @Volatile private var standbyReady: Boolean = false
 
     data class Diagnostics(
         val sampleRate: Int,
@@ -34,7 +36,101 @@ class NativeAudioEngine : Closeable {
         return nativeLoadSong(handle, paths, types, bpm ?: 0.0, beatsPerBar, gridOffsetMs)
     }
 
-    fun unloadSong() = nativeUnloadSong(handle)
+    /**
+     * Loads the next song into a second native deck. This performs real WAV reader/decoder-worker
+     * preparation, not only filesystem warming. The standby stream remains stopped and muted until
+     * promotePreloaded() is called.
+     */
+    fun preloadSong(tracks: List<TrackEntity>, bpm: Double?, beatsPerBar: Int, gridOffsetMs: Long): Boolean {
+        check(standbyHandle != 0L)
+        clearPreloaded()
+        val active = diagnostics()
+        if (active.outputDeviceId >= 0) {
+            nativeSetOutputDevice(
+                standbyHandle,
+                active.outputDeviceId,
+                normalizeOutputChannels(active.requestedOutputChannelCount),
+            )
+        }
+        val paths = tracks.map { it.filePath }.toTypedArray()
+        val types = tracks.map { TrackType.fromStorage(it.type).nativeCode }.toIntArray()
+        val ok = nativeLoadSong(standbyHandle, paths, types, bpm ?: 0.0, beatsPerBar, gridOffsetMs)
+        if (!ok) return false
+        tracks.forEachIndexed { index, track ->
+            nativeSetTrackVolume(standbyHandle, index, track.volume)
+            nativeSetTrackMute(standbyHandle, index, track.muted)
+            nativeSetTrackSolo(standbyHandle, index, track.solo)
+            nativeSetTrackPan(standbyHandle, index, track.pan)
+            nativeSetTrackOutputRoute(standbyHandle, index, StereoRoute.fromStorage(track.outputRoute).nativeCode)
+            nativeSetTrackOutputBus(standbyHandle, index, OutputBus.fromStorage(track.outputBus).nativeCode)
+        }
+        nativeSetMasterVolume(standbyHandle, 0f)
+        standbyReady = true
+        return true
+    }
+
+    fun configurePreloaded(
+        clickEnabled: Boolean,
+        guideEnabled: Boolean,
+        clickSubdivision: Int,
+        clickRoute: StereoRoute,
+        clickBus: OutputBus,
+    ) {
+        if (!standbyReady) return
+        nativeSetClickEnabled(standbyHandle, clickEnabled)
+        nativeSetGuideEnabled(standbyHandle, guideEnabled)
+        nativeSetClickSubdivision(standbyHandle, clickSubdivision)
+        nativeSetClickRoute(standbyHandle, clickRoute.nativeCode)
+        nativeSetClickOutputBus(standbyHandle, clickBus.nativeCode)
+    }
+
+    fun hasPreloadedSong(): Boolean = standbyReady
+
+    fun clearPreloaded() {
+        if (standbyHandle == 0L) return
+        runCatching { nativePause(standbyHandle) }
+        runCatching { nativeUnloadSong(standbyHandle) }
+        standbyReady = false
+    }
+
+    /**
+     * Promotes the prepared deck with an overlap/crossfade. Call from a background dispatcher.
+     * Each song keeps its own native timeline; only master gains overlap between the two streams.
+     */
+    fun promotePreloaded(crossfadeMs: Int, targetMasterVolume: Float): Boolean {
+        if (!standbyReady || handle == 0L || standbyHandle == 0L) return false
+        val target = targetMasterVolume.coerceIn(0f, 1.25f)
+        nativeSetMasterVolume(standbyHandle, 0f)
+        if (!nativePlay(standbyHandle)) return false
+
+        val duration = crossfadeMs.coerceIn(0, 5_000)
+        if (duration == 0) {
+            nativeSetMasterVolume(handle, 0f)
+            nativeSetMasterVolume(standbyHandle, target)
+        } else {
+            val steps = (duration / 20).coerceIn(8, 100)
+            val sleepMs = (duration / steps).coerceAtLeast(1)
+            for (step in 1..steps) {
+                val fraction = step.toFloat() / steps.toFloat()
+                nativeSetMasterVolume(handle, target * (1f - fraction))
+                nativeSetMasterVolume(standbyHandle, target * fraction)
+                Thread.sleep(sleepMs.toLong())
+            }
+        }
+
+        val previous = handle
+        handle = standbyHandle
+        standbyHandle = previous
+        standbyReady = false
+        runCatching { nativePause(standbyHandle) }
+        runCatching { nativeUnloadSong(standbyHandle) }
+        return true
+    }
+
+    fun unloadSong() {
+        nativeUnloadSong(handle)
+        clearPreloaded()
+    }
     fun play(): Boolean = nativePlay(handle)
     fun pause() = nativePause(handle)
     fun stop() = nativeStop(handle)
@@ -80,8 +176,12 @@ class NativeAudioEngine : Closeable {
     fun prepareCountIn(targetMs: Long, bars: Int): Boolean =
         nativePrepareCountIn(handle, targetMs.coerceAtLeast(0L), bars.coerceIn(1, 2))
     fun countInRemainingMs(): Long = nativeCountInRemainingMs(handle).coerceAtLeast(0L)
-    fun setOutputDevice(deviceId: Int, requestedChannels: Int): Boolean =
-        nativeSetOutputDevice(handle, deviceId, normalizeOutputChannels(requestedChannels))
+    fun setOutputDevice(deviceId: Int, requestedChannels: Int): Boolean {
+        val normalized = normalizeOutputChannels(requestedChannels)
+        val activeOk = nativeSetOutputDevice(handle, deviceId, normalized)
+        if (standbyReady) runCatching { nativeSetOutputDevice(standbyHandle, deviceId, normalized) }
+        return activeOk
+    }
     fun startOutputTest(channelIndex: Int, durationMs: Int = 650): Boolean =
         nativeStartOutputTest(handle, channelIndex.coerceAtLeast(0), durationMs.coerceIn(120, 1200))
 
@@ -108,6 +208,11 @@ class NativeAudioEngine : Closeable {
             nativeDestroy(handle)
             handle = 0L
         }
+        if (standbyHandle != 0L) {
+            nativeDestroy(standbyHandle)
+            standbyHandle = 0L
+        }
+        standbyReady = false
     }
 
     private external fun nativeCreate(): Long
