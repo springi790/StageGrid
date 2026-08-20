@@ -4,6 +4,7 @@ import android.app.Application
 import dev.stagegrid.audio.AudioDeviceManager
 import dev.stagegrid.audio.AudioEngineController
 import dev.stagegrid.audio.NativeAudioEngine
+import dev.stagegrid.backup.LibraryBackupManager
 import dev.stagegrid.data.LibraryRepository
 import dev.stagegrid.data.StageGridDatabase
 import dev.stagegrid.guide.GuidePackManager
@@ -16,6 +17,8 @@ class StageGridApplication : Application() {
     lateinit var repository: LibraryRepository
         private set
     lateinit var importer: SongImporter
+        private set
+    lateinit var backupManager: LibraryBackupManager
         private set
     lateinit var audioDevices: AudioDeviceManager
         private set
@@ -33,6 +36,7 @@ class StageGridApplication : Application() {
         settings = AppSettingsRepository(this)
         guidePacks = GuidePackManager(this)
         importer = SongImporter(this, repository, guidePacks, settings)
+        backupManager = LibraryBackupManager(this, repository)
         audioDevices = AudioDeviceManager(this)
         audio = AudioEngineController(this, repository, NativeAudioEngine())
     }
