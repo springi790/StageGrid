@@ -2,31 +2,33 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Stems, Native Click, Native Guide and the musical timeline share one real-time audio clock instead of independent Android media players.
 
-> **Current release: `0.2.0-alpha10.1` — recognition hardening before beta.**
+> **Current release: `0.2.0-alpha10.2` — English Guide recognition isolation before beta.**
 >
-> This hotfix keeps the alpha10 beta-readiness feature set and specifically improves Guide cue recognition and musical-grid start detection based on physical-device feedback.
+> This hotfix keeps the alpha10 beta-readiness feature set, preserves the Spanish recognition path that is already behaving well in field testing, and specifically reduces English-source false positives/repeated recognition work.
 
 ## Product principle
 
 **A musician should be able to use the basic live workflow without understanding audio-engineering terminology.** Common performance actions stay visible; technical controls remain progressively disclosed.
 
-## New in 0.2.0-alpha10.1
+## New in 0.2.0-alpha10.2
 
-### More tolerant Native Guide recognition
+### Source-language-first Native Guide matching
 
-The recognizer no longer depends on one global activity threshold. It now combines strong and relaxed activity passes plus local onset detection, so one loud Guide phrase is less likely to hide quieter calls later in the same stem.
+Field feedback narrowed the remaining recognition problem: Spanish Guide stems were consistently recognized, while some English Guide stems were slower and collapsed unrelated calls into repeated `Vamp` / `Rap` section matches.
 
-Fingerprint comparison now has a wider timing search window and a conservative language-aware recovery pass. Once the source Guide language is clear, rejected candidates can be checked again against that language only, reducing cross-language lookalikes in the confidence-margin calculation without globally accepting weak matches.
+StageGrid now performs a small bounded language probe before the expensive full cue pass. When the evidence is strong enough, the complete Guide is compared only against samples from that source language. When evidence is weak, StageGrid falls back to the all-language matcher rather than guessing.
 
-Guide fingerprint energy is now calculated per channel before channel averaging. This avoids stereo phase cancellation causing an otherwise valid Guide to appear nearly silent to the recognizer. The persistent fingerprint-cache format was bumped so old envelopes are rebuilt automatically.
+The Spanish acceptance thresholds remain unchanged. English uses a wider semantic ambiguity margin so uncertain short-section matches are rejected instead of being promoted into a section map merely because they resemble `Vamp` or `Rap`.
 
-### More reliable Musical Grid start
+The alpha10.1 rejected-candidate second full pass has been removed. The language probe is bounded to a small set of candidates and SECTION templates, so a confidently identified source language reduces the number of template comparisons during the main pass.
 
-`ClickGridAnalyzer` no longer blindly trusts the first strong transient. It collects candidate Click onsets and prefers the beginning of a stable periodic pulse train. An isolated spike/noise transient before the real Click can therefore be rejected as the grid origin.
+### Included alpha10.1 recognition/grid hardening
 
-If no stable pulse train is available, the analyzer still falls back to the first valid Click candidate rather than failing the import.
+Candidate discovery still combines strong + relaxed activity thresholds and phase-robust per-channel energy, preserving recovery of quiet Guide calls and avoiding stereo phase cancellation. Template timing tolerance remains approximately ±240 ms.
 
-App version: `0.2.0-alpha10.1` (`versionCode 17`).
+`ClickGridAnalyzer` still prefers the beginning of a stable periodic Click train instead of blindly accepting one isolated early transient as the Musical Grid origin.
+
+App version: `0.2.0-alpha10.2` (`versionCode 18`).
 
 ## Included alpha10 beta-readiness work
 
@@ -186,7 +188,11 @@ Implemented Native Guide behavior:
 
 - local cue-pack installation;
 - phase-robust fingerprint envelope and adaptive candidate discovery;
-- offline recognition with language-aware recovery pass;
+- bounded source-language probe before the full recognition pass;
+- language-scoped full matching when source-language evidence is strong;
+- Spanish recognition thresholds preserved from alpha10.1;
+- stricter English semantic ambiguity margin to suppress repeated `Vamp` / `Rap` false positives;
+- all-language fallback when source-language evidence is weak;
 - structured event sidecar;
 - generated Native Guide WAV on the same shared playback clock;
 - original Guide retained muted as a reference after successful reconstruction;
@@ -261,14 +267,16 @@ git pull
 
 GitHub Actions runs `testDebugUnitTest` and `assembleDebug` before release PRs are merged into `main`.
 
-Coverage includes stem classification, WAV parsing, Musical Grid conversion/snapping, manual section-boundary policy, Native Guide recognition/section inference, quiet anti-phase Guide recognition, Click stable-train selection, Guide arrangement timing/sequence selection, setlist navigation and native/JNI compilation.
+Coverage includes stem classification, WAV parsing, Musical Grid conversion/snapping, manual section-boundary policy, Native Guide recognition/section inference, quiet anti-phase Guide recognition, English/Spanish source-language isolation, Click stable-train selection, Guide arrangement timing/sequence selection, setlist navigation and native/JNI compilation.
 
 Physical-device qualification is still required before StageGrid is considered stage-ready.
 
-## Known limitations of 0.2.0-alpha10.1
+## Known limitations of 0.2.0-alpha10.2
 
 - Guide recognition remains sample/template matching: a Guide generated from a substantially different voice/sample library can still fail or produce low confidence.
-- The new relaxed candidate pass is deliberately conservative; unusual Guides that continuously contain other audio may still need further profiling with a representative failing Guide stem.
+- English recognition is now isolated from cross-language competition when source-language evidence is strong, but real songs using a substantially different English Guide voice still require field validation.
+- COUNT cue recognition still needs additional polish; short spoken numbers are naturally more ambiguous than longer SECTION phrases.
+- The relaxed candidate pass is deliberately conservative; unusual Guides that continuously contain other audio may still need further profiling with a representative failing Guide stem.
 - Session recovery is approximately as recent as the latest periodic snapshot and always returns stopped; it is not sample-exact crash continuation.
 - Guide reanalysis requires that the retained original Guide audio still exists locally.
 - Arrangement-aware Guide relocation derives section/count/dynamic calls from the destination's original lead bar; a complete arbitrary virtual arrangement graph remains planned for 0.5.
@@ -283,6 +291,10 @@ Physical-device qualification is still required before StageGrid is considered s
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/STATUS.md`](docs/STATUS.md).
 
 ## Release history
+
+### 0.2.0-alpha10.2
+
+**English Guide recognition isolation** — bounded source-language probing, language-scoped main matching, preserved Spanish thresholds, stricter English ambiguity rejection and removal of the expensive alpha10.1 recovery pass.
 
 ### 0.2.0-alpha10.1
 
