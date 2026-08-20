@@ -53,6 +53,9 @@ interface TrackDao {
 
     @Update
     suspend fun update(track: TrackEntity)
+
+    @Query("DELETE FROM tracks WHERE songId = :songId")
+    suspend fun clearForSong(songId: String)
 }
 
 @Dao
