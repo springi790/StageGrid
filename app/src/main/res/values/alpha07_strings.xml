@@ -18,4 +18,5 @@
     <string name="setlist_live_no_next">Esta es la última canción</string>
     <string name="setlist_live_empty">Añade al menos una canción antes de iniciar el modo Setlist.</string>
     <string name="setlist_live_transport_note">Al cambiar de canción, StageGrid detiene la canción actual y carga la siguiente sin reproducirla automáticamente.</string>
+    <string name="queued_section_boundary">En espera: %1$s · cambia al terminar esta parte</string>
 </resources>
