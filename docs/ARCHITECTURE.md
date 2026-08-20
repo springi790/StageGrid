@@ -2,118 +2,146 @@
 
 ## Real-time invariant
 
-The UI never owns the audio clock. `NativeAudioEngine` owns one Oboe output stream, one master frame counter and one callback. Every stem is rendered against that same callback and the same logical playback path. Track volume/mute/solo/pan/output-route and Click/Guide controls are atomics consumed by the native mixer.
+The UI never owns the audio clock. `NativeAudioEngine` owns one Oboe output stream, one master frame counter and one callback. Every stem is rendered against that same callback and logical timeline.
 
 ```text
 Compose UI
    │
-AudioEngineController (Kotlin state + focus + service)
+AudioEngineController (state + focus + device policy)
    │ JNI
 NativeAudioEngine (C++)
    ├─ Master frame clock
-   ├─ Track decoder thread 1 ─┐
-   ├─ Track decoder thread 2 ─┼─> preallocated SPSC buffers -> mixer -> Oboe/AAudio
-   ├─ ...                    ─┤
-   └─ Generated click         ┘
+   ├─ Track decoder workers ──> preallocated SPSC buffers
+   ├─ Native Click / dynamic Guide cue
+   └─ fixed output matrix ──> 2/4/6/8-channel Oboe/AAudio stream
 ```
 
-Disk I/O, Room, SAF, ZIP extraction, compressed-media decoding, waveform analysis/cache generation and UI work never occur in the Oboe callback. The callback does not allocate heap objects in its steady-state render path.
+Disk I/O, Room, SAF, ZIP extraction, compressed-media decoding, waveform analysis and UI work never occur in the Oboe callback. The steady-state callback uses fixed-size/previously allocated state; the 0.4 output matrix uses a stack `std::array<float, 8>` per rendered frame rather than allocating a variable channel buffer.
 
 ## Thread ownership
 
-- **Audio callback:** consumes already-prepared PCM, applies mixer state, Click/Guide/master gain and advances the authoritative output-frame clock.
-- **Decoder workers:** read app-private WAV data and map each source sample rate to the common logical timeline ahead of the callback.
-- **Kotlin coroutines / I/O:** import, Room operations, state persistence, SAF access, one-time compressed-audio normalization and waveform peak-cache generation.
-- **Compose:** presentation and user intent only; recomposition cannot restart or become the audio clock.
-- **Musical grid:** the importer may derive `gridOffsetMs` from a Click reference. Native Click timing is calculated from `gridOffsetFrame + BPM`, never from an independently playing metronome file.
-
-The decoder model intentionally favors isolation and determinism. Any future decoder-pool optimization must preserve the rule that file I/O never moves into the realtime callback.
+- **Audio callback:** consumes prepared PCM, applies mixer state, routes to physical output channels, mixes Click/Guide, applies master gain and advances the authoritative output-frame clock.
+- **Decoder workers:** read app-private WAV data and map source sample rates to the common timeline ahead of the callback.
+- **Kotlin coroutines / I/O:** import, Room, DataStore, backups, SAF, normalization and waveform caches.
+- **Compose:** presentation and user intent only.
+- **AudioDeviceManager:** observes Android output-device topology; it never becomes the transport clock.
 
 ## Packages
 
-- `model/`: persistent domain entities.
-- `data/`: Room DAOs/database/repository.
-- `importer/`: SAF ZIP/folder import, import-format policy, WAV metadata, Android-platform normalization and stem classification.
-- `waveform/`: versioned regenerable waveform peak cache.
-- `storage/`: StageGrid-owned filesystem accounting and safe cache eviction.
-- `audio/`: JNI bridge, playback state, device manager and controller.
-- `service/`: foreground playback service and platform MediaSession.
-- `ui/`: Compose presentation and cached waveform rendering.
-- `cpp/`: Oboe output, WAV reader, ring buffers and shared-clock mixer.
+- `model/`: persistent domain entities and routing enums.
+- `data/`: Room DAOs/database/repository and migrations.
+- `importer/`: SAF import, format policy and import-time normalization.
+- `waveform/`: versioned regenerable peak cache.
+- `storage/`: app-private storage accounting/cache cleanup.
+- `audio/`: JNI facade, playback state, device discovery and transport/device controller.
+- `service/`: foreground playback service and MediaSession.
+- `ui/`: Compose screens and musician-facing routing presets.
+- `cpp/`: Oboe stream, WAV reader, SPSC buffers, shared-clock mixer and output matrix.
 
-## State machine
+## Transport state
 
-Kotlin exposes explicit transport states (`IDLE`, `LOADING`, `READY`, `PLAYING`, `PAUSED`, `SEEKING`, `STOPPING`, `ERROR`) rather than deriving transport from several independent booleans. Audio is prepared on load, but the native stream only starts after an explicit Play action and foreground-service preparation.
+Kotlin exposes explicit states (`IDLE`, `LOADING`, `READY`, `PLAYING`, `PAUSED`, `SEEKING`, `STOPPING`, `ERROR`). Loading prepares media but never starts audible playback. Device loss also never causes automatic audible resume; after a live disconnect the user must explicitly press Play again.
 
-## Playback / import format boundary
+## Import/playback boundary
 
-The native realtime engine renders uncompressed PCM/IEEE-float WAV. Every non-WAV source supported by 0.3 is handled at the import boundary:
-
-```text
-WAV ───────────────────────────────────────────→ local playback WAV
-MP3 ─┐
-M4A ─┤
-AAC ─┼→ PlatformAudioToWavDecoder ─────────────→ PCM16 RIFF/WAV
-FLAC ─┤
-OGG ─┘
-```
-
-`PlatformAudioToWavDecoder` uses Android `MediaExtractor` + `MediaCodec` during import, validates decoded sample rate/channel count, applies platform encoder-delay/padding metadata when available and writes an app-private RIFF/WAV file. A source fails import cleanly when the current Android device cannot expose/decode its actual codec/container.
-
-`Mp3ToWavDecoder` remains only as a compatibility facade. New importer code should use the shared platform decoder.
-
-## Waveform cache boundary
-
-Waveform rendering never asks the native engine to decode audio for graphics.
+Realtime playback remains WAV-only. Non-WAV sources normalize outside realtime:
 
 ```text
-app-private playback WAV files
-        ↓  Dispatchers.IO
-WaveformPeakCache
-        ↓
-library/<song>/cache/waveform-overview.sgpk
-        ↓
-Compose Player / Section Editor
+WAV ────────────────────────────────→ local playback WAV
+MP3 / M4A / AAC / FLAC / OGG
+        ↓ MediaExtractor / MediaCodec
+        └───────────────────────────→ PCM16 local playback WAV
 ```
 
-The cache is a bounded min/max amplitude envelope, not audio. Every stem is mapped by absolute source time onto the longest song timeline, so a shorter stem remains short instead of being stretched visually.
+This boundary is unchanged by 0.4. Multichannel **output** does not mean compressed decoding or source-file I/O moves into the callback.
 
-The cache is versioned and source-signature checked. Source file name/length/mtime changes invalidate stale peaks. Cache deletion is safe because retained playback WAV files remain authoritative and can regenerate the cache.
+## 0.4 output model
 
-The Player derives the visible playhead from `PlayerState.positionMs`, which itself follows the shared native transport. Tapping the waveform emits a normal seek intent; the waveform never maintains an independent clock.
+The persistent routing model has two dimensions:
 
-## Storage boundary
-
-`StorageCacheManager` only operates inside StageGrid-owned app-private files. It reports library/audio/cache/Guide usage and can remove regenerable song cache directories.
-
-Cache eviction is intentionally conservative:
+1. **OutputBus** selects a stereo physical pair: `1/2`, `3/4`, `5/6`, `7/8`.
+2. **StereoRoute** selects behavior inside that pair: `BOTH`, `LEFT`, `RIGHT`.
 
 ```text
-CAN DELETE:   library/<song>/cache/**
-MUST RETAIN:  library/<song>/audio/**
-              Room records
-              Guide source/generated material
-              external .stagebackup snapshots
+Track PCM L/R
+   │
+   ├─ bus 1/2 + BOTH  ──> physical 1 + 2 (stereo/pan)
+   ├─ bus 3/4 + LEFT  ──> physical 3 (mono)
+   ├─ bus 3/4 + RIGHT ──> physical 4 (mono)
+   ├─ bus 5/6 + BOTH  ──> physical 5 + 6
+   └─ bus 7/8 + BOTH  ──> physical 7 + 8
 ```
 
-A future broader cache policy must keep essential playback data and user-authored state distinct from reproducible performance artifacts.
+`LEFT/RIGHT` downmix source L/R to mono before placement. `BOTH` preserves stereo and equal-power pan behavior within the pair.
 
-## Sample-rate mapping
+If a stored bus is not available on the **actual negotiated stream**, native routing normalizes it to bus `1/2`. This is a deliberate fail-audible policy: losing channel count must not silently remove a stem from the performance.
 
-All tracks are addressed by the common output timeline. A source frame is derived deterministically from output-frame position and the source/output sample-rate ratio, so stems do not maintain independent wall clocks. Replacing the current interpolator with a higher-quality resampler abstraction does not require changing transport ownership.
+## Channel negotiation
 
-## Looping and queued sections
+`AudioDeviceManager` reads Android's advertised output channel counts and chooses a preferred even count up to 8.
 
-Loops and scheduled section jumps are represented on the logical output-frame path. Decoder workers and the callback use that same path. When a live path changes, workers discard stale look-ahead and rebuild from the new logical position. Boundary transitions still require physical-device stress validation before StageGrid can claim guaranteed glitch-free live rearrangement.
+When opening/reopening Oboe:
 
-## Stereo routing and USB
+```text
+request 8 → try 8 → 6 → 4 → 2
+request 6 → try 6 → 4 → 2
+request 4 → try 4 → 2
+request 2 → try 2
+```
 
-Inside the current stereo stream, every playable track has an explicit `BOTH`, `LEFT` or `RIGHT` route. `BOTH` retains stereo/pan behavior. `LEFT`/`RIGHT` downmix the source to mono and place it only on the selected channel. Native Click has an independent route using the same matrix.
+For each count StageGrid may try Exclusive then Shared mode. The engine records both `requestedOutputChannelCount` and `outputChannelCount`; UI and presets use the **opened** count, not the advertised count.
 
-Android output devices are enumerated through `AudioManager`. The selected `AudioDeviceInfo.id` is passed to Oboe and the stream is reopened while preserving logical transport position and grid offset.
+Changing output devices preserves the logical transport position, Musical Grid offset, Loop state, scheduled jump and active count-in timing across sample-rate changes. Decoder banks are reset/re-preloaded against the new stream timeline.
 
-0.3 output remains stereo. 0.4 introduces a bus model, multichannel stream negotiation and bus-to-physical-channel matrix rather than overloading the existing stereo route enum.
+## Device-loss policy
 
-## Persistence and recovery boundary
+Android device callbacks feed `AudioEngineController`:
 
-Room stores structured library/mixer/setlist state and DataStore stores lightweight application settings. Imported/normalized audio lives in app-private filesystem storage. StageGrid never auto-starts audible playback when opening the application; session recovery restores available state silently and requires a new explicit Play action.
+- if the selected interface disappears, StageGrid opens the unspecified/default Android stereo output;
+- native playback remains stopped/paused after an actual stream-loss event;
+- buses beyond `1/2` fold safely to `1/2` during fallback;
+- StageGrid remembers the preferred interface for the current process;
+- reconnect first matches the previous Android device ID, then the UI layer performs best-effort product-name/type matching if Android assigned a new ID.
+
+This is intentionally conservative: reconnect can restore routing/output configuration, but it never starts sound by itself.
+
+## Output test generator
+
+The test generator lives in `NativeAudioEngine`, uses the already-open output stream and targets exactly one zero-based physical channel index. It is bounded in duration and level, and can run without a loaded song. Invalid channel indices fail rather than wrapping.
+
+The output test shares the callback/matrix boundary but does not alter the song timeline.
+
+## Persistence
+
+### Room
+
+`TrackEntity` stores:
+
+- volume/mute/solo/pan;
+- `outputRoute`;
+- `outputBus`.
+
+Room schema v3 adds `outputBus` with default `0` (`1/2`) so existing v2 libraries migrate without losing songs or the prior stereo route.
+
+### DataStore
+
+Generated Native Click keeps its route plus `clickBus` in lightweight settings.
+
+### Portable backups
+
+`.stagebackup` keeps format version 1 for backward compatibility. `outputBus` is an optional track manifest field:
+
+- new 0.4 backup → restores bus;
+- old backup with no `outputBus` → defaults to bus `1/2`.
+
+## Native Guide routing
+
+Generated Native Guide is a normal Guide `TrackEntity` and therefore follows its stored bus/route. Arrangement-aware temporary Guide cues copy the current Guide track bus/route into immutable cue data before publication to the callback.
+
+## Waveform/storage boundary
+
+0.3 behavior remains unchanged. Waveform peak generation is off-thread and regenerable; storage cleanup may remove only regenerable cache directories. Neither subsystem participates in multichannel rendering.
+
+## Future boundary
+
+0.5 may change the logical arrangement path and introduce dual-song preload/crossfade. It must still render through the same authoritative output clock/matrix abstraction rather than creating independent Android players per bus or song.
