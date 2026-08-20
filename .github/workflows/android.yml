@@ -9,6 +9,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+concurrency:
+  group: android-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -50,10 +57,35 @@ jobs:
           sdkmanager --channel=3 "$PLATFORM_PACKAGE" "build-tools;37.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
 
       - name: Unit tests and debug APK
+        id: gradle_build
+        continue-on-error: true
         shell: bash
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest assembleDebug --stacktrace
+          set -o pipefail
+          ./gradlew testDebugUnitTest assembleDebug --stacktrace 2>&1 | tee ci-gradle-build.log
+
+      - name: Save Gradle failure diagnostic
+        if: steps.gradle_build.outcome == 'failure' && github.event_name == 'push'
+        shell: bash
+        run: |
+          {
+            echo "StageGrid Android CI failure"
+            echo "ref: $GITHUB_REF"
+            echo "sha: $GITHUB_SHA"
+            echo
+            tail -n 450 ci-gradle-build.log
+          } > ci/last-build-failure.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- ci/last-build-failure.txt
+          git commit -m "ci: capture build failure [skip ci]" || true
+          git push || true
+
+      - name: Fail job when Gradle failed
+        if: steps.gradle_build.outcome == 'failure'
+        shell: bash
+        run: exit 1
 
       - name: Upload APK
         if: success()
