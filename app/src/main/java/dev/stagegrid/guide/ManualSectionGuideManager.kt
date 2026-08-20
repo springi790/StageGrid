@@ -53,7 +53,11 @@ class ManualSectionGuideManager(
             ?: guidePacks.resolveOutputLanguage(preferredLanguage, previousAnalysis?.dominantLanguage)
             ?: return null
 
-        val sortedSections = bundle.sections.sortedWith(compareBy<SectionEntity> { it.startMs }.thenBy { it.sortOrder })
+        val sortedSections = bundle.sections
+            .filterNot { it.name.equals("Full Song", ignoreCase = true) }
+            .sortedWith(compareBy<SectionEntity> { it.startMs }.thenBy { it.sortOrder })
+        if (sortedSections.isEmpty()) return null
+
         val cuePlan = buildSectionCuePlan(song.bpm, song.timeSignature, song.gridOffsetMs, sortedSections, samples, outputLanguage)
         val preservedNonSection = previousAnalysis?.cues?.filter { it.kind != CueKind.SECTION }.orEmpty()
         val mergedCues = (preservedNonSection + cuePlan.cues).sortedBy { it.cueMs }
@@ -115,9 +119,20 @@ class ManualSectionGuideManager(
         }
         if (existingNative != null) repository.updateTrack(nativeTrack) else repository.saveTrack(nativeTrack)
 
+        // The imported Guide remains on disk as a reference, but once deterministic manual cues
+        // exist it must stay muted so it cannot speak over StageGrid Native Guide.
+        bundle.tracks
+            .filter { TrackType.fromStorage(it.type) == TrackType.GUIDE && it.name != NativeGuideRenderer.TRACK_NAME && !it.muted }
+            .forEach { repository.updateTrack(it.copy(muted = true)) }
+
         val sidecarTemp = File(sidecar.parentFile, ".native-guide-manual-${System.nanoTime()}.json")
-        NativeGuideRenderer.writeEventSidecar(sidecarTemp, analysis, rendered.outputLanguage, proposals)
-        NativeGuideEventStore.markManualSectionCues(sidecarTemp)
+        NativeGuideRenderer.writeEventSidecar(
+            file = sidecarTemp,
+            analysis = analysis,
+            outputLanguage = rendered.outputLanguage,
+            sectionProposals = proposals,
+            sectionCueSource = "manual",
+        )
         if (!replaceFileAtomically(sidecarTemp, sidecar)) return null
 
         return SyncResult(
