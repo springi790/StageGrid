@@ -14,9 +14,11 @@ import kotlin.math.sqrt
 /**
  * Offline Guide recognizer for sample-based Guide stems.
  *
- * Alpha10.1 hardens candidate discovery for uneven gain/compression, uses phase-robust energy
- * fingerprints, widens timing tolerance and performs a conservative second pass once the source
- * language can be inferred. Fingerprints remain cached in memory/on disk.
+ * Alpha10.2 keeps the proven Spanish path intact but determines the source Guide language before
+ * the expensive full match whenever confidence is sufficient. The full pass then compares only
+ * against that language, reducing cross-language false positives and repeated work. English uses
+ * a slightly larger ambiguity margin because field feedback showed short SECTION calls collapsing
+ * into Vamp/Rap. If language evidence is weak, matching safely falls back to all installed samples.
  */
 object GuideCueAnalyzer {
     data class DetectedCue(
@@ -59,18 +61,35 @@ object GuideCueAnalyzer {
         val secondSemanticScore: Float,
     )
 
+    private data class AcceptanceThresholds(
+        val minScore: Float,
+        val minMargin: Float,
+        val highScore: Float,
+    )
+
+    private data class LanguageEvidence(
+        val language: String,
+        val score: Double,
+        val matches: Int,
+        val strongest: Float,
+    )
+
     private const val WINDOW_MS = 10
     private const val SEARCH_RADIUS_WINDOWS = 24 // +/-240 ms tolerates encoder/segment onset drift.
     private const val PRIMARY_MIN_SCORE = 0.80f
     private const val PRIMARY_MIN_MARGIN = 0.040f
     private const val PRIMARY_HIGH_SCORE = 0.94f
-    private const val RECOVERY_MIN_SCORE = 0.76f
-    private const val RECOVERY_MIN_MARGIN = 0.055f
-    private const val RECOVERY_HIGH_SCORE = 0.90f
+    private const val ENGLISH_MIN_SCORE = 0.82f
+    private const val ENGLISH_MIN_MARGIN = 0.065f
+    private const val ENGLISH_HIGH_SCORE = 0.96f
     private const val DEDUPE_WINDOW_MS = 180L
     private const val MAX_CANDIDATES = 2_400
     private const val INTRA_PHRASE_MERGE_WINDOWS = 24 // 240 ms: syllable gaps, not separate Guide calls.
     private const val CONTINUOUS_ACTIVITY_WINDOWS = 35 // 350 ms before local-onset recovery is allowed.
+    private const val LANGUAGE_PROBE_MAX_CANDIDATES = 14
+    private const val LANGUAGE_PROBE_MIN_MATCH = 0.72f
+    private const val LANGUAGE_PROBE_MAX_SCORES = 6
+    private const val LANGUAGE_PROBE_MIN_GAP = 0.035
 
     @Volatile
     private var templateCache: TemplateCache? = null
@@ -108,36 +127,25 @@ object GuideCueAnalyzer {
         if (templates.isEmpty()) return Result(emptyList(), null, candidates.size)
         onProgress?.invoke(0.18f)
 
-        val accepted = mutableListOf<DetectedCue>()
-        val rejected = mutableListOf<Evaluation>()
-        candidates.forEachIndexed { index, candidate ->
-            val evaluation = evaluateCandidate(guideLog, candidate, templates)
-            val cue = evaluation.toCue(PRIMARY_MIN_SCORE, PRIMARY_MIN_MARGIN, PRIMARY_HIGH_SCORE)
-            if (cue != null) accepted += cue else rejected += evaluation
-            if (index % maxOf(1, candidates.size / 30) == 0 || index == candidates.lastIndex) {
-                onProgress?.invoke(0.18f + 0.62f * ((index + 1f) / candidates.size.toFloat()))
-            }
-        }
+        val sourceLanguage = inferSourceLanguage(guideLog, candidates, templates)
+        val activeTemplates = sourceLanguage
+            ?.let { language -> templates.filter { it.sample.language == language } }
+            ?.takeIf { it.isNotEmpty() }
+            ?: templates
+        val thresholds = acceptanceThresholds(sourceLanguage)
+        onProgress?.invoke(0.24f)
 
-        // Once a Guide language is clear, re-check only rejected candidates against that language.
-        // This removes cross-language lookalikes from the margin calculation without globally
-        // lowering thresholds and creating false positives.
-        val languageHint = dominantLanguage(accepted) ?: inferLanguageFromRejected(rejected)
-        if (languageHint != null && rejected.isNotEmpty()) {
-            val languageTemplates = templates.filter { it.sample.language == languageHint }
-            if (languageTemplates.isNotEmpty()) {
-                rejected.forEachIndexed { index, prior ->
-                    val evaluation = evaluateCandidate(guideLog, prior.candidate, languageTemplates)
-                    evaluation.toCue(RECOVERY_MIN_SCORE, RECOVERY_MIN_MARGIN, RECOVERY_HIGH_SCORE)?.let(accepted::add)
-                    if (index % maxOf(1, rejected.size / 20) == 0 || index == rejected.lastIndex) {
-                        onProgress?.invoke(0.80f + 0.18f * ((index + 1f) / rejected.size.toFloat()))
-                    }
-                }
+        val accepted = mutableListOf<DetectedCue>()
+        candidates.forEachIndexed { index, candidate ->
+            val evaluation = evaluateCandidate(guideLog, candidate, activeTemplates)
+            evaluation.toCue(thresholds.minScore, thresholds.minMargin, thresholds.highScore)?.let(accepted::add)
+            if (index % maxOf(1, candidates.size / 30) == 0 || index == candidates.lastIndex) {
+                onProgress?.invoke(0.24f + 0.74f * ((index + 1f) / candidates.size.toFloat()))
             }
         }
 
         val deduped = dedupe(accepted)
-        val dominant = dominantLanguage(deduped)
+        val dominant = sourceLanguage ?: dominantLanguage(deduped)
         onProgress?.invoke(1f)
         return Result(deduped, dominant, candidates.size)
     }
@@ -181,6 +189,13 @@ object GuideCueAnalyzer {
         return unique
     }
 
+    private fun acceptanceThresholds(sourceLanguage: String?): AcceptanceThresholds =
+        if (sourceLanguage == "en") {
+            AcceptanceThresholds(ENGLISH_MIN_SCORE, ENGLISH_MIN_MARGIN, ENGLISH_HIGH_SCORE)
+        } else {
+            AcceptanceThresholds(PRIMARY_MIN_SCORE, PRIMARY_MIN_MARGIN, PRIMARY_HIGH_SCORE)
+        }
+
     private fun Evaluation.toCue(minScore: Float, minMargin: Float, highScore: Float): DetectedCue? {
         val chosen = best ?: return null
         val margin = chosen.score - secondSemanticScore
@@ -215,15 +230,57 @@ object GuideCueAnalyzer {
         return Evaluation(candidate, chosen, second)
     }
 
-    private fun inferLanguageFromRejected(rejected: List<Evaluation>): String? {
-        val plausible = rejected.mapNotNull { evaluation ->
-            evaluation.best?.takeIf { it.score >= 0.70f }
+    /**
+     * Language selection is intentionally a small probe, not another full recognition pass.
+     * SECTION words are preferred because short numeric/dynamic calls are weak language evidence.
+     * Only a bounded, evenly distributed subset of candidates is tested.
+     */
+    private fun inferSourceLanguage(
+        guide: FloatArray,
+        candidates: List<Int>,
+        templates: List<Template>,
+    ): String? {
+        val byLanguage = templates
+            .filter { it.sample.kind == CueKind.SECTION }
+            .groupBy { it.sample.language }
+            .filterValues { it.size >= 3 }
+        if (byLanguage.size <= 1) return byLanguage.keys.firstOrNull()
+
+        val probeCandidates = sampleEvenly(candidates, LANGUAGE_PROBE_MAX_CANDIDATES)
+        val evidence = byLanguage.mapNotNull { (language, languageTemplates) ->
+            val scores = probeCandidates.mapNotNull { candidate ->
+                evaluateCandidate(guide, candidate, languageTemplates).best?.score
+            }.filter { it >= LANGUAGE_PROBE_MIN_MATCH }
+                .sortedDescending()
+                .take(LANGUAGE_PROBE_MAX_SCORES)
+            if (scores.isEmpty()) return@mapNotNull null
+            val strongest = scores.first()
+            val matches = scores.size
+            // Multiple moderate anchors are preferable to one accidental near-perfect match.
+            val usable = matches >= 2 || strongest >= 0.93f
+            if (!usable) return@mapNotNull null
+            val average = scores.average()
+            val supportBonus = minOf(matches, 4) * 0.0125
+            LanguageEvidence(language, average + supportBonus, matches, strongest)
+        }.sortedByDescending { it.score }
+
+        val best = evidence.firstOrNull() ?: return null
+        val second = evidence.getOrNull(1)
+        if (second == null) return best.language
+        val gap = best.score - second.score
+        return best.language.takeIf {
+            gap >= LANGUAGE_PROBE_MIN_GAP ||
+                (best.matches >= 3 && best.strongest >= 0.90f && best.score >= second.score)
         }
-        if (plausible.isEmpty()) return null
-        val byLanguage = plausible.groupBy { it.template.sample.language }
-        val bestGroup = byLanguage.maxByOrNull { (_, matches) -> matches.sumOf { it.score.toDouble() } } ?: return null
-        val matches = bestGroup.value
-        return bestGroup.key.takeIf { matches.size >= 2 || matches.any { it.score >= 0.88f } }
+    }
+
+    private fun sampleEvenly(values: List<Int>, maxCount: Int): List<Int> {
+        if (values.size <= maxCount) return values
+        if (maxCount <= 1) return listOf(values.first())
+        val last = values.lastIndex.toDouble()
+        return (0 until maxCount)
+            .map { index -> values[(index * last / (maxCount - 1)).toInt()] }
+            .distinct()
     }
 
     private fun dominantLanguage(cues: List<DetectedCue>): String? =
