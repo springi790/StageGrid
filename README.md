@@ -2,7 +2,7 @@
 
 StageGrid is a native Android, local-first multitrack player for live performance. Stems, native Click, Guide and the musical timeline share one real-time audio clock instead of independent Android media players.
 
-> **Current release: `0.2.0-alpha05.1` — Manual section changes exit at section boundaries.**
+> **Current release: `0.2.0-alpha06` — Portable backup/restore + section-aware native Guide cues.**
 >
 > StageGrid is under active development. Only functionality with a real implementation is presented as available; planned modules live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -12,86 +12,98 @@ StageGrid is a native Android, local-first multitrack player for live performanc
 
 Common actions remain visible while technical controls such as grid offsets and manual routing stay behind optional advanced controls.
 
-## New in 0.2.0-alpha05.1
+## New in 0.2.0-alpha06
 
-Manual section selection is now **section-quantized rather than bar-quantized**.
+### Portable library backup and restore
 
-If the current section starts at bar 16 and ends at bar 20, selecting another section while bar 16, 17, 18 or 19 is playing does not cut the current section at the next bar line. StageGrid queues the selected destination for the current section's explicit end marker.
+StageGrid can now create a self-contained `.stagebackup` from **Settings → Backup & restore** using Android's Storage Access Framework.
+
+The system folder picker means the destination can be:
+
+- a local device folder;
+- compatible USB/removable storage;
+- Google Drive when Drive is exposed by Android as a document provider;
+- another compatible DocumentsProvider.
+
+No StageGrid account or Drive API/OAuth integration is required.
+
+A backup contains the complete local song directories plus the structured library state needed to reconstruct the app on another device:
 
 ```text
-CURRENT SECTION
-bar 16 ─ bar 17 ─ bar 18 ─ bar 19 ─ bar 20
-                    │
-                    └─ user selects Chorus
-                                      │
-                                      ▼
-                         finish current section
-                                      │
-                                      ▼
-                           Chorus section start
+StageGrid backup
+├─ song audio / normalized WAV stems
+├─ song metadata
+├─ sections
+├─ mixer state stored with tracks
+├─ native-guide-events.json
+├─ generated Native Guide files
+├─ setlists + setlist order
+└─ currently installed user-supplied Guide pack
 ```
 
-The Musical Grid still controls section authoring/snapping, Click, count-in and bar/beat display. It no longer overrides the musical end of a manually selected section transition.
+Track paths are stored as portable song-relative paths rather than Android device-specific absolute paths. Restore rebuilds the new app-private paths on the destination device.
 
-The alpha05 double-buffered native path engine remains responsible for preparing the destination without clearing the bank currently feeding Oboe. If the UI observes that the current section boundary has already passed, the requested destination becomes immediate instead of scheduling against a stale boundary.
+Every archived file is listed in `manifest.json` with its byte size and SHA-256 digest. Restore copies the selected backup into a staging area, safely extracts it with path/size/count limits, verifies the complete file set and hashes, and only then installs song data into the library. Matching stable IDs are replaced; unrelated songs already on the device are preserved.
 
-App version: `0.2.0-alpha05.1` (`versionCode 11`).
+Backup and restore expose percentage, current stage and the file/song currently being processed. Playback/import/Guide rendering must be stopped before a backup operation starts. Before restore, StageGrid closes the native song decoders so WAV files can be replaced safely.
+
+### Section-aware Guide cue relocation — first arrangement layer
+
+Manual section selection still follows the alpha05.1 rule: **the current section finishes at its authored end marker**.
+
+Alpha06 adds the first arrangement-aware behavior on top of that transition. If a Native Guide and compatible installed cue sample are available, StageGrid resolves the selected destination section back to its canonical cue key and prepares the spoken target cue off the realtime thread.
+
+Example:
+
+```text
+CURRENT: VERSE
+bar 17 ─ bar 18 ─ bar 19 ─ bar 20
+                 user selects BRIDGE
+                         │
+                         ▼
+              final bar of current section
+                 Native Guide: “Bridge”
+                         │
+                         ▼
+bar 20 boundary ────────┼──> BRIDGE start
+```
+
+When the selection happens early enough, the replacement section call is scheduled approximately one bar before the current section ends. A later selection can move that spoken call shortly after the tap when enough useful time remains. A selection made too close to the boundary skips the spoken replacement rather than cutting a cue or destabilizing the audio transition.
+
+The original rendered Guide is temporarily suppressed around the replacement **section-name** cue to avoid two conflicting section calls. The short cue PCM is loaded/resampled before publication; the native callback only mixes already-prepared PCM against the same master timeline used by stems and Click.
+
+This alpha does **not yet relocate every count/dynamic cue** for a completely arbitrary future arrangement graph. It is the first event-aware layer: the destination section name follows the live manual section choice.
+
+App version: `0.2.0-alpha06` (`versionCode 12`).
 
 ## Double-buffered live path engine
 
-The alpha05 engine hardening remains active when Loop or a section jump changes the future playback path while audio is already running.
-
-### Double-buffered path preparation
-
-Previous builds rebuilt the decoder look-ahead when a live path changed. That was logically correct, but clearing the current buffers while Oboe was still consuming them could create an underrun window on a slower device or a song with many stems.
-
-Every track now has two decoder banks:
+Every track has two decoder banks. The active bank continues feeding Oboe while an inactive bank prepares a changed Loop/section-jump timeline. Once every track has the matching generation and enough aligned data, the realtime callback hands all tracks over together.
 
 ```text
-ACTIVE BANK
-currently feeding Oboe
-        │
-        │ keeps playing
-        ▼
+ACTIVE BANK ───────────────> Oboe
+      │
+      └─ current audio continues
 
 INACTIVE BANK
-prepare new Loop / section-jump path
-        │
-        │ all tracks ready
-        ▼
-atomic callback handoff
-        │
-        ▼
-new ACTIVE BANK
+      └─ prepare selected future path
+                 │
+                 ▼
+          all tracks ready
+                 │
+                 ▼
+       atomic shared-clock handoff
 ```
 
-The inactive bank starts from the same master timeline position as the active bank. While it is being prepared, StageGrid records how many output frames elapsed. Immediately before activation, the callback advances the prepared bank by that same number of frames and then switches every stem together.
+The callback does not open files, seek WAV readers, query Room, analyze Guides or wait for UI work. Stale prepared paths are cancelled instead of being activated after the old/new timelines have already diverged.
 
-The callback does not open files, seek WAV readers, allocate a new arrangement, wait on a mutex or ask Room/UI to do work. Decoder preparation stays on the existing background decoder threads.
-
-### Path diagnostics
-
-Native diagnostics expose:
-
-- successful prepared-bank swaps;
-- missed safe preparation windows;
-- whether a path replacement is currently being prepared.
-
-A missed safe window is cancelled rather than activating a stale prepared path after the point where the old and new timelines have already diverged.
-
-### Guide synchronization boundary
-
-`StageGrid Native Guide.wav` is a normal shared-clock stem, so it participates in the same double-buffered bank handoff and remains synchronized with the other audio tracks through loops and timeline jumps.
-
-This is **not yet** the later arrangement-aware Guide engine. If a live reorder requires a new spoken cue to be moved into a different pre-section bar, StageGrid still needs the upcoming event-relocation layer to synthesize/reposition that cue from `native-guide-events.json`.
+Native diagnostics expose successful prepared-bank swaps, missed safe windows and whether a replacement path is pending.
 
 ## Native Guide pipeline
 
-Install a Guide sample pack once from Settings using Android's document picker. StageGrid does not bundle or upload third-party Guide sample audio; the user supplies a pack they are licensed to use.
+Install a Guide sample pack once from Settings using Android's document picker. StageGrid does not bundle or upload third-party Guide audio; the user supplies a pack they are licensed to use.
 
-Current installed-language handling supports Spanish (`ES`), English (`EN`), French (`FR`) and Portuguese (`PT`) when those languages are present in the selected pack.
-
-When a song contains a Guide stem:
+Installed-language handling supports Spanish (`ES`), English (`EN`), French (`FR`) and Portuguese (`PT`) when those languages are present in the selected pack.
 
 ```text
 Imported Guide stem
@@ -106,49 +118,41 @@ recognized cue events
 native-guide-events.json
        ↓
 StageGrid Native Guide.wav
+       ↓
+optional live section-aware replacement cue
 ```
 
-When reconstruction succeeds, the original Guide remains in the library as a muted reference and the generated Guide becomes the active Guide track.
+When reconstruction succeeds, the original Guide remains as a muted reference and the generated Guide becomes the active Guide track. Recognized section calls can generate editable automatic sections when a valid Musical Grid exists. If BPM is entered after import, StageGrid reuses saved cue events rather than re-analyzing the audio.
 
-If a valid Musical Grid is available, recognized section calls can produce editable automatic sections. If BPM is entered only after import, StageGrid reuses the saved cue events to create the section map later without re-analyzing Guide audio.
+A processed song can change its generated Guide language directly from Player without re-importing stems or repeating Guide recognition.
 
-A processed song can change its generated Guide between installed languages directly from Player without re-importing stems or repeating Guide recognition.
-
-The recognition system is designed for sample-based Guide tracks matching the installed cue pack. It is **not** a general-purpose speech-to-text engine for arbitrary recordings.
+The recognizer is designed for sample-based Guide tracks matching the installed cue pack. It is **not** a general-purpose speech-to-text system.
 
 ## Current live workflow
 
 ```text
-Settings
-  ↓
-Install Guide sample pack (optional)
-  ↓
-Library / Drive folder
-  ↓
-Import song with percentage/status
+Import song
   ↓
 Click → Musical Grid reference
 Guide → native cue recognition
   ↓
-Automatic section proposals when possible
-  ↓
-Edit sections
+automatic/editable sections
   ↓
 Player
   ├─ Play / Pause / Stop
-  ├─ Current + next section
-  ├─ Edit sections
   ├─ Click / Guide
-  ├─ Change native Guide language
-  ├─ Section count-in
-  ├─ Section Loop
-  └─ Manual section change
+  ├─ count-in
+  ├─ section Loop
+  └─ select destination section
              ↓
-       current section end
+      announce selected section
+      when a native cue is available
              ↓
-       inactive path bank
+      finish CURRENT section
              ↓
-       realtime bank handoff
+      double-buffered handoff
+             ↓
+      selected section start
 ```
 
 A common stereo stage preset is:
@@ -160,19 +164,24 @@ Right → Tracks
 
 ## What is implemented
 
-### Library and import
+### Library, import and portability
 
-- Native Kotlin / Jetpack Compose Android application.
+- Kotlin / Jetpack Compose Android app.
 - Room library with Song, Track, Section and Setlist entities.
 - ZIP, folder and multi-file import through Android Storage Access Framework.
-- Persistent linked cloud-folder access through Android document providers, including Google Drive through the system picker.
-- Selected cloud files are copied into app-private storage for deterministic offline playback.
+- Linked cloud-folder browsing through Android document providers, including Google Drive through the system picker.
+- Cloud selections copied to app-private storage for deterministic offline playback.
 - ZIP-slip protection, extraction limits and safe filenames.
-- Optional `song.json` metadata, stem types and section markers.
-- Post-import metadata editing for title, artist, BPM, key, time signature, grid offset and notes.
+- Optional `song.json` metadata and section markers.
+- Post-import metadata editing.
 - Overall import percentage and current-stage descriptions.
-- Track-level progress for WAV preparation and MP3 decoding.
-- In-memory Guide sample index/template cache and pre-warming after Guide-pack installation.
+- Track-level WAV/MP3 processing progress.
+- Portable `.stagebackup` creation to a user-selected SAF folder/provider.
+- Restore from `.stagebackup` after reinstall/device change.
+- Per-file size + SHA-256 integrity validation before restore.
+- Portable reconstruction of app-private track paths.
+- Song/section/setlist/Guide-sidecar restore by stable IDs.
+- Installed Guide pack included in the portable library backup.
 
 ### Audio formats
 
@@ -186,87 +195,110 @@ MP3 decoding never runs in the Oboe real-time callback. StageGrid does not indep
 
 ### Native audio engine
 
-- One native Oboe output stream.
+- One native Oboe stereo output stream.
 - One master output-frame playhead shared by all stems.
-- Streaming decoder threads and preallocated SPSC buffers.
+- Streaming decoder threads + preallocated SPSC buffers.
 - Two decoder banks per track for prepared live path handoff.
-- Active-bank playback continues while an inactive Loop/jump path is decoded.
-- All tracks switch banks together from the realtime callback only after readiness/alignment checks.
-- Prepared banks are aligned by elapsed output-frame count before activation.
-- Unsafe late path swaps are cancelled instead of applying stale timeline data.
-- Total ring-buffer memory remains in the same order as the former single large bank by splitting that look-ahead budget across the two banks.
-- No filesystem, Room, Guide recognition or Compose work inside the real-time callback.
-- Shared source-rate mapping.
+- Active playback continues while a replacement Loop/jump path is decoded.
+- All tracks hand off together after readiness/alignment checks.
+- Unsafe stale path swaps are rejected.
 - Play, pause, stop and seek.
 - Master volume.
-- Per-track volume, mute, solo and pan.
-- Per-track stereo routing: `L`, `L+R`, `R`.
-- Basic Android/USB stereo output-device selection.
-- Native diagnostics for sample rate, burst size, underruns, callback load and prepared-path swaps/misses.
+- Per-track volume, mute, solo, pan and `L / L+R / R` route.
+- Basic Android/USB stereo device selection.
+- Diagnostics for sample rate, burst size, underruns, callback load and path swaps/misses.
+- Preloaded short Native Guide section cues can be mixed on the shared transport clock for live manual section choices.
 
 ### Native Click
 
-- Imported Click retained as a timing reference.
+- Imported Click retained as timing reference only.
 - First-click transient detection for `gridOffsetMs`.
 - Manual grid-offset correction.
 - Native sample-clock Click.
 - 1/4, 1/8, 1/8T and 1/16 subdivisions.
-- Click routing: `L`, `L+R`, `R`.
+- Click route: `L`, `L+R`, `R`.
 
 ### Native Guide
 
 - Imported Guide detection.
 - User-installed local Guide sample packs.
 - Offline template/fingerprint recognition.
-- Auto or selected default output language on import.
-- Per-song Guide-language changes from Player after processing.
-- Structured `native-guide-events.json` cue storage.
+- Default or per-song output language.
+- Structured `native-guide-events.json` storage.
 - App-generated `StageGrid Native Guide.wav`.
 - Original Guide retained muted after successful reconstruction.
-- Persisted cue events can regenerate sections after BPM becomes available.
-- Generated Guide playback uses the same shared multitrack clock and decoder-bank handoff as the stems.
+- Automatic section proposals and delayed section recovery after BPM becomes available.
+- Live target-section cue lookup from persisted section proposals.
+- Off-callback cue loading/resampling and shared-clock native cue playback.
+- Temporary fixed-Guide suppression around a replacement section-name call.
 
 ### Musical Grid and sections
-
-The Musical Grid maps:
-
-```text
-BPM + time signature + grid offset
-                ↓
-         bar / beat position
-                ↓
- sections / snapping / count-in / Guide proposals
-```
-
-Implemented:
 
 - milliseconds ↔ bar/beat conversion;
 - beat/bar snapping;
 - Player bar/beat readout;
-- visual/manual section editor;
-- section creation, rename, resize and delete;
-- start/end from current playhead;
-- automatic section proposals from recognized native Guide cues;
-- delayed section recovery from persisted Guide events when BPM is supplied later;
+- visual/manual Section Editor;
+- section create/rename/resize/delete;
+- automatic section proposals from Native Guide cues;
 - Section Loop / Exit Loop;
 - manual section changes queued for the explicit end of the current section;
 - section destinations enter at their explicit start marker;
-- 1- or 2-bar native count-in.
+- 1- or 2-bar native count-in;
+- target-section Guide call planned relative to the current section boundary when possible.
 
-**Edit sections remains a first-class Player action.** Automatic recovery only replaces the untouched `Full Song` fallback, so manual section work is protected.
+**Edit sections remains a first-class Player action.** Automatic recovery only replaces the untouched `Full Song` fallback, protecting manual section work.
 
 ### Mixer, setlists and live operation
 
 - Friendly routing presets plus manual `L / L+R / R` routing.
 - Basic local setlists.
-- Foreground playback service.
-- Android MediaSession and notification controls.
+- Foreground playback service + MediaSession/notification controls.
 - Audio-focus handling.
 - LIVE keep-screen-on mode.
 - Performance Lock.
 - Spanish and English UI resources.
 
 The current routing matrix is stereo; arbitrary 4/8/custom USB output routing is planned for a later milestone.
+
+## Backup workflow
+
+Create a backup:
+
+```text
+Settings
+  ↓
+Backup & restore
+  ↓
+Create backup
+  ↓
+Android folder picker
+  ↓
+local folder / USB / Drive provider
+  ↓
+StageGrid-YYYYMMDD-HHMMSS.stagebackup
+```
+
+Restore after installing StageGrid on another device:
+
+```text
+Settings
+  ↓
+Backup & restore
+  ↓
+Restore
+  ↓
+select .stagebackup
+  ↓
+copy to staging
+  ↓
+validate manifest + complete file set + SHA-256
+  ↓
+restore private song files
+  ↓
+restore Room library/setlists
+```
+
+A backup is a snapshot. Alpha06 does not automatically synchronize later library changes to Drive in the background.
 
 ## Build requirements
 
@@ -292,8 +324,6 @@ Debug APK:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-`gradlew.bat` also attempts to use Android Studio's bundled JBR when `JAVA_HOME` is absent or malformed.
-
 ## Keeping your local checkout current
 
 ```bash
@@ -301,114 +331,104 @@ git switch main
 git pull
 ```
 
-Then build normally.
-
 ## Local data and privacy
 
 - No StageGrid account required.
 - No analytics SDK.
 - No ads.
 - No broad storage permission.
-- StageGrid does not upload audio or Guide samples.
-- Guide packs are installed into app-private local storage.
-- Cloud-folder access is limited to locations explicitly granted through Android's document provider.
-- Imported audio is copied locally for offline playback.
+- StageGrid does not upload audio or Guide samples itself.
+- Guide packs and imported songs live in app-private storage.
+- SAF access is limited to files/folders explicitly selected by the user.
+- Backups are written only to the destination chosen through Android's picker.
+- A Drive destination is handled by Android/Google Drive's document provider rather than by StageGrid receiving Drive credentials.
 
 ## Tests and CI
 
 GitHub Actions runs unit tests and `assembleDebug` for development pull requests before changes are merged into `main`.
 
-Coverage includes areas such as stem classification, WAV parsing, Musical Grid conversion/snapping, manual section-boundary transition policy, native Guide recognition/section inference, Room behavior, JNI/native loading and shared-clock native compilation.
+Coverage includes stem classification, WAV parsing, Musical Grid conversion/snapping, section-boundary transitions, Native Guide recognition/section inference, arrangement cue timing, Room behavior, JNI/native compilation and shared-clock audio behavior.
 
-## Known limitations of 0.2.0-alpha05.1
+## Known limitations of 0.2.0-alpha06
 
-Still pending:
-
-- double-buffered path handoff is implemented, but representative physical-device stress testing with 16/32+ active stems is still required before calling it stage-qualified;
-- extremely late manual section requests can still miss the safe inactive-bank preparation window rather than activating stale audio after the section boundary;
-- the generated Guide WAV follows the original timeline; native Guide **event relocation** for arbitrary live ReOrder is still pending;
-- in-place Guide **audio re-analysis** for songs imported before a Guide pack was installed/changed is still pending;
-- the Guide fingerprint cache is currently in-memory; after a full app-process restart the first Guide analysis may pay the template preparation cost again;
-- Setlist Live NEXT/PREV with next-song preload;
-- restorable performance sessions;
-- waveform peak cache/editor;
-- AAC/M4A/FLAC/OGG expansion;
-- arbitrary multichannel USB routing;
-- tempo/time stretching and pitch shifting;
-- MIDI, pads, automation and SMPTE/LTC;
-- complete `.stagepack` backup/export;
-- LAN remote control;
-- tablet split Player + Mixer workspace;
-- first-run onboarding and final accessibility pass.
+- Physical-device stress validation with representative 16/32+ stem projects is still required before stage qualification.
+- Arrangement-aware Guide handling currently relocates/replaces the **selected section-name call**. Full relocation of every count/dynamic cue in an arbitrary virtual arrangement is still pending.
+- A very late manual selection can skip its spoken replacement cue if there is not enough time before the section boundary.
+- In-place Guide audio re-analysis for songs imported before installing/changing a Guide pack is still pending.
+- Guide fingerprint caching remains in-memory across the current app process.
+- Portable backup is manual snapshot backup, not continuous/bidirectional Drive synchronization.
+- Setlist Live NEXT/PREV with next-song preload is pending.
+- Restorable in-progress performance sessions are pending.
+- Waveform cache/editor, additional compressed codecs, arbitrary multichannel USB, tempo/pitch DSP, MIDI, pads, automation and SMPTE/LTC remain later milestones.
+- Full project interchange semantics for the later `.stagepack` format remain separate from the alpha06 disaster-recovery `.stagebackup` format.
+- Tablet split Player + Mixer, onboarding and final accessibility pass remain pending.
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Release history
 
+### 0.2.0-alpha06
+
+**Portable backup/restore + section-aware Guide cue layer**
+
+- portable `.stagebackup` to any writable Android document-provider folder;
+- local/USB/Google Drive-provider destination support through SAF;
+- songs, audio, metadata, sections, setlists, Native Guide sidecars and installed Guide pack included;
+- SHA-256 and byte-size validation before restore;
+- device-independent track path reconstruction;
+- visible backup/restore percentage and stages;
+- manual section changes continue to wait for current section end;
+- selected target section can be announced from the installed Native Guide sample pack before that boundary;
+- late-choice timing policy and tests;
+- fixed rendered Guide suppression around the replacement section-name call.
+
 ### 0.2.0-alpha05.1
 
 **Manual section-boundary transition hotfix**
 
-- manual section selection no longer jumps at the next internal bar line;
-- the current section finishes at its explicit `endMs` marker;
-- the requested section enters at its explicit `startMs` marker;
-- the double-buffered path engine still prepares and hands off all stems together;
-- stale UI observations after an already-passed section boundary fall back to the requested section immediately;
-- JVM tests cover the section-boundary policy.
+- current section finishes at explicit `endMs`;
+- requested section enters at explicit `startMs`;
+- no next-bar truncation of a manually selected current section.
 
 ### 0.2.0-alpha05
 
 **Double-buffered live path hardening**
 
 - two decoder banks per track;
-- background preparation of Loop/section-jump paths without clearing the bank currently feeding Oboe;
-- synchronized all-track bank activation in the realtime callback;
-- elapsed-output-frame alignment before prepared-bank activation;
-- safe-window rejection for stale late swaps;
-- native diagnostics for path swaps, misses and pending state.
+- background Loop/section-jump path preparation;
+- synchronized all-track realtime handoff;
+- stale late path rejection + diagnostics.
 
 ### 0.2.0-alpha04.2
 
 **Per-song Guide language + import progress/performance pass**
 
-- change an already-generated native Guide between installed languages without re-import/re-analysis;
-- persist the song-specific output language in the native Guide sidecar;
-- safe temporary render/swap while transport is stopped;
-- visible overall import percentage and current operation;
-- MP3 codec progress reporting;
-- cached Guide pack file index and prepared sample fingerprints;
-- larger buffered local copies;
-- faster silence handling while rendering native Guide WAVs.
+- change processed Guide language without re-analysis;
+- import percentage/current operation;
+- Guide template caching and import I/O optimizations.
 
 ### 0.2.0-alpha04.1
 
 **Native Guide section-recovery hotfix**
 
-- reuse persisted Guide cue events when BPM is entered after import;
-- regenerate automatic sections without Guide audio re-analysis;
-- recover already-imported alpha04 songs when loaded;
-- protect manually authored/edited section maps;
-- keep sidecar section proposals synchronized after recovery.
+- reuse persisted cue events when BPM is entered after import;
+- recover sections without re-analyzing Guide audio.
 
 ### 0.2.0-alpha04
 
-**Native Guide recognition + automatic section proposals**
+**Native Guide recognition + automatic sections**
 
-- local user-installed Guide sample packs;
-- offline Guide cue fingerprint/template recognition;
-- ES/EN/FR/PT handling;
-- app-generated native Guide PCM track;
-- original Guide retained as muted reference;
-- structured event sidecar;
-- automatic Musical Grid section proposals when BPM is already available during import.
+- local user-installed cue packs;
+- ES/EN/FR/PT recognition/reconstruction;
+- structured Guide event sidecar;
+- automatic editable section proposals.
 
 ### 0.2.0-alpha03
 
-**Quantized sections + native count-in**
+**Initial section transitions + native count-in**
 
-- initial next-bar live section changes;
-- 1/2-bar section count-in;
-- native sample-clock pre-roll;
+- live section scheduling;
+- 1/2-bar native count-in;
 - synchronized stem entry.
 
 ### 0.2.0-alpha02
@@ -417,8 +437,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 - simplified Player hierarchy;
 - routing presets;
-- friendly terminology;
-- simplified Section Editor.
+- friendlier terminology and Section Editor.
 
 ### 0.2.0-alpha01
 
@@ -432,16 +451,9 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 **Native Click + stereo routing**
 
-- native generated Click;
-- subdivisions;
-- `L / L+R / R` routing;
-- Click-reference grid detection.
-
 ### 0.1.2
 
 **MP3 import path**
-
-- Android MediaCodec MP3 normalization to local PCM WAV.
 
 ## Release documentation policy
 

@@ -18,11 +18,17 @@ interface SongDao {
     @Query("SELECT * FROM songs ORDER BY favorite DESC, importedAtEpochMs DESC")
     fun observeAll(): Flow<List<SongEntity>>
 
+    @Query("SELECT * FROM songs ORDER BY importedAtEpochMs, id")
+    suspend fun getAll(): List<SongEntity>
+
     @Query("SELECT * FROM songs WHERE id = :id LIMIT 1")
     suspend fun get(id: String): SongEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(song: SongEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(songs: List<SongEntity>)
 
     @Update
     suspend fun update(song: SongEntity)
@@ -33,6 +39,9 @@ interface SongDao {
 
 @Dao
 interface TrackDao {
+    @Query("SELECT * FROM tracks ORDER BY songId, sortOrder, id")
+    suspend fun getAll(): List<TrackEntity>
+
     @Query("SELECT * FROM tracks WHERE songId = :songId ORDER BY sortOrder")
     fun observeForSong(songId: String): Flow<List<TrackEntity>>
 
@@ -44,10 +53,16 @@ interface TrackDao {
 
     @Update
     suspend fun update(track: TrackEntity)
+
+    @Query("DELETE FROM tracks WHERE songId = :songId")
+    suspend fun clearForSong(songId: String)
 }
 
 @Dao
 interface SectionDao {
+    @Query("SELECT * FROM sections ORDER BY songId, sortOrder, startMs, id")
+    suspend fun getAll(): List<SectionEntity>
+
     @Query("SELECT * FROM sections WHERE songId = :songId ORDER BY sortOrder, startMs")
     fun observeForSong(songId: String): Flow<List<SectionEntity>>
 
@@ -72,11 +87,17 @@ interface SetlistDao {
     @Query("SELECT * FROM setlists ORDER BY createdAtEpochMs DESC")
     fun observeAll(): Flow<List<SetlistEntity>>
 
+    @Query("SELECT * FROM setlists ORDER BY createdAtEpochMs, id")
+    suspend fun getAll(): List<SetlistEntity>
+
     @Query("SELECT * FROM setlists WHERE id = :id LIMIT 1")
     suspend fun get(id: String): SetlistEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(setlist: SetlistEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(setlists: List<SetlistEntity>)
 
     @Update
     suspend fun update(setlist: SetlistEntity)
@@ -87,11 +108,17 @@ interface SetlistDao {
 
 @Dao
 interface SetlistSongDao {
+    @Query("SELECT * FROM setlist_songs ORDER BY setlistId, sortOrder, songId")
+    suspend fun getAll(): List<SetlistSongEntity>
+
     @Query("SELECT * FROM setlist_songs WHERE setlistId = :setlistId ORDER BY sortOrder")
     suspend fun getEntries(setlistId: String): List<SetlistSongEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entry: SetlistSongEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(entries: List<SetlistSongEntity>)
 
     @Query("SELECT COALESCE(MAX(sortOrder) + 1, 0) FROM setlist_songs WHERE setlistId = :setlistId")
     suspend fun nextSortOrder(setlistId: String): Int

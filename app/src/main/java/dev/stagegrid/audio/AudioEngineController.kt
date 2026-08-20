@@ -9,11 +9,19 @@ import android.media.AudioManager
 import androidx.core.content.ContextCompat
 import dev.stagegrid.MainActivity
 import dev.stagegrid.data.LibraryRepository
+import dev.stagegrid.guide.ArrangementGuideCuePlanner
+import dev.stagegrid.guide.GuideCueLoader
+import dev.stagegrid.guide.GuidePackManager
+import dev.stagegrid.guide.NativeGuideEventStore
+import dev.stagegrid.guide.NativeGuideRenderer
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.model.TrackEntity
+import dev.stagegrid.model.TrackType
 import dev.stagegrid.music.MusicalGrid
 import dev.stagegrid.service.PlaybackService
+import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,11 +38,13 @@ class AudioEngineController(
     private val context: Context,
     private val repository: LibraryRepository,
     private val native: NativeAudioEngine,
+    private val guidePacks: GuidePackManager,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val audioManager = context.getSystemService(AudioManager::class.java)
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
+    private val guideCueRequestSerial = AtomicLong(0L)
 
     private val focusRequest: AudioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
         .setAudioAttributes(
@@ -63,11 +73,12 @@ class AudioEngineController(
                     val position = rawPosition.coerceAtLeast(0L)
                     val actuallyPlaying = native.isPlaying()
                     val countInRemaining = native.countInRemainingMs()
+                    val crossedQueued = current.queuedSectionId?.let { queuedId ->
+                        val queued = current.sections.firstOrNull { it.id == queuedId }
+                        queued != null && position >= queued.startMs && position < queued.endMs
+                    } ?: false
+                    if (crossedQueued) guideCueRequestSerial.incrementAndGet()
                     _state.update { previous ->
-                        val crossedQueued = previous.queuedSectionId?.let { queuedId ->
-                            val queued = previous.sections.firstOrNull { it.id == queuedId }
-                            queued != null && position >= queued.startMs && position < queued.endMs
-                        } ?: false
                         previous.copy(
                             positionMs = position,
                             countInRemainingMs = countInRemaining,
@@ -89,6 +100,7 @@ class AudioEngineController(
     }
 
     fun loadSong(songId: String) {
+        cancelArrangementGuideCue()
         scope.launch {
             _state.update { it.copy(engineState = EngineState.LOADING, errorMessage = null) }
             val bundle = withContext(Dispatchers.IO) { repository.getSongBundle(songId) }
@@ -154,6 +166,7 @@ class AudioEngineController(
     }
 
     fun stop() {
+        cancelArrangementGuideCue()
         _state.update { it.copy(engineState = EngineState.STOPPING) }
         scope.launch(Dispatchers.Default) {
             native.stop()
@@ -175,6 +188,25 @@ class AudioEngineController(
         }
     }
 
+    /** Stops decoder threads and closes WAV readers before portable restore replaces private files. */
+    fun unloadForLibraryRestore() {
+        cancelArrangementGuideCue()
+        native.pause()
+        native.unloadSong()
+        audioManager.abandonAudioFocusRequest(focusRequest)
+        context.stopService(Intent(context, PlaybackService::class.java))
+        val previous = _state.value
+        _state.value = PlayerState(
+            clickEnabled = previous.clickEnabled,
+            guideEnabled = previous.guideEnabled,
+            clickSubdivision = previous.clickSubdivision,
+            clickRoute = previous.clickRoute,
+            countInBars = previous.countInBars,
+            masterVolume = previous.masterVolume,
+            selectedOutputDeviceId = previous.selectedOutputDeviceId,
+        )
+    }
+
     fun stopAll() {
         native.setMasterVolume(0f)
         stop()
@@ -182,6 +214,7 @@ class AudioEngineController(
     }
 
     fun seekTo(ms: Long) {
+        cancelArrangementGuideCue()
         val duration = _state.value.durationMs
         scope.launch {
             val returnState = if (_state.value.isPlaying) EngineState.PLAYING else EngineState.PAUSED
@@ -245,6 +278,7 @@ class AudioEngineController(
 
     fun setGuideEnabled(enabled: Boolean) {
         native.setGuideEnabled(enabled)
+        if (!enabled) cancelArrangementGuideCue()
         _state.update { it.copy(guideEnabled = enabled) }
     }
 
@@ -263,6 +297,7 @@ class AudioEngineController(
     }
 
     fun playCurrentSectionWithCountIn() {
+        cancelArrangementGuideCue()
         val current = _state.value
         val section = current.currentSection ?: return
         val bars = current.countInBars
@@ -298,6 +333,7 @@ class AudioEngineController(
     }
 
     fun toggleCurrentSectionLoop() {
+        cancelArrangementGuideCue()
         val current = _state.value
         val section = current.currentSection ?: return
         if (current.loopSectionId == section.id) {
@@ -333,6 +369,8 @@ class AudioEngineController(
             return
         }
 
+        val requestSerial = guideCueRequestSerial.incrementAndGet()
+        native.clearGuideCue()
         native.scheduleJump(jumpAt, section.startMs, disableLoopAfterJump = true)
         _state.update {
             it.copy(
@@ -342,14 +380,75 @@ class AudioEngineController(
                 countInTargetSectionId = null,
             )
         }
+        prepareArrangementGuideCue(current, section, jumpAt, requestSerial)
+    }
+
+    private fun prepareArrangementGuideCue(
+        snapshot: PlayerState,
+        targetSection: SectionEntity,
+        sectionBoundaryMs: Long,
+        requestSerial: Long,
+    ) {
+        val song = snapshot.song ?: return
+        if (!snapshot.guideEnabled) return
+        val grid = MusicalGrid.from(song.bpm, song.timeSignature, song.gridOffsetMs) ?: return
+        val plan = ArrangementGuideCuePlanner.plan(
+            currentPositionMs = snapshot.positionMs,
+            sectionBoundaryMs = sectionBoundaryMs,
+            barDurationMs = grid.barDurationMs,
+        ) ?: return
+
+        scope.launch(Dispatchers.IO) {
+            val eventFile = File(context.filesDir, "library/${song.id}/native-guide-events.json")
+            val sectionKey = NativeGuideEventStore.findSectionKey(eventFile, targetSection.startMs, targetSection.name)
+                ?: return@launch
+            val language = NativeGuideEventStore.readOutputLanguage(eventFile)
+                ?: guidePacks.resolveOutputLanguage("auto", NativeGuideEventStore.readDetectedLanguage(eventFile))
+                ?: return@launch
+            val sample = guidePacks.findSample(language, sectionKey) ?: return@launch
+            val guideTrack = snapshot.tracks.firstOrNull { it.name == NativeGuideRenderer.TRACK_NAME }
+                ?: snapshot.tracks.firstOrNull { TrackType.fromStorage(it.type) == TrackType.GUIDE }
+                ?: return@launch
+            val anySolo = snapshot.tracks.any { it.solo }
+            if (guideTrack.muted || (anySolo && !guideTrack.solo)) return@launch
+
+            val sampleRate = native.sampleRate()
+            val pcm = runCatching { GuideCueLoader.loadMonoResampled(sample.file, sampleRate) }.getOrNull()
+                ?: return@launch
+            if (pcm.isEmpty()) return@launch
+            if (requestSerial != guideCueRequestSerial.get()) return@launch
+            val latest = _state.value
+            if (latest.queuedSectionId != targetSection.id || latest.queuedJumpAtMs != sectionBoundaryMs) return@launch
+
+            val now = native.positionMs().coerceAtLeast(0L)
+            val cueAt = maxOf(plan.cueAtMs, now + GUIDE_PUBLISH_LEAD_MS)
+            if (sectionBoundaryMs - cueAt < GUIDE_MINIMUM_USEFUL_WINDOW_MS) return@launch
+            val sampleDurationMs = (pcm.size.toLong() * 1000L) / sampleRate.coerceAtLeast(1)
+            val suppressUntil = minOf(
+                sectionBoundaryMs,
+                cueAt + maxOf(GUIDE_SUPPRESSION_MIN_MS, sampleDurationMs + GUIDE_SUPPRESSION_TAIL_MS),
+            )
+            if (suppressUntil <= cueAt) return@launch
+            if (requestSerial != guideCueRequestSerial.get()) return@launch
+
+            native.scheduleGuideCue(
+                monoSamples = pcm,
+                atMs = cueAt,
+                suppressUntilMs = suppressUntil,
+                route = StereoRoute.fromStorage(guideTrack.outputRoute),
+                volume = guideTrack.volume,
+            )
+        }
     }
 
     fun exitLoop() {
+        cancelArrangementGuideCue()
         native.setLoop(false, 0, 0)
         _state.update { it.copy(loopSectionId = null, queuedSectionId = null, queuedJumpAtMs = null) }
     }
 
     fun setOutputDevice(deviceId: Int) {
+        cancelArrangementGuideCue()
         scope.launch {
             val ok = withContext(Dispatchers.Default) { native.setOutputDevice(deviceId) }
             _state.update {
@@ -369,8 +468,21 @@ class AudioEngineController(
     )
 
     fun close() {
+        cancelArrangementGuideCue()
         scope.cancel()
         audioManager.abandonAudioFocusRequest(focusRequest)
         native.close()
+    }
+
+    private fun cancelArrangementGuideCue() {
+        guideCueRequestSerial.incrementAndGet()
+        native.clearGuideCue()
+    }
+
+    private companion object {
+        const val GUIDE_PUBLISH_LEAD_MS = 90L
+        const val GUIDE_MINIMUM_USEFUL_WINDOW_MS = 350L
+        const val GUIDE_SUPPRESSION_MIN_MS = 1_800L
+        const val GUIDE_SUPPRESSION_TAIL_MS = 250L
     }
 }

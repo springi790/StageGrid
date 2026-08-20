@@ -1,0 +1,24 @@
+<resources>
+    <string name="backup_restore_title">Copia de seguridad y restauración</string>
+    <string name="backup_restore_description">Guarda una copia portátil de tu biblioteca para recuperarla si cambias de dispositivo o reinstalas StageGrid.</string>
+    <string name="backup_restore_contents">Incluye canciones y audio local, metadatos, secciones, setlists, eventos de Guide nativa y el paquete de guías instalado.</string>
+    <string name="backup_restore_provider_note">El selector de Android permite elegir una carpeta local, USB o Google Drive cuando Drive está disponible como proveedor de documentos.</string>
+    <string name="backup_create_button">Crear copia</string>
+    <string name="backup_restore_button">Restaurar</string>
+    <string name="backup_create_running_title">Creando copia de seguridad</string>
+    <string name="backup_restore_running_title">Restaurando copia de seguridad</string>
+    <string name="backup_progress_percent">%1$d%%</string>
+    <string name="backup_complete_title">Copia completada</string>
+    <string name="backup_complete_summary">Se guardaron %1$d canciones y %2$d setlists en:\n%3$s</string>
+    <string name="backup_restore_complete_title">Restauración completada</string>
+    <string name="backup_restore_complete_summary">Se restauraron %1$d canciones, %2$d setlists y se validaron %3$d archivos.</string>
+    <string name="backup_error_title">No se pudo completar</string>
+    <string name="backup_stage_preparing">Preparando biblioteca</string>
+    <string name="backup_stage_hashing">Verificando archivos</string>
+    <string name="backup_stage_writing">Guardando canciones y datos</string>
+    <string name="backup_stage_copying_archive">Leyendo copia de seguridad</string>
+    <string name="backup_stage_validating">Validando integridad</string>
+    <string name="backup_stage_restoring_files">Restaurando archivos</string>
+    <string name="backup_stage_restoring_library">Restaurando biblioteca</string>
+    <string name="backup_stage_complete">Completado</string>
+</resources>

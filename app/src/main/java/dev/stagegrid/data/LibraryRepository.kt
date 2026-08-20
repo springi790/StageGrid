@@ -10,6 +10,14 @@ import dev.stagegrid.model.SongEntity
 import dev.stagegrid.model.TrackEntity
 import kotlinx.coroutines.flow.Flow
 
+data class LibrarySnapshot(
+    val songs: List<SongEntity>,
+    val tracks: List<TrackEntity>,
+    val sections: List<SectionEntity>,
+    val setlists: List<SetlistEntity>,
+    val setlistSongs: List<SetlistSongEntity>,
+)
+
 class LibraryRepository(private val db: StageGridDatabase) {
     val songs: Flow<List<SongEntity>> = db.songDao().observeAll()
     val setlists: Flow<List<SetlistEntity>> = db.setlistDao().observeAll()
@@ -19,6 +27,36 @@ class LibraryRepository(private val db: StageGridDatabase) {
     suspend fun getSongBundle(songId: String): SongBundle? = db.withTransaction {
         val song = db.songDao().get(songId) ?: return@withTransaction null
         SongBundle(song, db.trackDao().getForSong(songId), db.sectionDao().getForSong(songId))
+    }
+
+    /** Stable, transactionally consistent snapshot used by portable backups. */
+    suspend fun snapshot(): LibrarySnapshot = db.withTransaction {
+        LibrarySnapshot(
+            songs = db.songDao().getAll(),
+            tracks = db.trackDao().getAll(),
+            sections = db.sectionDao().getAll(),
+            setlists = db.setlistDao().getAll(),
+            setlistSongs = db.setlistSongDao().getAll(),
+        )
+    }
+
+    /**
+     * Merges a validated portable snapshot by stable IDs. Matching songs/setlists are replaced
+     * exactly (including their child rows), while unrelated local library records remain intact.
+     */
+    suspend fun restoreSnapshot(snapshot: LibrarySnapshot) = db.withTransaction {
+        snapshot.songs.forEach { song ->
+            db.trackDao().clearForSong(song.id)
+            db.sectionDao().clearForSong(song.id)
+        }
+        snapshot.setlists.forEach { setlist ->
+            db.setlistSongDao().clear(setlist.id)
+        }
+        db.songDao().insertAll(snapshot.songs)
+        db.trackDao().insertAll(snapshot.tracks)
+        db.sectionDao().insertAll(snapshot.sections)
+        db.setlistDao().insertAll(snapshot.setlists)
+        db.setlistSongDao().insertAll(snapshot.setlistSongs)
     }
 
     suspend fun saveImportedSong(

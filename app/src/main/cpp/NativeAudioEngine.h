@@ -39,6 +39,8 @@ public:
     void setLoop(bool enabled, int64_t startMs, int64_t endMs);
     void scheduleJump(int64_t atMs, int64_t targetMs, bool disableLoopAfterJump);
     void clearScheduledJump();
+    bool scheduleGuideCue(const std::vector<float>& monoSamples, int64_t atMs, int64_t suppressUntilMs, int route, float volume);
+    void clearGuideCue() noexcept;
     bool prepareCountIn(int64_t targetMs, int bars);
     int64_t countInRemainingMs() const;
     bool setOutputDevice(int32_t deviceId);
@@ -81,6 +83,15 @@ private:
         std::atomic<bool> disableLoopAfterJump{false};
     };
 
+    struct GuideCueData {
+        std::vector<float> monoSamples;
+        int64_t startFrame{0};
+        int64_t suppressUntilFrame{0};
+        int route{BOTH};
+        float volume{1.0f};
+        std::atomic<bool> consumed{false};
+    };
+
     struct TrackState {
         explicit TrackState(std::unique_ptr<WavReader> readerIn, int typeIn)
             : reader(std::move(readerIn)),
@@ -89,8 +100,6 @@ private:
                     std::make_unique<SpscRingBuffer>(kRingCapacitySamples)} {}
         ~TrackState();
 
-        // Two one-second stereo banks at 48 kHz use approximately the same memory as the former
-        // single two-second bank, while allowing a replacement path to be prepared off-callback.
         static constexpr size_t kRingCapacitySamples = 96000;
         std::unique_ptr<WavReader> reader;
         int type{OTHER};
@@ -148,16 +157,20 @@ private:
     std::atomic<int64_t> gridOffsetFrame_{0};
     std::atomic<int64_t> trackGateUntilFrame_{-1};
 
-    // Live path changes use the inactive bank. Control threads publish a complete path snapshot,
-    // decoder threads preload it, and only the realtime callback switches all tracks together.
+    // Dynamic section-call PCM is built on a background thread and published as an immutable cue.
+    // Ownership handoff hardening is tracked separately from the callback's audio rendering logic.
+    std::shared_ptr<GuideCueData> guideCue_;
+    std::mutex guideCueControlMutex_;
+    std::atomic<bool> guideCueReaderActive_{false};
+
     static constexpr uint64_t kPathClaimedGeneration = ~uint64_t{0};
     std::array<AtomicPathState, 2> pathStates_{};
     std::array<std::atomic<uint64_t>, 2> bankGenerations_{};
     std::array<std::atomic<int64_t>, 2> bankStartFrames_{};
     std::atomic<uint64_t> generationCounter_{1};
     std::atomic<int> activeBank_{0};
-    std::atomic<int> pendingBank_{-1};
     std::atomic<uint64_t> pendingGeneration_{0};
+    std::atomic<int> pendingBank_{-1};
     std::atomic<uint64_t> pendingStartOutputFrame_{0};
     std::atomic<int64_t> pendingSafeOutputFrames_{-1};
     std::atomic<uint64_t> outputFrameCounter_{0};

@@ -87,6 +87,11 @@ class GuidePackManager(private val context: Context) {
     fun findSample(language: String, key: String): GuideSample? =
         listSamples().firstOrNull { it.language == language && it.key == key }
 
+    /** Call after a backup restore replaces the private Guide-pack directory. */
+    fun invalidateCache() {
+        cachedSamples = null
+    }
+
     fun resolveOutputLanguage(preferred: String, detected: String?): String? {
         val available = status().languages
         if (available.isEmpty()) return null
