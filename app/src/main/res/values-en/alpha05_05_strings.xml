@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="live_workspace">Live workspace</string>
+    <string name="workspace_no_song">Load a song to open the live workspace.</string>
+    <string name="workspace_now">NOW</string>
+    <string name="workspace_next">NEXT</string>
+    <string name="workspace_queued">QUEUED</string>
+    <string name="workspace_arrangement">Arrangement</string>
+    <string name="workspace_arrangement_start">Start arrangement</string>
+    <string name="workspace_arrangement_stop">Stop arrangement</string>
+    <string name="workspace_exit_loop">Exit at boundary</string>
+    <string name="workspace_quick_mix">Quick mix</string>
+    <string name="workspace_full_mix">Full mixer</string>
+    <string name="workspace_sections">Sections</string>
+    <string name="workspace_transport">Transport</string>
+    <string name="workspace_play">PLAY</string>
+    <string name="workspace_pause">PAUSE</string>
+    <string name="workspace_stop">STOP</string>
+    <string name="workspace_stop_all">STOP ALL</string>
+    <string name="workspace_click">CLICK</string>
+    <string name="workspace_guide">GUIDE</string>
+    <string name="workspace_usb_channels">USB %1$d OUT</string>
+    <string name="workspace_android_channels">AUDIO %1$d OUT</string>
+    <string name="workspace_repeat_once">1×</string>
+    <string name="workspace_repeat_twice">2×</string>
+    <string name="workspace_repeat_four">4×</string>
+    <string name="workspace_repeat_infinite">∞</string>
+    <string name="workspace_preroll">Pre-roll %1$d bar(s)</string>
+    <string name="workspace_move_left">Move earlier</string>
+    <string name="workspace_move_right">Move later</string>
+    <string name="workspace_edit_arrangement">Edit arrangement</string>
+    <string name="workspace_done">Done</string>
+    <string name="workspace_setlist">Setlist</string>
+    <string name="workspace_previous_song">Previous</string>
+    <string name="workspace_next_song">Next</string>
+    <string name="workspace_no_next_song">End of set</string>
+    <string name="workspace_live_hint">Tap a section to queue it at the next boundary.</string>
+    <string name="workspace_master">Master %1$d%%</string>
+    <string name="workspace_mute">M</string>
+    <string name="workspace_solo">S</string>
+    <string name="workspace_iteration">Pass %1$d</string>
+    <string name="workspace_crossfade">Crossfade</string>
+    <string name="workspace_preloaded">PRELOAD</string>
+</resources>
