@@ -4,6 +4,8 @@ import dev.stagegrid.audio.ClickSubdivision
 import dev.stagegrid.model.StereoRoute
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import org.json.JSONObject
 
 class PerformanceSessionStore(filesDir: File) {
@@ -44,16 +46,37 @@ class PerformanceSessionStore(filesDir: File) {
             .put("setlistIndex", snapshot.setlistIndex)
             .put("savedAtEpochMs", snapshot.savedAtEpochMs)
 
-        FileOutputStream(temp).use { out ->
-            out.write(json.toString(2).toByteArray(Charsets.UTF_8))
-            out.fd.sync()
-        }
-        if (snapshotFile.exists() && !snapshotFile.delete()) {
-            temp.delete()
-            return
-        }
-        if (!temp.renameTo(snapshotFile)) {
-            temp.copyTo(snapshotFile, overwrite = true)
+        try {
+            FileOutputStream(temp).use { out ->
+                out.write(json.toString(2).toByteArray(Charsets.UTF_8))
+                out.fd.sync()
+            }
+            try {
+                Files.move(
+                    temp.toPath(),
+                    snapshotFile.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: Throwable) {
+                // Some Android/provider-backed filesystems may not implement ATOMIC_MOVE even for
+                // app-private paths. Keep the previous snapshot until the fallback copy succeeds.
+                val fallback = File(directory, ".performance-session-fallback-${System.nanoTime()}.tmp")
+                temp.copyTo(fallback, overwrite = true)
+                if (fallback.length() <= 0L) {
+                    fallback.delete()
+                    return
+                }
+                if (snapshotFile.exists() && !snapshotFile.delete()) {
+                    fallback.delete()
+                    return
+                }
+                if (!fallback.renameTo(snapshotFile)) {
+                    fallback.copyTo(snapshotFile, overwrite = true)
+                    fallback.delete()
+                }
+            }
+        } finally {
             temp.delete()
         }
     }
