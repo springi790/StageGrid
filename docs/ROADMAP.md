@@ -80,7 +80,7 @@ Delivered:
 Delivered as part of the alpha10 integration sprint:
 
 - versioned app-private performance-session snapshots;
-- atomic-ish temp/write/fsync/replace persistence;
+- temp/write/fsync/replace persistence;
 - loaded song and approximate position recovery;
 - Click/Guide, subdivision/route, count-in and master context recovery;
 - Setlist Live context recovery when the referenced setlist/song still exists;
@@ -113,17 +113,33 @@ Delivered:
 
 Alpha10 remains an event-aware linear-section layer. The **full arbitrary arrangement graph** is deliberately reserved for 0.5.
 
+### 0.2.0-alpha10.1 — recognition hardening before beta
+
+Delivered from physical-device feedback:
+
+- phase-robust Guide fingerprint envelope that accumulates per-channel energy before averaging;
+- persistent fingerprint-cache format v2 so previous downmix-derived fingerprints are rebuilt automatically;
+- dual strong/relaxed Guide activity thresholds so a loud cue does not hide quieter calls;
+- local-onset candidate recovery for compressed Guides that do not return fully to silence between calls;
+- wider template timing search tolerance;
+- conservative language-aware second matching pass after the source language can be inferred;
+- semantic confidence margin ignores the same canonical cue duplicated in another language;
+- Click-grid analysis prefers the beginning of a stable periodic pulse train instead of blindly accepting one isolated early transient;
+- regression tests for quiet anti-phase Guide audio and an isolated spike before a valid Click train.
+
+This is the final planned recognition-specific alpha before beta unless representative failing Guide stems expose another release-blocking matcher defect.
+
 ## 0.2 beta plan
 
 ### 0.2.0-beta01 — usability / field-feedback beta
 
-Primary work after alpha10 feedback:
+Primary work after alpha10.1 feedback:
 
 - first-run onboarding for import, Click/Guide, common routing, sections, Setlist Live and backup/restore;
 - accessibility pass: large touch targets, labels/content descriptions, contrast/focus and small-screen layout checks;
 - clearer recoverable error states and progress/cancellation policy where cancellation is safe;
 - polish around session recovery, Guide reanalysis and Setlist Live based on physical-device feedback;
-- no major new audio architecture unless alpha10 testing exposes a blocker.
+- no major new audio architecture unless testing exposes a blocker.
 
 ### 0.2.0-beta02 — qualification / stabilization
 
