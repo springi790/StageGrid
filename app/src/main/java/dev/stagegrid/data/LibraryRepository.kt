@@ -64,6 +64,7 @@ class LibraryRepository(private val db: StageGridDatabase) {
 
     suspend fun updateSong(song: SongEntity) = db.songDao().update(song)
     suspend fun updateTrack(track: TrackEntity) = db.trackDao().update(track)
+    suspend fun saveTrack(track: TrackEntity) = db.trackDao().insertAll(listOf(track))
     suspend fun saveSection(section: SectionEntity) = db.sectionDao().insert(section)
     suspend fun getSections(songId: String): List<SectionEntity> = db.sectionDao().getForSong(songId)
 
@@ -84,7 +85,6 @@ class LibraryRepository(private val db: StageGridDatabase) {
         true
     }
 
-    /** Replaces an auto-generated map only if nobody changed it since the caller inspected it. */
     suspend fun replaceSectionsIfUnchanged(
         songId: String,
         expectedCurrent: List<SectionEntity>,
