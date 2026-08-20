@@ -6,9 +6,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.stagegrid.StageGridApplication
 import dev.stagegrid.audio.AudioDeviceManager
-import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.audio.ClickSubdivision
+import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.audio.PlayerState
+import dev.stagegrid.backup.BackupProgress
+import dev.stagegrid.backup.BackupResult
+import dev.stagegrid.backup.BackupStage
+import dev.stagegrid.backup.RestoreResult
 import dev.stagegrid.guide.GuideCueAnalyzer
 import dev.stagegrid.guide.GuidePackManager
 import dev.stagegrid.guide.NativeGuideEventStore
@@ -73,6 +77,17 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
         val error: String? = null,
     )
 
+    enum class BackupOperation { CREATE, RESTORE }
+
+    data class BackupUiState(
+        val running: Boolean = false,
+        val operation: BackupOperation? = null,
+        val progress: BackupProgress = BackupProgress(0, BackupStage.PREPARING),
+        val backupResult: BackupResult? = null,
+        val restoreResult: RestoreResult? = null,
+        val error: String? = null,
+    )
+
     private val _importState = MutableStateFlow(ImportUiState())
     val importState: StateFlow<ImportUiState> = _importState.asStateFlow()
 
@@ -81,6 +96,9 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _nativeGuideState = MutableStateFlow(NativeGuideUiState())
     val nativeGuideState: StateFlow<NativeGuideUiState> = _nativeGuideState.asStateFlow()
+
+    private val _backupState = MutableStateFlow(BackupUiState())
+    val backupState: StateFlow<BackupUiState> = _backupState.asStateFlow()
 
     private val _selectedSetlist = MutableStateFlow<SetlistBundle?>(null)
     val selectedSetlist: StateFlow<SetlistBundle?> = _selectedSetlist.asStateFlow()
@@ -122,6 +140,96 @@ class StageGridViewModel(application: Application) : AndroidViewModel(applicatio
                 _importState.value = ImportUiState(error = t.message ?: "Import failed")
             }
         }
+    }
+
+    fun createLibraryBackup(destinationTree: Uri) {
+        if (!backupOperationAllowed()) return
+        viewModelScope.launch {
+            _backupState.value = BackupUiState(running = true, operation = BackupOperation.CREATE)
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    app.backupManager.createBackup(destinationTree) { progress ->
+                        _backupState.value = _backupState.value.copy(
+                            running = true,
+                            operation = BackupOperation.CREATE,
+                            progress = progress,
+                            error = null,
+                        )
+                    }
+                }
+                _backupState.value = BackupUiState(
+                    operation = BackupOperation.CREATE,
+                    progress = BackupProgress(100, BackupStage.COMPLETE),
+                    backupResult = result,
+                )
+            } catch (t: Throwable) {
+                _backupState.value = BackupUiState(
+                    operation = BackupOperation.CREATE,
+                    error = t.message ?: "Backup failed",
+                )
+            }
+        }
+    }
+
+    fun restoreLibraryBackup(backupUri: Uri) {
+        if (!backupOperationAllowed()) return
+        val previouslyLoadedSongId = player.value.song?.id
+        viewModelScope.launch {
+            _backupState.value = BackupUiState(running = true, operation = BackupOperation.RESTORE)
+            try {
+                // Stop decoder threads before restored WAV files replace their app-private paths.
+                withContext(Dispatchers.Default) { app.audio.unloadForLibraryRestore() }
+                val result = withContext(Dispatchers.IO) {
+                    app.backupManager.restoreBackup(backupUri) { progress ->
+                        _backupState.value = _backupState.value.copy(
+                            running = true,
+                            operation = BackupOperation.RESTORE,
+                            progress = progress,
+                            error = null,
+                        )
+                    }
+                }
+                app.guidePacks.invalidateCache()
+                withContext(Dispatchers.IO) {
+                    runCatching { GuideCueAnalyzer.prepare(app.guidePacks.listSamples()) }
+                }
+                _guidePackState.value = GuidePackUiState(status = app.guidePacks.status())
+                _selectedSetlist.value = null
+                if (previouslyLoadedSongId != null && withContext(Dispatchers.IO) { app.repository.getSong(previouslyLoadedSongId) } != null) {
+                    refreshNativeGuideState(previouslyLoadedSongId)
+                    app.audio.loadSong(previouslyLoadedSongId)
+                } else {
+                    _nativeGuideState.value = NativeGuideUiState()
+                }
+                _backupState.value = BackupUiState(
+                    operation = BackupOperation.RESTORE,
+                    progress = BackupProgress(100, BackupStage.COMPLETE),
+                    restoreResult = result,
+                )
+            } catch (t: Throwable) {
+                // If validation fails before install, the library remains untouched. If a later
+                // restore stage fails, LibraryBackupManager rolls back replaced song directories.
+                if (previouslyLoadedSongId != null && withContext(Dispatchers.IO) { app.repository.getSong(previouslyLoadedSongId) } != null) {
+                    app.audio.loadSong(previouslyLoadedSongId)
+                }
+                _backupState.value = BackupUiState(
+                    operation = BackupOperation.RESTORE,
+                    error = t.message ?: "Restore failed",
+                )
+            }
+        }
+    }
+
+    private fun backupOperationAllowed(): Boolean {
+        val p = player.value
+        val busy = p.isPlaying || p.isCountingIn || importState.value.running || nativeGuideState.value.rendering || backupState.value.running
+        if (!busy) return true
+        _backupState.value = BackupUiState(error = "Stop playback and wait for current processing to finish before backup or restore.")
+        return false
+    }
+
+    fun dismissBackupState() {
+        if (!_backupState.value.running) _backupState.value = BackupUiState()
     }
 
     fun installGuidePack(uri: Uri) {
