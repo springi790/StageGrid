@@ -159,9 +159,13 @@ private:
     std::atomic<int64_t> gridOffsetFrame_{0};
     std::atomic<int64_t> trackGateUntilFrame_{-1};
 
-    // A manual live section choice can publish one short preloaded spoken Guide cue. The PCM vector
-    // is allocated/copied on a control/background thread; the realtime callback only reads it.
+    // A manual live section choice can publish one short preloaded spoken Guide cue. PCM allocation
+    // and ownership changes happen on control/background threads. The reader-active handshake lets
+    // control retain the previous shared object until a callback that may have loaded it finishes,
+    // so the callback cannot become the final owner and trigger vector destruction/deallocation.
     std::shared_ptr<GuideCueData> guideCue_;
+    std::mutex guideCueControlMutex_;
+    std::atomic<bool> guideCueReaderActive_{false};
 
     // Live path changes use the inactive bank. Control threads publish a complete path snapshot,
     // decoder threads preload it, and only the realtime callback switches all tracks together.
