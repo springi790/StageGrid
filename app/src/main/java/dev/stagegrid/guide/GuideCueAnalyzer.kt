@@ -12,12 +12,10 @@ import kotlin.math.roundToLong
 import kotlin.math.sqrt
 
 /**
- * Import-time Guide recognizer for sample-based Guide stems.
+ * Offline Guide recognizer for sample-based Guide stems.
  *
- * It intentionally avoids generic speech recognition. Instead it compares the short-time RMS
- * fingerprint of the imported Guide stem with locally-installed Guide cue samples. This is fast,
- * offline, language-independent, and especially reliable when a Guide stem was assembled from the
- * same cue pack even after MP3/AAC style lossy encoding and gain changes.
+ * Fingerprints are kept in memory and, when configured by the application, persisted on disk so a
+ * process restart does not need to rebuild hundreds of cue templates before the next analysis.
  */
 object GuideCueAnalyzer {
     data class DetectedCue(
@@ -62,22 +60,40 @@ object GuideCueAnalyzer {
     @Volatile
     private var templateCache: TemplateCache? = null
 
-    /** Prepares the installed pack once so the first song import does not rebuild every sample fingerprint. */
+    @Volatile
+    private var persistentCacheFile: File? = null
+
+    fun configurePersistentCache(file: File) {
+        persistentCacheFile = file
+    }
+
+    fun invalidateMemoryCache() {
+        templateCache = null
+    }
+
+    /** Prepares the installed pack once so the first song analysis does not rebuild every sample fingerprint. */
     fun prepare(samples: List<GuideSample>): Int = templatesFor(samples).size
 
-    fun analyze(guideFile: File, samples: List<GuideSample>): Result {
+    fun analyze(
+        guideFile: File,
+        samples: List<GuideSample>,
+        onProgress: ((Float) -> Unit)? = null,
+    ): Result {
         if (samples.isEmpty()) return Result(emptyList(), null, 0)
+        onProgress?.invoke(0.02f)
         val guideEnvelope = GuideAudio.rmsEnvelope(guideFile, WINDOW_MS)
         if (guideEnvelope.size < 8) return Result(emptyList(), null, 0)
         val guideLog = FloatArray(guideEnvelope.size) { i -> compress(guideEnvelope[i]) }
         val candidates = findCandidates(guideEnvelope)
         if (candidates.isEmpty()) return Result(emptyList(), null, 0)
+        onProgress?.invoke(0.12f)
 
         val templates = templatesFor(samples)
         if (templates.isEmpty()) return Result(emptyList(), null, candidates.size)
+        onProgress?.invoke(0.18f)
 
         val accepted = mutableListOf<DetectedCue>()
-        for (candidate in candidates) {
+        for ((candidateIndex, candidate) in candidates.withIndex()) {
             var best: Match? = null
             var secondScore = -1f
             for (template in templates) {
@@ -90,18 +106,24 @@ object GuideCueAnalyzer {
                     secondScore = max(secondScore, match.score)
                 }
             }
-            val chosen = best ?: continue
-            val margin = chosen.score - secondScore
-            if (chosen.score < MIN_SCORE || (margin < MIN_MARGIN && chosen.score < 0.96f)) continue
-            val sampleStartWindow = chosen.activeStart - chosen.template.trimStartWindows
-            val cueMs = (sampleStartWindow.coerceAtLeast(0) * WINDOW_MS).toLong()
-            accepted += DetectedCue(
-                key = chosen.template.sample.key,
-                kind = chosen.template.sample.kind,
-                language = chosen.template.sample.language,
-                cueMs = cueMs,
-                confidence = chosen.score.coerceIn(0f, 1f),
-            )
+            val chosen = best
+            if (chosen != null) {
+                val margin = chosen.score - secondScore
+                if (chosen.score >= MIN_SCORE && (margin >= MIN_MARGIN || chosen.score >= 0.96f)) {
+                    val sampleStartWindow = chosen.activeStart - chosen.template.trimStartWindows
+                    val cueMs = (sampleStartWindow.coerceAtLeast(0) * WINDOW_MS).toLong()
+                    accepted += DetectedCue(
+                        key = chosen.template.sample.key,
+                        kind = chosen.template.sample.kind,
+                        language = chosen.template.sample.language,
+                        cueMs = cueMs,
+                        confidence = chosen.score.coerceIn(0f, 1f),
+                    )
+                }
+            }
+            if (candidateIndex % maxOf(1, candidates.size / 30) == 0 || candidateIndex == candidates.lastIndex) {
+                onProgress?.invoke(0.18f + 0.80f * ((candidateIndex + 1f) / candidates.size.toFloat()))
+            }
         }
 
         val deduped = accepted.sortedBy { it.cueMs }.fold(mutableListOf<DetectedCue>()) { out, cue ->
@@ -114,6 +136,7 @@ object GuideCueAnalyzer {
             out
         }
         val dominant = deduped.groupingBy { it.language }.eachCount().maxByOrNull { it.value }?.key
+        onProgress?.invoke(1f)
         return Result(deduped, dominant, candidates.size)
     }
 
@@ -162,11 +185,51 @@ object GuideCueAnalyzer {
         templateCache?.takeIf { it.signature == signature }?.let { return it.templates }
         return synchronized(this) {
             templateCache?.takeIf { it.signature == signature }?.let { return@synchronized it.templates }
+
+            val diskTemplates = persistentCacheFile?.let { cacheFile ->
+                val entries = GuideFingerprintDiskCache.read(cacheFile, signature) ?: return@let null
+                val samplesById = samples.associateBy(::sampleIdentity)
+                val loaded = entries.mapNotNull { entry ->
+                    val sample = samplesById[entryIdentity(entry)] ?: return@mapNotNull null
+                    if (sample.file.length() != entry.fileLength || sample.file.lastModified() != entry.lastModified) return@mapNotNull null
+                    Template(sample, entry.fingerprint, entry.trimStartWindows)
+                }
+                loaded.takeIf { it.size == entries.size && it.isNotEmpty() }
+            }
+            if (diskTemplates != null) {
+                templateCache = TemplateCache(signature, diskTemplates)
+                return@synchronized diskTemplates
+            }
+
             val built = samples.mapNotNull(::buildTemplate)
             templateCache = TemplateCache(signature, built)
+            persistentCacheFile?.let { cacheFile ->
+                GuideFingerprintDiskCache.write(
+                    cacheFile,
+                    signature,
+                    built.map { template ->
+                        GuideFingerprintDiskCache.Entry(
+                            language = template.sample.language,
+                            key = template.sample.key,
+                            kind = template.sample.kind,
+                            absolutePath = template.sample.file.absolutePath,
+                            fileLength = template.sample.file.length(),
+                            lastModified = template.sample.file.lastModified(),
+                            trimStartWindows = template.trimStartWindows,
+                            fingerprint = template.fingerprint,
+                        )
+                    },
+                )
+            }
             built
         }
     }
+
+    private fun sampleIdentity(sample: GuideSample): String =
+        "${sample.language}|${sample.kind.name}|${sample.key}|${sample.file.absolutePath}"
+
+    private fun entryIdentity(entry: GuideFingerprintDiskCache.Entry): String =
+        "${entry.language}|${entry.kind.name}|${entry.key}|${entry.absolutePath}"
 
     private fun sampleSignature(samples: List<GuideSample>): Long {
         var hash = 1125899906842597L

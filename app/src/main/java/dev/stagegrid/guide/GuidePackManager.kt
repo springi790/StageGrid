@@ -55,10 +55,6 @@ class GuidePackManager(private val context: Context) {
         )
     }
 
-    /**
-     * Filesystem walking used to happen every time status/language resolution or an import requested
-     * samples. Keep one immutable in-memory index until the installed pack changes.
-     */
     fun listSamples(): List<GuideSample> {
         cachedSamples?.let { return it }
         return synchronized(this) {
@@ -87,9 +83,14 @@ class GuidePackManager(private val context: Context) {
     fun findSample(language: String, key: String): GuideSample? =
         listSamples().firstOrNull { it.language == language && it.key == key }
 
+    fun findSample(language: String, key: String, kind: CueKind): GuideSample? =
+        listSamples().firstOrNull { it.language == language && it.key == key && it.kind == kind }
+            ?: findSample(language, key)
+
     /** Call after a backup restore replaces the private Guide-pack directory. */
     fun invalidateCache() {
         cachedSamples = null
+        GuideCueAnalyzer.invalidateMemoryCache()
     }
 
     fun resolveOutputLanguage(preferred: String, detected: String?): String? {
@@ -176,6 +177,7 @@ class GuidePackManager(private val context: Context) {
             }
             backup.deleteRecursively()
             cachedSamples = null
+            GuideCueAnalyzer.invalidateMemoryCache()
             return InstallResult(status(), skipped)
         } catch (t: Throwable) {
             stage.deleteRecursively()

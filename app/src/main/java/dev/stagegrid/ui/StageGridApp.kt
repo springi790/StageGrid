@@ -3,22 +3,22 @@ package dev.stagegrid.ui
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -47,11 +47,7 @@ import dev.stagegrid.ui.screens.SetlistsScreen
 import dev.stagegrid.ui.screens.SettingsScreen
 
 private enum class MainScreen(val labelRes: Int) {
-    LIBRARY(R.string.library),
-    SETLISTS(R.string.setlists),
-    PLAYER(R.string.player),
-    MIXER(R.string.mixer),
-    SETTINGS(R.string.settings),
+    LIBRARY(R.string.library), SETLISTS(R.string.setlists), PLAYER(R.string.player), MIXER(R.string.mixer), SETTINGS(R.string.settings),
 }
 
 @Composable
@@ -64,6 +60,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     val importState by viewModel.importState.collectAsStateWithLifecycle()
     val guidePackState by viewModel.guidePackState.collectAsStateWithLifecycle()
     val nativeGuideState by viewModel.nativeGuideState.collectAsStateWithLifecycle()
+    val sessionRecoveryState by viewModel.sessionRecoveryState.collectAsStateWithLifecycle()
     val backupState by viewModel.backupState.collectAsStateWithLifecycle()
     val libraryActionState by viewModel.libraryActionState.collectAsStateWithLifecycle()
     val selectedSetlist by viewModel.selectedSetlist.collectAsStateWithLifecycle()
@@ -75,33 +72,15 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     var cloudBrowserOpen by rememberSaveable { mutableStateOf(false) }
     var sectionEditorOpen by rememberSaveable { mutableStateOf(false) }
 
-    val zipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let(viewModel::importZip)
-    }
-    val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
-        uri?.let(viewModel::importFolder)
-    }
-    val filesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) viewModel.importFiles(uris)
-    }
-    val guidePackLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let(viewModel::installGuidePack)
-    }
-    val backupFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
-        uri?.let(viewModel::createLibraryBackup)
-    }
-    val restoreBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let(viewModel::restoreLibraryBackup)
-    }
+    val zipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> uri?.let(viewModel::importZip) }
+    val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? -> uri?.let(viewModel::importFolder) }
+    val filesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) viewModel.importFiles(uris) }
+    val guidePackLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> uri?.let(viewModel::installGuidePack) }
+    val backupFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? -> uri?.let(viewModel::createLibraryBackup) }
+    val restoreBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> uri?.let(viewModel::restoreLibraryBackup) }
 
-    val availableScreens = if (settings.performanceLock) {
-        listOf(MainScreen.PLAYER, MainScreen.MIXER, MainScreen.SETTINGS)
-    } else {
-        MainScreen.entries.toList()
-    }
-    LaunchedEffect(settings.performanceLock) {
-        if (screen !in availableScreens) screen = MainScreen.PLAYER
-    }
+    val availableScreens = if (settings.performanceLock) listOf(MainScreen.PLAYER, MainScreen.MIXER, MainScreen.SETTINGS) else MainScreen.entries.toList()
+    LaunchedEffect(settings.performanceLock) { if (screen !in availableScreens) screen = MainScreen.PLAYER }
 
     Scaffold(
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
@@ -140,10 +119,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onAddSong = viewModel::addSongToSelectedSetlist,
                 onRemoveSong = viewModel::removeSongFromSelectedSetlist,
                 onLoadSong = { id -> viewModel.loadSong(id); screen = MainScreen.PLAYER },
-                onStartLive = {
-                    viewModel.startSelectedSetlistLive()
-                    screen = MainScreen.PLAYER
-                },
+                onStartLive = { viewModel.startSelectedSetlistLive(); screen = MainScreen.PLAYER },
                 modifier = contentModifier,
             )
             MainScreen.PLAYER -> PlayerScreen(
@@ -164,6 +140,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onClick = viewModel::setClick,
                 onGuide = viewModel::setGuide,
                 onNativeGuideLanguage = viewModel::setSongNativeGuideLanguage,
+                onReanalyzeNativeGuide = viewModel::reanalyzeCurrentNativeGuide,
                 onClickSubdivision = viewModel::setClickSubdivision,
                 onClickRoute = viewModel::setClickRoute,
                 onSetlistPrevious = viewModel::setlistLivePrevious,
@@ -201,11 +178,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     }
 
     if (cloudBrowserOpen) {
-        CloudBrowserDialog(
-            onDismiss = { cloudBrowserOpen = false },
-            onImportZip = viewModel::importZip,
-            onImportFiles = viewModel::importFiles,
-        )
+        CloudBrowserDialog(onDismiss = { cloudBrowserOpen = false }, onImportZip = viewModel::importZip, onImportFiles = viewModel::importFiles)
     }
 
     if (sectionEditorOpen) {
@@ -230,24 +203,30 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             text = {
                 Column {
                     Text(stringResource(R.string.delete_song_message, song.title), fontWeight = FontWeight.SemiBold)
-                    Text(
-                        stringResource(R.string.delete_song_files_note),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
+                    Text(stringResource(R.string.delete_song_files_note), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    deletingSong = null
-                    viewModel.deleteSong(song)
-                }) {
+                TextButton(onClick = { deletingSong = null; viewModel.deleteSong(song) }) {
                     Text(stringResource(R.string.delete_song_confirm), color = MaterialTheme.colorScheme.error)
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { deletingSong = null }) { Text(stringResource(R.string.cancel)) }
+            dismissButton = { TextButton(onClick = { deletingSong = null }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+
+    if (sessionRecoveryState.recovered) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissSessionRecovery,
+            title = { Text(stringResource(R.string.session_recovered_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.session_recovered_song, sessionRecoveryState.songTitle ?: "—"), fontWeight = FontWeight.SemiBold)
+                    sessionRecoveryState.setlistName?.let { Text(stringResource(R.string.session_recovered_setlist, it)) }
+                    Text(stringResource(R.string.session_recovered_safe_stop), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                }
             },
+            confirmButton = { TextButton(onClick = viewModel::dismissSessionRecovery) { Text(stringResource(R.string.close)) } },
         )
     }
 
@@ -258,23 +237,15 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             title = { Text(stringResource(R.string.importing)) },
             text = {
                 Column {
-                    Text(
-                        stringResource(R.string.import_progress_percent, importState.progress.percent),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    LinearProgressIndicator(
-                        progress = { importState.progress.fraction },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                    )
+                    Text(stringResource(R.string.import_progress_percent, importState.progress.percent), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    LinearProgressIndicator(progress = { importState.progress.fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp))
                     Text(importStageLabel(importState.progress.stage), fontWeight = FontWeight.SemiBold)
-                    importState.progress.detail?.let {
-                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    importState.progress.detail?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             },
         )
     }
+
     importState.result?.let { result ->
         var title by rememberSaveable(result.songId) { mutableStateOf(result.title) }
         var artist by rememberSaveable(result.songId) { mutableStateOf(result.artist) }
@@ -288,14 +259,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             title = { Text(stringResource(R.string.import_complete)) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Text(
-                        stringResource(
-                            R.string.import_summary,
-                            result.tracksDetected,
-                            if (result.clickDetected) stringResource(R.string.yes) else stringResource(R.string.no),
-                            if (result.guideDetected) stringResource(R.string.yes) else stringResource(R.string.no),
-                        ),
-                    )
+                    Text(stringResource(R.string.import_summary, result.tracksDetected, if (result.clickDetected) stringResource(R.string.yes) else stringResource(R.string.no), if (result.guideDetected) stringResource(R.string.yes) else stringResource(R.string.no)))
                     if (result.warnings.isNotEmpty()) Text(result.warnings.joinToString("\n"), color = MaterialTheme.colorScheme.tertiary)
                     OutlinedTextField(title, { title = it }, label = { Text(stringResource(R.string.title)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                     OutlinedTextField(artist, { artist = it }, label = { Text(stringResource(R.string.artist)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -327,99 +291,38 @@ fun StageGridApp(viewModel: StageGridViewModel) {
             },
         )
     }
+
     importState.error?.let { error ->
-        AlertDialog(
-            onDismissRequest = viewModel::dismissImportState,
-            title = { Text(stringResource(R.string.import_failed)) },
-            text = { Text(error, color = MaterialTheme.colorScheme.error) },
-            confirmButton = { TextButton(onClick = viewModel::dismissImportState) { Text(stringResource(R.string.close)) } },
-        )
+        AlertDialog(onDismissRequest = viewModel::dismissImportState, title = { Text(stringResource(R.string.import_failed)) }, text = { Text(error, color = MaterialTheme.colorScheme.error) }, confirmButton = { TextButton(onClick = viewModel::dismissImportState) { Text(stringResource(R.string.close)) } })
     }
 
     libraryActionState.error?.let { error ->
-        AlertDialog(
-            onDismissRequest = viewModel::dismissLibraryActionState,
-            title = { Text(stringResource(R.string.delete_song_error_title)) },
-            text = { Text(error, color = MaterialTheme.colorScheme.error) },
-            confirmButton = {
-                TextButton(onClick = viewModel::dismissLibraryActionState) { Text(stringResource(R.string.close)) }
-            },
-        )
+        AlertDialog(onDismissRequest = viewModel::dismissLibraryActionState, title = { Text(stringResource(R.string.delete_song_error_title)) }, text = { Text(error, color = MaterialTheme.colorScheme.error) }, confirmButton = { TextButton(onClick = viewModel::dismissLibraryActionState) { Text(stringResource(R.string.close)) } })
     }
 
     if (backupState.running) {
         AlertDialog(
             onDismissRequest = {},
             confirmButton = {},
-            title = {
-                Text(
-                    if (backupState.operation == StageGridViewModel.BackupOperation.RESTORE) {
-                        stringResource(R.string.backup_restore_running_title)
-                    } else {
-                        stringResource(R.string.backup_create_running_title)
-                    },
-                )
-            },
+            title = { Text(if (backupState.operation == StageGridViewModel.BackupOperation.RESTORE) stringResource(R.string.backup_restore_running_title) else stringResource(R.string.backup_create_running_title)) },
             text = {
                 Column {
-                    Text(
-                        stringResource(R.string.backup_progress_percent, backupState.progress.percent),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    LinearProgressIndicator(
-                        progress = { backupState.progress.fraction },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                    )
+                    Text(stringResource(R.string.backup_progress_percent, backupState.progress.percent), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    LinearProgressIndicator(progress = { backupState.progress.fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp))
                     Text(backupStageLabel(backupState.progress.stage), fontWeight = FontWeight.SemiBold)
-                    backupState.progress.detail?.let {
-                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    backupState.progress.detail?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             },
         )
     }
     backupState.backupResult?.let { result ->
-        AlertDialog(
-            onDismissRequest = viewModel::dismissBackupState,
-            title = { Text(stringResource(R.string.backup_complete_title)) },
-            text = {
-                Text(
-                    stringResource(
-                        R.string.backup_complete_summary,
-                        result.songs,
-                        result.setlists,
-                        result.fileName,
-                    ),
-                )
-            },
-            confirmButton = { TextButton(onClick = viewModel::dismissBackupState) { Text(stringResource(R.string.close)) } },
-        )
+        AlertDialog(onDismissRequest = viewModel::dismissBackupState, title = { Text(stringResource(R.string.backup_complete_title)) }, text = { Text(stringResource(R.string.backup_complete_summary, result.songs, result.setlists, result.fileName)) }, confirmButton = { TextButton(onClick = viewModel::dismissBackupState) { Text(stringResource(R.string.close)) } })
     }
     backupState.restoreResult?.let { result ->
-        AlertDialog(
-            onDismissRequest = viewModel::dismissBackupState,
-            title = { Text(stringResource(R.string.backup_restore_complete_title)) },
-            text = {
-                Text(
-                    stringResource(
-                        R.string.backup_restore_complete_summary,
-                        result.songs,
-                        result.setlists,
-                        result.files,
-                    ),
-                )
-            },
-            confirmButton = { TextButton(onClick = viewModel::dismissBackupState) { Text(stringResource(R.string.close)) } },
-        )
+        AlertDialog(onDismissRequest = viewModel::dismissBackupState, title = { Text(stringResource(R.string.backup_restore_complete_title)) }, text = { Text(stringResource(R.string.backup_restore_complete_summary, result.songs, result.setlists, result.files)) }, confirmButton = { TextButton(onClick = viewModel::dismissBackupState) { Text(stringResource(R.string.close)) } })
     }
     backupState.error?.let { error ->
-        AlertDialog(
-            onDismissRequest = viewModel::dismissBackupState,
-            title = { Text(stringResource(R.string.backup_error_title)) },
-            text = { Text(error, color = MaterialTheme.colorScheme.error) },
-            confirmButton = { TextButton(onClick = viewModel::dismissBackupState) { Text(stringResource(R.string.close)) } },
-        )
+        AlertDialog(onDismissRequest = viewModel::dismissBackupState, title = { Text(stringResource(R.string.backup_error_title)) }, text = { Text(error, color = MaterialTheme.colorScheme.error) }, confirmButton = { TextButton(onClick = viewModel::dismissBackupState) { Text(stringResource(R.string.close)) } })
     }
 }
 

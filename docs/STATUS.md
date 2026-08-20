@@ -1,4 +1,6 @@
-# Implementation status — 0.2.0-alpha07
+# Implementation status — 0.2.0-alpha10
+
+This document describes what exists in source. It intentionally does not promote planned work to implemented status.
 
 ## Implemented in source
 
@@ -8,102 +10,152 @@
 - ZIP, folder and multi-file import through Android Storage Access Framework.
 - Linked document-provider folder browsing, including Google Drive when exposed by Android.
 - WAV playback plus one-time MP3 → PCM WAV normalization.
-- Import percentage/stage reporting, metadata editing and Native Guide analysis/reconstruction.
-- Confirmed local multitrack deletion from Library.
-- A loaded song is unloaded before deletion so native WAV readers no longer hold its files.
-- Song files are first staged outside the live library path; if Room deletion fails, StageGrid attempts to restore the staged folder.
-- Room foreign-key cascades remove the deleted song's tracks, sections and setlist references.
-- External `.stagebackup` files are not modified by local-song deletion.
+- Import percentage, stage and current-file detail.
+- Post-import metadata editing.
+- Safe local multitrack deletion with confirmation.
+- Loaded songs are unloaded before deletion so native WAV readers release their files.
+- Song folders are staged before Room deletion and restoration is attempted if the database operation fails.
+- Room cascades remove deleted-song tracks, sections and setlist references.
+- External `.stagebackup` files are not modified by local deletion.
 
-### Portable backup / restore — alpha06
+### Portable backup / restore
 
-- Manual `.stagebackup` snapshot creation from Settings.
-- Backup destination selected with `ACTION_OPEN_DOCUMENT_TREE`; local folders, compatible USB storage and providers such as Google Drive are supported by the same SAF path.
-- Complete app-private song directories are archived, including normalized stems, generated Guide files and `native-guide-events.json` sidecars.
-- Room Song/Track/Section/Setlist/SetlistSong state is serialized into the backup manifest.
-- The currently installed user-supplied Guide pack is included so restored songs can continue changing Guide languages.
-- Absolute Android-private track paths are converted to song-relative paths in the archive and rebuilt for the new device during restore.
-- Every payload file is declared with byte size + SHA-256.
-- Restore first copies into cache, performs bounded zip-safe extraction, checks the exact declared file set, sizes and hashes, then installs files/Room state.
-- Stable IDs are merged/replaced; unrelated local songs/setlists are not deliberately deleted by restore.
-- Native song decoders are unloaded before restored WAV paths are replaced.
-- Backup/restore exposes percentage, stage and current detail in the UI.
+- Manual `.stagebackup` creation from Settings.
+- Destination chosen with Android SAF: local folders, compatible removable storage and providers such as Google Drive when exposed by Android.
+- Complete app-private song directories are archived, including normalized stems, generated Guide files and Guide sidecars.
+- Room song/track/section/setlist/setlist-song state is serialized.
+- The installed user-supplied Guide pack is included.
+- Device-specific absolute track paths are converted to portable song-relative paths and rebuilt on restore.
+- Every payload file has byte-size + SHA-256 validation metadata.
+- Restore stages, safely extracts and validates the declared file set before installing data.
+- Matching stable IDs are replaced/merged while unrelated local library records are preserved.
+- Native WAV readers are unloaded before restore replaces local song files.
+- Backup/restore exposes percentage, stage and current detail.
 
 ### Shared-clock audio / live path engine
 
 - One Oboe stereo stream and one master transport clock.
-- Streaming decoder threads + preallocated SPSC rings.
-- Two decoder banks per track for live Loop/section path preparation.
+- Streaming decoder threads with preallocated SPSC buffers.
+- Two decoder banks per track for prepared Loop/section path changes.
 - All-track realtime bank handoff after readiness/alignment checks.
-- Stale late swaps are rejected and exposed through diagnostics.
-- Per-track volume/mute/solo/pan and L/L+R/R routing.
+- Stale/late prepared swaps are rejected and exposed through diagnostics.
+- Per-track volume/mute/solo/pan and `L / L+R / R` routing.
 - Native sample-clock Click with subdivisions and routing.
+- Native 1/2-bar count-in.
+- Basic Android/USB stereo output-device selection.
 
-### Sections / live navigation
+### Musical Grid / sections
 
-- Visual/manual Section Editor and automatic Guide-derived section proposals.
+- BPM/time-signature/grid-offset Musical Grid.
+- Bar/beat display and snap utilities.
+- Visual/manual Section Editor.
+- Automatic Guide-derived section proposals.
+- Section Loop / Exit Loop.
 - Manual section choices wait for the explicit `endMs` of the current section.
-- Destination enters at its explicit `startMs`.
-- Section Loop / Exit Loop and native 1/2-bar count-in.
-- Player copy now describes a queued manual change as waiting for the current section to end rather than the superseded next-bar policy.
+- Requested destination enters at its explicit `startMs`.
+- Edit Sections remains a first-class Player action.
 
-### Native Guide — alpha06 arrangement layer
+### Native Guide recognition / reconstruction
 
-- User-installed ES/EN/FR/PT cue packs where those languages exist in the supplied ZIP.
-- Offline sample/template recognition and structured `native-guide-events.json` persistence.
-- Generated `StageGrid Native Guide.wav`, per-song Guide language switching and delayed section recovery after BPM is added.
-- Persisted section proposals can resolve an edited Room section back to its canonical Guide cue key.
-- On a manual live section choice, StageGrid can preload the selected destination's spoken section cue and schedule it relative to the current section end.
-- Early choices target approximately one bar before the boundary; late choices move shortly after the tap only when enough useful time remains.
-- The fixed generated Guide is temporarily suppressed around the replacement section-name call to prevent conflicting section names.
-- Short cue PCM is loaded/resampled off the realtime thread and mixed against the native master timeline.
-- JVM coverage exists for arrangement cue timing and section-boundary policy.
+- User-installed local Guide cue packs; StageGrid does not bundle third-party Guide audio.
+- Supported ES/EN/FR/PT pack layouts when present in the installed ZIP.
+- Offline sample/template matching.
+- Structured SECTION, COUNT and DYNAMIC events in `native-guide-events.json`.
+- App-generated `StageGrid Native Guide.wav`.
+- Original imported Guide retained muted as a reference after successful reconstruction.
+- Automatic section proposals and delayed section recovery after BPM becomes available.
+- Per-song Native Guide language switching without reimporting stems or repeating recognition.
 
-### Setlist Live — alpha07
+### Alpha09 Guide reanalysis / persistent cache
 
-- A selected non-empty setlist can enter **Setlist Live** mode.
-- Player shows setlist name, current song, next song, position in setlist, Previous/Next and Exit Setlist controls.
-- NEXT/PREV stop and unload the current native song graph before loading the destination song when changing songs.
-- Destination songs are loaded stopped; StageGrid does not auto-emit audio after a NEXT/PREV action.
-- The next song receives a bounded warm preload after current-song loading begins: StageGrid reads the first 512 KiB of each local normalized track into the operating-system file cache.
-- Warm-preload work runs on an IO dispatcher and does not create a second native decoder graph.
-- Player reports whether next-song warm preload is running or ready.
-- Deterministic unit coverage exists for initial/current/previous/next setlist index policy.
+- Guide sample fingerprints can be persisted to app-private disk storage.
+- The cache is keyed to the installed sample signature and checks sample identity, byte length and modification time before reuse.
+- Pack replacement/restore invalidates the in-memory Guide index; mismatching persistent data is rebuilt.
+- A loaded stopped song can expose **Reanalyze Guide** when its retained original Guide file and an installed Guide pack are available.
+- Reanalysis reuses the original Guide file and does not reimport/reconvert the remaining stems.
+- Reanalysis exposes progress.
+- Existing Native Guide audio is staged/replaced and validated before reuse.
+- Older songs without a Native Guide track can receive one if the song remains below the 64-track import limit.
+- Untouched `Full Song`/automatic section maps can be refreshed.
+- Manually renamed, resized, reordered or recolored section maps are protected from automatic replacement.
+
+### Alpha10 arrangement-aware Guide phrase
+
+- Manual destination selection still follows the current-section-boundary transition policy.
+- StageGrid resolves an editable destination section back to its canonical Guide key when possible.
+- It selects recognized SECTION, COUNT and DYNAMIC events from the destination section's original lead bar.
+- If the target section call is absent from an older analysis, a destination section call can be synthesized for sample lookup.
+- Output-language samples are preferred with detected-language fallback where available.
+- Cue WAV loading/resampling happens off the realtime thread.
+- Multiple destination cues are mixed into one immutable short mono buffer before native publication.
+- The fixed rendered Guide is suppressed through the replacement phrase window to reduce conflicting calls.
+- A cue that cannot fit completely in a very late transition window is skipped instead of being cut mid-speech.
+- The prepared phrase is mixed on the same native master timeline as stems and Click.
+
+### Alpha08 performance-session recovery
+
+- Versioned app-private session snapshot file.
+- Temp-file write + flush/fsync + replacement behavior.
+- Snapshot records loaded song, approximate position, Click/Guide state, Click subdivision/route, count-in, master volume and Setlist Live context.
+- Snapshot is periodically refreshed while a valid song is loaded.
+- Startup validates that the referenced song/setlist still exists.
+- Valid sessions restore available Player/Setlist context and load the song near the saved position.
+- Missing song references cause the stale snapshot to be discarded.
+- **Recovered sessions always load stopped/ready; StageGrid never auto-emits audio from session recovery.**
+
+### Setlist Live
+
+- Non-empty selected setlists can enter Setlist Live mode.
+- Player shows setlist name, song position, current/next song, Previous/Next and Exit Setlist.
+- NEXT/PREV stop/unload the old native song graph before a different song is loaded.
+- Destination songs load stopped and never auto-play because of NEXT/PREV.
+- The next song receives bounded OS filesystem-cache warming by reading the beginning of each normalized track on an IO dispatcher.
+- No second native decoder graph is kept alive for alpha10 Setlist Live.
+- Navigation index/boundary policy has deterministic JVM coverage.
 
 ### UX / live operation
 
-- Simplified Player/Mixer terminology and routing presets.
-- Foreground service, MediaSession, audio focus, LIVE mode and Performance Lock.
-- Local setlists plus alpha07 Setlist Live navigation.
-- Spanish and English UI strings.
+- Simplified Player/Mixer terminology and common routing presets.
+- Foreground service and MediaSession/notification controls.
+- Audio focus handling.
+- LIVE keep-screen-on mode and Performance Lock.
+- Spanish and English UI resources for the current alpha features.
 
-## Implemented, but not yet stage-qualified
+## Implemented but not yet stage-qualified
 
-- Double-buffered transitions and arrangement-aware Guide section calls still require representative physical-device/high-track-count stress testing.
-- The arrangement-aware Guide layer currently replaces/relocates the selected **section-name** call; it does not yet rebuild every count/dynamic cue for an arbitrary virtual arrangement.
-- Extremely late section choices can intentionally skip their replacement spoken cue and can miss an inactive-bank safe handoff rather than applying stale audio.
-- Backup/restore is a manual snapshot workflow, not continuous Drive synchronization.
-- Guide recognition is sample-pack matching, not arbitrary speech-to-text.
-- Guide fingerprint cache is currently in-memory per app process.
-- Setlist alpha07 preload is OS file-cache warming, not gapless dual-engine preload/crossfade.
-- Local deletion staging/rollback needs physical-device validation under low-storage and forced-failure conditions.
-- USB device selection exists, but arbitrary multichannel routing is not implemented.
+- Double-buffered Loop/section transitions under representative high stem counts.
+- Alpha10 multi-cue arrangement-aware Guide phrases on physical devices under rapid repeated destination changes.
+- Persistent Guide-cache speed/invalidations across real device storage/process-restart scenarios.
+- In-place Guide reanalysis against multiple real sample packs and long Guide stems.
+- Session recovery after actual Android process death/reboot across devices/OEMs.
+- Safe deletion rollback under forced I/O/database failures and low-storage conditions.
+- Backup/restore against real Drive/local/removable providers and low-storage/failure scenarios.
+- Setlist Live warm preload and repeated song changes during a real performance.
+- USB stereo device reconnect/output selection across representative interfaces.
 
 ## Deliberately not exposed as finished
 
-- Full arbitrary arrangement graph with relocation of all Guide/count/dynamic events.
-- In-place Guide audio re-analysis after changing/installing a pack.
-- Persistent on-disk Guide fingerprint cache.
-- Gapless/overlapped next-song decoder graph and crossfade transitions.
-- Persisted/restorable in-progress performance session.
-- Waveform cache/editor.
-- AAC/M4A/FLAC/OGG expansion.
-- Tempo/time stretch and pitch shift.
-- Advanced multichannel USB routing.
-- MIDI, pads, automation and SMPTE/LTC.
-- Full `.stagepack` project interchange semantics.
-- LAN remote, tablet split workspace, onboarding and final accessibility pass.
+- Full arbitrary virtual arrangement graph.
+- Global relocation of every Guide event across arbitrary arrangement nodes; alpha10 relocates a destination lead-bar phrase for manual section choices.
+- Gapless dual-song decoder graph, automatic handoff and crossfade.
+- AAC/M4A/FLAC/OGG expanded playable pipeline.
+- Waveform peak cache/editor and storage cache manager.
+- Arbitrary 4/8/custom multichannel USB routing matrix.
+- Tempo/time-stretch and pitch-shift DSP.
+- MIDI USB/BLE, MIDI Learn and MIDI Clock.
+- Pads, automation and SMPTE/LTC.
+- Full `.stagepack` interchange semantics.
+- LAN remote and final tablet workspace.
+- First-run onboarding and final accessibility/large-touch-target pass.
+
+## Beta readiness
+
+`0.2.0-alpha10` is intended to be the final broad alpha integration before `0.2.0-beta01`, assuming physical-device feedback does not reveal an architectural blocker.
+
+Beta01 should focus on usability, onboarding, accessibility, recoverable errors and fixes from alpha10 field feedback rather than adding another large subsystem.
+
+Beta02 should focus on qualification/stability: high-track-count stress, repeated live transitions, process death, backups, low storage, Setlist Live and USB stereo behavior.
 
 ## Qualification status
 
-StageGrid `0.2.0-alpha07` is a development alpha. CI validates unit tests and debug assembly; stage qualification still requires physical Android devices, high stem counts, repeated section/Loop stress, USB reconnect/routing tests, Setlist Live NEXT/PREV and warm-preload validation, safe-deletion failure/low-storage tests, backup/restore testing against real Drive/local providers and crash/session-recovery validation.
+StageGrid `0.2.0-alpha10` remains a development alpha. CI verifies unit tests and debug assembly, but a successful build is not equivalent to stage qualification. Stable 0.2 and later 1.0 gates require representative physical Android hardware and prolonged live-use validation.

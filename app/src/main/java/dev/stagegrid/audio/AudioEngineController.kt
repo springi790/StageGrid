@@ -10,6 +10,7 @@ import androidx.core.content.ContextCompat
 import dev.stagegrid.MainActivity
 import dev.stagegrid.data.LibraryRepository
 import dev.stagegrid.guide.ArrangementGuideCuePlanner
+import dev.stagegrid.guide.ArrangementGuideSequencePlanner
 import dev.stagegrid.guide.GuideCueLoader
 import dev.stagegrid.guide.GuidePackManager
 import dev.stagegrid.guide.NativeGuideEventStore
@@ -99,7 +100,8 @@ class AudioEngineController(
         }
     }
 
-    fun loadSong(songId: String) {
+    /** Loads a song stopped. initialPositionMs is used only for safe session recovery. */
+    fun loadSong(songId: String, initialPositionMs: Long = 0L) {
         cancelArrangementGuideCue()
         scope.launch {
             _state.update { it.copy(engineState = EngineState.LOADING, errorMessage = null) }
@@ -128,18 +130,26 @@ class AudioEngineController(
             native.setClickRoute(previous.clickRoute)
             native.setClickEnabled(previous.clickEnabled)
             native.setGuideEnabled(previous.guideEnabled)
+            native.setMasterVolume(previous.masterVolume)
+            val duration = native.durationMs().takeIf { it > 0 } ?: bundle.song.durationMs
+            val recoveredPosition = initialPositionMs.coerceIn(0L, duration.coerceAtLeast(0L))
+            if (recoveredPosition > 0L) {
+                withContext(Dispatchers.Default) { native.seekToMs(recoveredPosition) }
+            }
             _state.value = PlayerState(
                 engineState = EngineState.READY,
                 song = bundle.song,
                 tracks = bundle.tracks,
                 sections = bundle.sections,
-                durationMs = native.durationMs().takeIf { it > 0 } ?: bundle.song.durationMs,
+                positionMs = native.positionMs().coerceAtLeast(0L),
+                durationMs = duration,
                 clickEnabled = previous.clickEnabled,
                 guideEnabled = previous.guideEnabled,
                 clickSubdivision = previous.clickSubdivision,
                 clickRoute = previous.clickRoute,
                 countInBars = previous.countInBars,
                 masterVolume = previous.masterVolume,
+                selectedOutputDeviceId = previous.selectedOutputDeviceId,
             )
         }
     }
@@ -188,7 +198,7 @@ class AudioEngineController(
         }
     }
 
-    /** Stops decoder threads and closes WAV readers before portable restore replaces private files. */
+    /** Stops decoder threads and closes WAV readers before portable restore/delete replaces private files. */
     fun unloadForLibraryRestore() {
         cancelArrangementGuideCue()
         native.pause()
@@ -362,9 +372,6 @@ class AudioEngineController(
             currentSectionEndMs = active.endMs,
         )
         if (jumpAt == null) {
-            // The UI can be one polling tick behind the native playhead at a section boundary.
-            // In that case the requested section becomes the immediate destination instead of
-            // scheduling against a boundary that has already passed.
             seekTo(section.startMs)
             return
         }
@@ -383,6 +390,11 @@ class AudioEngineController(
         prepareArrangementGuideCue(current, section, jumpAt, requestSerial)
     }
 
+    /**
+     * Alpha10: rebuilds the complete Guide phrase from the destination's original lead bar.
+     * Section, count and dynamic cue samples are loaded/resampled off the realtime thread and mixed
+     * into one immutable mono buffer before publication to the native callback.
+     */
     private fun prepareArrangementGuideCue(
         snapshot: PlayerState,
         targetSection: SectionEntity,
@@ -400,41 +412,62 @@ class AudioEngineController(
 
         scope.launch(Dispatchers.IO) {
             val eventFile = File(context.filesDir, "library/${song.id}/native-guide-events.json")
+            val analysis = NativeGuideEventStore.readAnalysis(eventFile) ?: return@launch
             val sectionKey = NativeGuideEventStore.findSectionKey(eventFile, targetSection.startMs, targetSection.name)
                 ?: return@launch
             val language = NativeGuideEventStore.readOutputLanguage(eventFile)
-                ?: guidePacks.resolveOutputLanguage("auto", NativeGuideEventStore.readDetectedLanguage(eventFile))
+                ?: guidePacks.resolveOutputLanguage("auto", analysis.dominantLanguage)
                 ?: return@launch
-            val sample = guidePacks.findSample(language, sectionKey) ?: return@launch
             val guideTrack = snapshot.tracks.firstOrNull { it.name == NativeGuideRenderer.TRACK_NAME }
                 ?: snapshot.tracks.firstOrNull { TrackType.fromStorage(it.type) == TrackType.GUIDE }
                 ?: return@launch
             val anySolo = snapshot.tracks.any { it.solo }
             if (guideTrack.muted || (anySolo && !guideTrack.solo)) return@launch
 
-            val sampleRate = native.sampleRate()
-            val pcm = runCatching { GuideCueLoader.loadMonoResampled(sample.file, sampleRate) }.getOrNull()
-                ?: return@launch
-            if (pcm.isEmpty()) return@launch
+            val sampleRate = native.sampleRate().coerceAtLeast(1)
             if (requestSerial != guideCueRequestSerial.get()) return@launch
             val latest = _state.value
             if (latest.queuedSectionId != targetSection.id || latest.queuedJumpAtMs != sectionBoundaryMs) return@launch
-
             val now = native.positionMs().coerceAtLeast(0L)
             val cueAt = maxOf(plan.cueAtMs, now + GUIDE_PUBLISH_LEAD_MS)
-            if (sectionBoundaryMs - cueAt < GUIDE_MINIMUM_USEFUL_WINDOW_MS) return@launch
-            val sampleDurationMs = (pcm.size.toLong() * 1000L) / sampleRate.coerceAtLeast(1)
-            val suppressUntil = minOf(
-                sectionBoundaryMs,
-                cueAt + maxOf(GUIDE_SUPPRESSION_MIN_MS, sampleDurationMs + GUIDE_SUPPRESSION_TAIL_MS),
+            val availableMs = sectionBoundaryMs - cueAt
+            if (availableMs < GUIDE_MINIMUM_USEFUL_WINDOW_MS) return@launch
+            val totalFrames = (availableMs * sampleRate.toLong() / 1000L).coerceAtMost(MAX_DYNAMIC_GUIDE_FRAMES.toLong()).toInt()
+            if (totalFrames <= 0) return@launch
+
+            val sourceCues = ArrangementGuideSequencePlanner.select(
+                analysis = analysis,
+                targetSectionStartMs = targetSection.startMs,
+                targetSectionKey = sectionKey,
+                barDurationMs = grid.barDurationMs,
             )
-            if (suppressUntil <= cueAt) return@launch
-            if (requestSerial != guideCueRequestSerial.get()) return@launch
+            if (sourceCues.isEmpty()) return@launch
+
+            val mix = FloatArray(totalFrames)
+            var renderedCount = 0
+            for (sourceCue in sourceCues) {
+                if (requestSerial != guideCueRequestSerial.get()) return@launch
+                val sample = guidePacks.findSample(language, sourceCue.key, sourceCue.kind)
+                    ?: sourceCue.language?.let { guidePacks.findSample(it, sourceCue.key, sourceCue.kind) }
+                    ?: continue
+                val pcm = runCatching { GuideCueLoader.loadMonoResampled(sample.file, sampleRate) }.getOrNull()
+                    ?: continue
+                val offsetFrames = (sourceCue.offsetMs * sampleRate.toLong() / 1000L).toInt()
+                if (offsetFrames < 0 || offsetFrames >= totalFrames) continue
+                // Never cut a spoken cue just to make a late transition fit.
+                if (offsetFrames + pcm.size > totalFrames) continue
+                for (i in pcm.indices) {
+                    val index = offsetFrames + i
+                    mix[index] = (mix[index] + pcm[i]).coerceIn(-1f, 1f)
+                }
+                renderedCount++
+            }
+            if (renderedCount == 0 || requestSerial != guideCueRequestSerial.get()) return@launch
 
             native.scheduleGuideCue(
-                monoSamples = pcm,
+                monoSamples = mix,
                 atMs = cueAt,
-                suppressUntilMs = suppressUntil,
+                suppressUntilMs = sectionBoundaryMs,
                 route = StereoRoute.fromStorage(guideTrack.outputRoute),
                 volume = guideTrack.volume,
             )
@@ -482,7 +515,6 @@ class AudioEngineController(
     private companion object {
         const val GUIDE_PUBLISH_LEAD_MS = 90L
         const val GUIDE_MINIMUM_USEFUL_WINDOW_MS = 350L
-        const val GUIDE_SUPPRESSION_MIN_MS = 1_800L
-        const val GUIDE_SUPPRESSION_TAIL_MS = 250L
+        const val MAX_DYNAMIC_GUIDE_FRAMES = 48_000 * 12
     }
 }
