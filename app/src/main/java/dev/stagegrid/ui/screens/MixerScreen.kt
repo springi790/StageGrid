@@ -11,7 +11,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -25,12 +24,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.stagegrid.R
 import dev.stagegrid.audio.PlayerState
 import dev.stagegrid.model.OutputBus
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.model.TrackType
+import dev.stagegrid.ui.components.StageGridMetric
+import dev.stagegrid.ui.components.StageGridPanel
+import dev.stagegrid.ui.components.StageGridPill
+import dev.stagegrid.ui.components.StageGridScreenHeader
+import dev.stagegrid.ui.theme.StageGridColors
 
 @Composable
 fun MixerScreen(
@@ -47,92 +52,111 @@ fun MixerScreen(
 ) {
     var showAdvancedRouting by remember { mutableStateOf(false) }
     val availableBuses = OutputBus.availableForChannels(state.outputChannelCount)
+    val playableTracks = state.tracks.count { TrackType.fromStorage(it.type) != TrackType.CLICK }
 
-    Column(modifier.fillMaxSize().padding(16.dp)) {
-        Text(stringResource(R.string.mixer), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(stringResource(R.string.mixer_simple_explanation), color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-        if (state.song == null) {
-            Text(stringResource(R.string.no_song_loaded), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            return@Column
+    LazyColumn(
+        modifier.fillMaxSize().padding(horizontal = 14.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 14.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            StageGridScreenHeader(
+                kicker = stringResource(R.string.mixer_kicker),
+                title = stringResource(R.string.mixer),
+                subtitle = state.song?.let { "${it.title} · ${stringResource(R.string.mixer_simple_explanation)}" }
+                    ?: stringResource(R.string.no_song_loaded),
+                badge = stringResource(R.string.mixer_channel_count, playableTracks),
+            )
         }
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 12.dp)) {
+        if (state.song == null) {
             item {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(stringResource(R.string.quick_output_setup), fontWeight = FontWeight.Bold)
-                        Text(stringResource(R.string.quick_output_explanation), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            stringResource(R.string.multichannel_routing_summary, state.outputChannelCount, state.requestedOutputChannels),
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        if (state.outputFallback) {
-                            Text(stringResource(R.string.multichannel_fallback_warning), color = MaterialTheme.colorScheme.tertiary)
-                        }
+                StageGridPanel {
+                    Text(stringResource(R.string.no_song_loaded), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            return@LazyColumn
+        }
 
-                        OutlinedButton(
-                            onClick = {
-                                state.tracks.forEachIndexed { index, track ->
-                                    if (TrackType.fromStorage(track.type) != TrackType.CLICK) {
+        item {
+            StageGridPanel(accent = MaterialTheme.colorScheme.primary) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.mixer_quick_routing), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                            Text(stringResource(R.string.quick_output_explanation), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        StageGridPill("${state.outputChannelCount} OUT", if (state.outputFallback) StageGridColors.Amber else StageGridColors.Mint)
+                    }
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        StageGridMetric("ACTIVE", state.outputChannelCount.toString(), Modifier.weight(1f))
+                        StageGridMetric("REQUEST", state.requestedOutputChannels.toString(), Modifier.weight(1f), MaterialTheme.colorScheme.tertiary)
+                        StageGridMetric("TRACKS", playableTracks.toString(), Modifier.weight(1f), MaterialTheme.colorScheme.secondary)
+                    }
+
+                    if (state.outputFallback) {
+                        Text(stringResource(R.string.multichannel_fallback_warning), color = StageGridColors.Amber, fontWeight = FontWeight.SemiBold)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            state.tracks.forEachIndexed { index, track ->
+                                if (TrackType.fromStorage(track.type) != TrackType.CLICK) {
+                                    onOutputBus(index, OutputBus.OUT_1_2)
+                                    onOutputRoute(index, StereoRoute.BOTH)
+                                }
+                            }
+                            onClickBus(OutputBus.OUT_1_2)
+                            onClickRoute(StereoRoute.BOTH)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(stringResource(R.string.preset_all_stereo)) }
+
+                    OutlinedButton(
+                        onClick = {
+                            state.tracks.forEachIndexed { index, track ->
+                                when (TrackType.fromStorage(track.type)) {
+                                    TrackType.CLICK -> Unit
+                                    TrackType.GUIDE -> {
+                                        onOutputBus(index, OutputBus.OUT_1_2)
+                                        onOutputRoute(index, StereoRoute.LEFT)
+                                    }
+                                    else -> {
+                                        onOutputBus(index, OutputBus.OUT_1_2)
+                                        onOutputRoute(index, StereoRoute.RIGHT)
+                                    }
+                                }
+                            }
+                            onClickBus(OutputBus.OUT_1_2)
+                            onClickRoute(StereoRoute.LEFT)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(stringResource(R.string.preset_stage_split)) }
+
+                    Button(
+                        enabled = state.outputChannelCount >= 4,
+                        onClick = {
+                            state.tracks.forEachIndexed { index, track ->
+                                when (TrackType.fromStorage(track.type)) {
+                                    TrackType.CLICK -> Unit
+                                    TrackType.GUIDE -> {
+                                        onOutputBus(index, OutputBus.OUT_3_4)
+                                        onOutputRoute(index, StereoRoute.RIGHT)
+                                    }
+                                    else -> {
                                         onOutputBus(index, OutputBus.OUT_1_2)
                                         onOutputRoute(index, StereoRoute.BOTH)
                                     }
                                 }
-                                onClickBus(OutputBus.OUT_1_2)
-                                onClickRoute(StereoRoute.BOTH)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(stringResource(R.string.preset_all_stereo))
-                        }
+                            }
+                            onClickBus(OutputBus.OUT_3_4)
+                            onClickRoute(StereoRoute.LEFT)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(stringResource(R.string.preset_four_out), fontWeight = FontWeight.Bold) }
 
-                        OutlinedButton(
-                            onClick = {
-                                state.tracks.forEachIndexed { index, track ->
-                                    when (TrackType.fromStorage(track.type)) {
-                                        TrackType.CLICK -> Unit
-                                        TrackType.GUIDE -> {
-                                            onOutputBus(index, OutputBus.OUT_1_2)
-                                            onOutputRoute(index, StereoRoute.LEFT)
-                                        }
-                                        else -> {
-                                            onOutputBus(index, OutputBus.OUT_1_2)
-                                            onOutputRoute(index, StereoRoute.RIGHT)
-                                        }
-                                    }
-                                }
-                                onClickBus(OutputBus.OUT_1_2)
-                                onClickRoute(StereoRoute.LEFT)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(stringResource(R.string.preset_stage_split))
-                        }
-
-                        Button(
-                            enabled = state.outputChannelCount >= 4,
-                            onClick = {
-                                state.tracks.forEachIndexed { index, track ->
-                                    when (TrackType.fromStorage(track.type)) {
-                                        TrackType.CLICK -> Unit
-                                        TrackType.GUIDE -> {
-                                            onOutputBus(index, OutputBus.OUT_3_4)
-                                            onOutputRoute(index, StereoRoute.RIGHT)
-                                        }
-                                        else -> {
-                                            onOutputBus(index, OutputBus.OUT_1_2)
-                                            onOutputRoute(index, StereoRoute.BOTH)
-                                        }
-                                    }
-                                }
-                                onClickBus(OutputBus.OUT_3_4)
-                                onClickRoute(StereoRoute.LEFT)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text(stringResource(R.string.preset_four_out)) }
-
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             enabled = state.outputChannelCount >= 6,
                             onClick = {
@@ -156,7 +180,7 @@ fun MixerScreen(
                                 onClickBus(OutputBus.OUT_5_6)
                                 onClickRoute(StereoRoute.LEFT)
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.weight(1f),
                         ) { Text(stringResource(R.string.preset_six_out)) }
 
                         OutlinedButton(
@@ -186,115 +210,120 @@ fun MixerScreen(
                                 onClickBus(OutputBus.OUT_7_8)
                                 onClickRoute(StereoRoute.LEFT)
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.weight(1f),
                         ) { Text(stringResource(R.string.preset_eight_out)) }
+                    }
 
-                        OutlinedButton(onClick = { showAdvancedRouting = !showAdvancedRouting }, modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                if (showAdvancedRouting) stringResource(R.string.hide_manual_routing)
-                                else stringResource(R.string.show_manual_routing),
-                            )
+                    OutlinedButton(onClick = { showAdvancedRouting = !showAdvancedRouting }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (showAdvancedRouting) stringResource(R.string.hide_manual_routing) else stringResource(R.string.show_manual_routing))
+                    }
+                }
+            }
+        }
+
+        if (showAdvancedRouting) {
+            item {
+                StageGridPanel(accent = MaterialTheme.colorScheme.tertiary) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(stringResource(R.string.generated_click_routing), fontWeight = FontWeight.Bold)
+                            StageGridPill("CLICK", MaterialTheme.colorScheme.tertiary)
+                        }
+                        Text(stringResource(R.string.generated_click_routing_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.output_bus), fontWeight = FontWeight.SemiBold)
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            availableBuses.forEach { bus ->
+                                FilterChip(selected = state.clickBus == bus, onClick = { onClickBus(bus) }, label = { Text(busLabel(bus)) })
+                            }
+                        }
+                        Text(stringResource(R.string.where_should_this_track_sound), fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            StereoRoute.entries.forEach { option ->
+                                FilterChip(selected = state.clickRoute == option, onClick = { onClickRoute(option) }, label = { Text(routeFriendlyLabel(option)) })
+                            }
                         }
                     }
                 }
             }
+        }
 
-            if (showAdvancedRouting) {
-                item {
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(stringResource(R.string.generated_click_routing), fontWeight = FontWeight.Bold)
-                            Text(stringResource(R.string.generated_click_routing_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        itemsIndexed(state.tracks, key = { _, track -> track.id }) { index, track ->
+            val type = TrackType.fromStorage(track.type)
+            val isImportedClickReference = type == TrackType.CLICK
+            val route = StereoRoute.fromStorage(track.outputRoute)
+            val bus = OutputBus.fromStorage(track.outputBus)
+            val accent = trackAccent(type)
+
+            StageGridPanel(accent = if (track.solo) StageGridColors.Mint else if (track.muted) StageGridColors.Danger else accent) {
+                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                track.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Black,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                stringResource(R.string.mixer_channel_strip),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        StageGridPill(
+                            if (isImportedClickReference) stringResource(R.string.mixer_reference_badge) else friendlyTrackType(type),
+                            accent,
+                        )
+                    }
+
+                    if (isImportedClickReference) {
+                        Text(stringResource(R.string.click_reference_explanation), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = track.muted,
+                                onClick = { onMute(index, !track.muted) },
+                                label = { Text(stringResource(R.string.mute), fontWeight = FontWeight.Black) },
+                                modifier = Modifier.weight(1f),
+                            )
+                            FilterChip(
+                                selected = track.solo,
+                                onClick = { onSolo(index, !track.solo) },
+                                label = { Text(stringResource(R.string.solo), fontWeight = FontWeight.Black) },
+                                modifier = Modifier.weight(1f),
+                            )
+                            StageGridMetric("VOL", "${(track.volume * 100).toInt()}%", Modifier.weight(1f), accent)
+                        }
+
+                        Slider(value = track.volume.coerceIn(0f, 1.25f), onValueChange = { onVolume(index, it) }, valueRange = 0f..1.25f)
+
+                        if (showAdvancedRouting) {
                             Text(stringResource(R.string.output_bus), fontWeight = FontWeight.SemiBold)
                             Row(
                                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                availableBuses.forEach { bus ->
-                                    FilterChip(
-                                        selected = state.clickBus == bus,
-                                        onClick = { onClickBus(bus) },
-                                        label = { Text(busLabel(bus)) },
-                                    )
+                                availableBuses.forEach { option ->
+                                    FilterChip(selected = bus == option, onClick = { onOutputBus(index, option) }, label = { Text(busLabel(option)) })
                                 }
                             }
+
                             Text(stringResource(R.string.where_should_this_track_sound), fontWeight = FontWeight.SemiBold)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 StereoRoute.entries.forEach { option ->
-                                    FilterChip(
-                                        selected = state.clickRoute == option,
-                                        onClick = { onClickRoute(option) },
-                                        label = { Text(routeFriendlyLabel(option)) },
-                                    )
+                                    FilterChip(selected = route == option, onClick = { onOutputRoute(index, option) }, label = { Text(routeFriendlyLabel(option)) })
                                 }
                             }
-                        }
-                    }
-                }
-            }
 
-            itemsIndexed(state.tracks, key = { _, track -> track.id }) { index, track ->
-                val type = TrackType.fromStorage(track.type)
-                val isImportedClickReference = type == TrackType.CLICK
-                val route = StereoRoute.fromStorage(track.outputRoute)
-                val bus = OutputBus.fromStorage(track.outputBus)
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column(Modifier.weight(1f)) {
-                                Text(track.name, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    if (isImportedClickReference) stringResource(R.string.click_reference_track) else friendlyTrackType(type),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (!isImportedClickReference) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilterChip(selected = track.muted, onClick = { onMute(index, !track.muted) }, label = { Text(stringResource(R.string.mute)) })
-                                    FilterChip(selected = track.solo, onClick = { onSolo(index, !track.solo) }, label = { Text(stringResource(R.string.solo)) })
-                                }
-                            }
-                        }
-
-                        if (isImportedClickReference) {
-                            Text(stringResource(R.string.click_reference_explanation), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        } else {
-                            Text(stringResource(R.string.volume_percent, (track.volume * 100).toInt()))
-                            Slider(value = track.volume.coerceIn(0f, 1.25f), onValueChange = { onVolume(index, it) }, valueRange = 0f..1.25f)
-
-                            if (showAdvancedRouting) {
-                                Text(stringResource(R.string.output_bus), fontWeight = FontWeight.SemiBold)
-                                Row(
-                                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    availableBuses.forEach { option ->
-                                        FilterChip(
-                                            selected = bus == option,
-                                            onClick = { onOutputBus(index, option) },
-                                            label = { Text(busLabel(option)) },
-                                        )
-                                    }
-                                }
-
-                                Text(stringResource(R.string.where_should_this_track_sound), fontWeight = FontWeight.SemiBold)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    StereoRoute.entries.forEach { option ->
-                                        FilterChip(
-                                            selected = route == option,
-                                            onClick = { onOutputRoute(index, option) },
-                                            label = { Text(routeFriendlyLabel(option)) },
-                                        )
-                                    }
-                                }
-
-                                if (route == StereoRoute.BOTH) {
-                                    Text(stringResource(R.string.pan_value, (track.pan * 100).toInt()))
-                                    Slider(value = track.pan.coerceIn(-1f, 1f), onValueChange = { onPan(index, it) }, valueRange = -1f..1f)
-                                } else {
-                                    Text(stringResource(R.string.pan_disabled_for_mono_route), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
+                            if (route == StereoRoute.BOTH) {
+                                Text(stringResource(R.string.pan_value, (track.pan * 100).toInt()))
+                                Slider(value = track.pan.coerceIn(-1f, 1f), onValueChange = { onPan(index, it) }, valueRange = -1f..1f)
+                            } else {
+                                Text(stringResource(R.string.pan_disabled_for_mono_route), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -302,6 +331,19 @@ fun MixerScreen(
             }
         }
     }
+}
+
+@Composable
+private fun trackAccent(type: TrackType) = when (type) {
+    TrackType.DRUMS, TrackType.PERCUSSION -> StageGridColors.Amber
+    TrackType.BASS -> StageGridColors.Mint
+    TrackType.GUITAR -> MaterialTheme.colorScheme.tertiary
+    TrackType.KEYS, TrackType.SYNTH, TrackType.PAD -> MaterialTheme.colorScheme.primary
+    TrackType.VOCALS -> StageGridColors.Violet
+    TrackType.STRINGS -> StageGridColors.Cyan
+    TrackType.GUIDE -> StageGridColors.Violet
+    TrackType.CLICK -> StageGridColors.Amber
+    TrackType.OTHER -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 @Composable
