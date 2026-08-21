@@ -1,5 +1,6 @@
 package dev.stagegrid.guide
 
+import dev.stagegrid.debug.StageGridDebugLog
 import dev.stagegrid.guide.GuideCueAnalyzer.DetectedCue
 import dev.stagegrid.guide.GuidePackManager.GuideSample
 import org.json.JSONArray
@@ -38,13 +39,19 @@ object NativeGuideRenderer {
         onProgress: ((Float) -> Unit)? = null,
     ): Result? {
         if (cues.isEmpty() || samples.isEmpty() || durationMs <= 0) return null
+        val startedNs = System.nanoTime()
+        StageGridDebugLog.io(
+            "NATIVE_GUIDE",
+            "RENDER_START output=${outputFile.name} durationMs=$durationMs cues=${cues.size} samples=${samples.size} language=$outputLanguage sampleRate=$sampleRate",
+        )
         val exactIndex = samples.associateBy { "${it.language}:${it.kind.name}:${it.key}" }
         val fallbackIndex = samples.associateBy { "${it.language}:${it.key}" }
         val rendered = mutableListOf<RenderEvent>()
         var missing = 0
 
         onProgress?.invoke(0f)
-        for (cue in cues) {
+        var lastCueBucket = -1
+        cues.forEachIndexed { index, cue ->
             val outputExact = "$outputLanguage:${cue.kind.name}:${cue.key}"
             val detectedExact = "${cue.language}:${cue.kind.name}:${cue.key}"
             val selected = exactIndex[outputExact]
@@ -53,22 +60,37 @@ object NativeGuideRenderer {
                 ?: fallbackIndex["${cue.language}:${cue.key}"]
             if (selected == null) {
                 missing++
-                continue
+            } else {
+                val mono = runCatching { GuideAudio.readMono(selected.file) }.getOrNull()
+                if (mono == null) {
+                    missing++
+                    StageGridDebugLog.warning("NATIVE_GUIDE", "RENDER_SAMPLE_READ_FAILED key=${cue.key} file=${selected.file.name}")
+                } else {
+                    val audio = GuideAudio.resampleLinear(mono, sampleRate)
+                    val startFrame = cue.cueMs.coerceAtLeast(0) * sampleRate.toLong() / 1000L
+                    rendered += RenderEvent(startFrame, audio)
+                }
             }
-            val mono = runCatching { GuideAudio.readMono(selected.file) }.getOrNull()
-            if (mono == null) {
-                missing++
-                continue
+            val cueFraction = (index + 1f) / cues.size.toFloat()
+            val bucket = (cueFraction * 10f).toInt().coerceIn(0, 10)
+            if (bucket != lastCueBucket) {
+                lastCueBucket = bucket
+                StageGridDebugLog.state(
+                    "NATIVE_GUIDE",
+                    "RENDER_PREP percent=${(cueFraction * 100f).roundToInt()} cue=${index + 1}/${cues.size} prepared=${rendered.size} missing=$missing",
+                )
             }
-            val audio = GuideAudio.resampleLinear(mono, sampleRate)
-            val startFrame = cue.cueMs.coerceAtLeast(0) * sampleRate.toLong() / 1000L
-            rendered += RenderEvent(startFrame, audio)
         }
-        if (rendered.isEmpty()) return null
+        if (rendered.isEmpty()) {
+            StageGridDebugLog.error("NATIVE_GUIDE", "RENDER_ABORT no compatible events; missing=$missing")
+            return null
+        }
         rendered.sortBy { it.startFrame }
+        StageGridDebugLog.state("NATIVE_GUIDE", "RENDER_PREP_DONE events=${rendered.size} missing=$missing elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}")
 
         val totalFrames = (durationMs.coerceAtLeast(1L) * sampleRate.toLong() / 1000L).coerceAtLeast(1L)
         outputFile.parentFile?.mkdirs()
+        StageGridDebugLog.io("NATIVE_GUIDE", "WRITE_WAV_START frames=$totalFrames target=${outputFile.name}")
         BufferedOutputStream(FileOutputStream(outputFile), 512 * 1024).use { out ->
             writeWavHeader(out, sampleRate, totalFrames)
             val blockFrames = 16_384
@@ -106,11 +128,20 @@ object NativeGuideRenderer {
                 val bucket = ((blockStart * 20L) / totalFrames).toInt().coerceIn(0, 20)
                 if (bucket != lastProgressBucket) {
                     lastProgressBucket = bucket
-                    onProgress?.invoke((blockStart.toDouble() / totalFrames.toDouble()).toFloat().coerceIn(0f, 1f))
+                    val fraction = (blockStart.toDouble() / totalFrames.toDouble()).toFloat().coerceIn(0f, 1f)
+                    onProgress?.invoke(fraction)
+                    StageGridDebugLog.state(
+                        "NATIVE_GUIDE",
+                        "WRITE_WAV_PROGRESS percent=${(fraction * 100f).roundToInt()} frame=$blockStart/$totalFrames elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}",
+                    )
                 }
             }
         }
         onProgress?.invoke(1f)
+        StageGridDebugLog.state(
+            "NATIVE_GUIDE",
+            "RENDER_DONE events=${rendered.size} missing=$missing bytes=${outputFile.length()} elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}",
+        )
         return Result(outputFile, outputLanguage, rendered.size, missing)
     }
 
@@ -120,6 +151,11 @@ object NativeGuideRenderer {
         outputLanguage: String?,
         sectionProposals: List<GuideCueAnalyzer.SectionProposal>,
     ) {
+        val startedNs = System.nanoTime()
+        StageGridDebugLog.io(
+            "NATIVE_GUIDE",
+            "SIDECAR_WRITE_START file=${file.name} cues=${analysis.cues.size} sections=${sectionProposals.size} language=${outputLanguage ?: "none"}",
+        )
         val root = JSONObject()
             .put("version", 1)
             .put("detectedLanguage", analysis.dominantLanguage ?: JSONObject.NULL)
@@ -149,6 +185,7 @@ object NativeGuideRenderer {
         root.put("cues", cues).put("sections", sections)
         file.parentFile?.mkdirs()
         file.writeText(root.toString(2))
+        StageGridDebugLog.state("NATIVE_GUIDE", "SIDECAR_WRITE_DONE bytes=${file.length()} elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}")
     }
 
     private fun writeWavHeader(out: java.io.OutputStream, sampleRate: Int, frames: Long) {
