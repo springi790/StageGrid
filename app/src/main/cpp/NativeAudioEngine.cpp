@@ -1,4 +1,5 @@
 #include "NativeAudioEngine.h"
+#include "signalsmith-stretch.h"
 #include <android/log.h>
 #include <algorithm>
 #include <chrono>
@@ -9,12 +10,19 @@
 namespace {
 constexpr const char *TAG = "StageGridAudio";
 constexpr double PI = 3.14159265358979323846;
+constexpr float MIN_TEMPO_RATIO = 0.75f;
+constexpr float MAX_TEMPO_RATIO = 1.50f;
+constexpr float MIN_PITCH_SEMITONES = -12.0f;
+constexpr float MAX_PITCH_SEMITONES = 12.0f;
 inline float clampUnit(float x) noexcept { return std::clamp(x, -1.0f, 1.0f); }
 inline int normalizeRequestedChannels(int channels) noexcept {
     if (channels >= 8) return 8;
     if (channels >= 6) return 6;
     if (channels >= 4) return 4;
     return 2;
+}
+inline bool dspIdentity(float tempoRatio, float pitchSemitones) noexcept {
+    return std::abs(tempoRatio - 1.0f) <= 0.0001f && std::abs(pitchSemitones) <= 0.0001f;
 }
 }
 
@@ -125,6 +133,11 @@ bool NativeAudioEngine::loadSong(const std::vector<std::string>& paths, const st
 
     bpm_.store(bpm > 0.0 ? bpm : 0.0, std::memory_order_release);
     beatsPerBar_.store(std::max(1, beatsPerBar), std::memory_order_release);
+    tempoRatio_.store(1.0f, std::memory_order_release);
+    pitchSemitones_.store(0.0f, std::memory_order_release);
+    timelineFraction_.store(0.0, std::memory_order_release);
+    dspCpuLoad_.store(0.0f, std::memory_order_release);
+    dspLatencyFrames_.store(0, std::memory_order_release);
     const int sr = outputSampleRate_.load(std::memory_order_acquire);
     gridOffsetFrame_.store(std::max<int64_t>(0, gridOffsetMs) * static_cast<int64_t>(sr) / 1000, std::memory_order_release);
     durationFrames_.store(static_cast<int64_t>(std::ceil(maxSeconds * sr)), std::memory_order_release);
@@ -155,6 +168,9 @@ void NativeAudioEngine::unloadSong() {
     playheadFrame_.store(0, std::memory_order_release);
     durationFrames_.store(0, std::memory_order_release);
     trackGateUntilFrame_.store(-1, std::memory_order_release);
+    timelineFraction_.store(0.0, std::memory_order_release);
+    dspCpuLoad_.store(0.0f, std::memory_order_release);
+    dspLatencyFrames_.store(0, std::memory_order_release);
 }
 
 void NativeAudioEngine::startDecoderThreads() {
@@ -196,11 +212,22 @@ void NativeAudioEngine::storePathState(int bank, const PathState &state) noexcep
 }
 
 void NativeAudioEngine::decoderLoop(TrackState *track) {
+    using Stretch = signalsmith::stretch::SignalsmithStretch<float>;
     std::array<uint64_t, 2> localGeneration{0, 0};
     std::array<int64_t, 2> cursor{0, 0};
     std::array<bool, 2> jumpConsumed{false, false};
     std::array<bool, 2> loopDisabledLocally{false, false};
     std::array<PathState, 2> localPath{};
+    std::array<Stretch, 2> stretchers{};
+    std::array<bool, 2> stretchConfigured{false, false};
+    std::array<double, 2> inputRemainder{0.0, 0.0};
+
+    std::vector<float> inputLeft(4096, 0.0f);
+    std::vector<float> inputRight(4096, 0.0f);
+    std::vector<float> outputLeft(2048, 0.0f);
+    std::vector<float> outputRight(2048, 0.0f);
+    std::vector<float> primeLeft;
+    std::vector<float> primeRight;
 
     const auto initializeBank = [&](int slot, uint64_t generation) {
         track->rings[slot]->clear();
@@ -209,7 +236,37 @@ void NativeAudioEngine::decoderLoop(TrackState *track) {
         loopDisabledLocally[slot] = false;
         localPath[slot] = loadPathState(slot);
         localGeneration[slot] = generation;
+        inputRemainder[slot] = 0.0;
+        stretchConfigured[slot] = false;
         track->readyGeneration[slot].store(0, std::memory_order_release);
+
+        const int sr = std::max(1, outputSampleRate_.load(std::memory_order_acquire));
+        const float tempo = std::clamp(tempoRatio_.load(std::memory_order_acquire), MIN_TEMPO_RATIO, MAX_TEMPO_RATIO);
+        const float requestedPitch = std::clamp(pitchSemitones_.load(std::memory_order_acquire), MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES);
+        const float appliedPitch = track->type == GUIDE ? 0.0f : requestedPitch;
+        if (dspIdentity(tempo, appliedPitch)) return;
+
+        auto &stretch = stretchers[slot];
+        stretch.presetCheaper(2, static_cast<float>(sr), true);
+        stretch.setTransposeSemitones(appliedPitch);
+        stretch.reset();
+
+        const int primeFrames = std::max(0, stretch.inputLatency());
+        if (primeFrames > 0) {
+            primeLeft.assign(static_cast<size_t>(primeFrames), 0.0f);
+            primeRight.assign(static_cast<size_t>(primeFrames), 0.0f);
+            const int64_t duration = durationFrames_.load(std::memory_order_acquire);
+            for (int i = 0; i < primeFrames; ++i) {
+                const int64_t timeline = cursor[slot] - primeFrames + i;
+                if (timeline < 0 || timeline >= duration) continue;
+                const double sourceFrame = static_cast<double>(timeline) * track->reader->sampleRate() / sr;
+                track->reader->sampleAt(sourceFrame, primeLeft[static_cast<size_t>(i)], primeRight[static_cast<size_t>(i)]);
+            }
+            std::array<float *, 2> primeInputs{primeLeft.data(), primeRight.data()};
+            stretch.seek(primeInputs, primeFrames, tempo);
+        }
+        dspLatencyFrames_.store(std::max(0, stretch.outputLatency()), std::memory_order_release);
+        stretchConfigured[slot] = true;
     };
 
     while (track->alive.load(std::memory_order_acquire)) {
@@ -246,20 +303,76 @@ void NativeAudioEngine::decoderLoop(TrackState *track) {
         const size_t targetFrames = std::min<size_t>(2048, ring.freeFrames());
         size_t written = 0;
         const uint64_t expectedGeneration = localGeneration[fillSlot];
-        for (; written < targetFrames; ++written) {
-            if (expectedGeneration != bankGenerations_[fillSlot].load(std::memory_order_acquire)) break;
-            float l = 0.0f, r = 0.0f;
-            if (cursor[fillSlot] >= 0 && cursor[fillSlot] < duration) {
-                const double sourceFrame = static_cast<double>(cursor[fillSlot]) * track->reader->sampleRate() / sr;
-                track->reader->sampleAt(sourceFrame, l, r);
+        const float tempo = std::clamp(tempoRatio_.load(std::memory_order_acquire), MIN_TEMPO_RATIO, MAX_TEMPO_RATIO);
+        const float requestedPitch = std::clamp(pitchSemitones_.load(std::memory_order_acquire), MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES);
+        const float appliedPitch = track->type == GUIDE ? 0.0f : requestedPitch;
+        const bool useDsp = !dspIdentity(tempo, appliedPitch);
+
+        if (!useDsp) {
+            for (; written < targetFrames; ++written) {
+                if (expectedGeneration != bankGenerations_[fillSlot].load(std::memory_order_acquire)) break;
+                float l = 0.0f, r = 0.0f;
+                if (cursor[fillSlot] >= 0 && cursor[fillSlot] < duration) {
+                    const double sourceFrame = static_cast<double>(cursor[fillSlot]) * track->reader->sampleRate() / sr;
+                    track->reader->sampleAt(sourceFrame, l, r);
+                }
+                if (!ring.writeStereo(l, r)) break;
+                cursor[fillSlot] = nextTimelineFrame(
+                    cursor[fillSlot],
+                    localPath[fillSlot],
+                    jumpConsumed[fillSlot],
+                    loopDisabledLocally[fillSlot]
+                );
             }
-            if (!ring.writeStereo(l, r)) break;
-            cursor[fillSlot] = nextTimelineFrame(
-                cursor[fillSlot],
-                localPath[fillSlot],
-                jumpConsumed[fillSlot],
-                loopDisabledLocally[fillSlot]
-            );
+        } else {
+            if (!stretchConfigured[fillSlot]) {
+                initializeBank(fillSlot, expectedGeneration);
+                continue;
+            }
+
+            const int outputFrames = static_cast<int>(targetFrames);
+            const double desiredInput = static_cast<double>(outputFrames) * tempo + inputRemainder[fillSlot];
+            int inputFrames = std::max(1, static_cast<int>(std::floor(desiredInput)));
+            inputRemainder[fillSlot] = desiredInput - inputFrames;
+            inputFrames = std::min(inputFrames, static_cast<int>(inputLeft.size()));
+
+            for (int i = 0; i < inputFrames; ++i) {
+                inputLeft[static_cast<size_t>(i)] = 0.0f;
+                inputRight[static_cast<size_t>(i)] = 0.0f;
+                if (cursor[fillSlot] >= 0 && cursor[fillSlot] < duration) {
+                    const double sourceFrame = static_cast<double>(cursor[fillSlot]) * track->reader->sampleRate() / sr;
+                    track->reader->sampleAt(
+                        sourceFrame,
+                        inputLeft[static_cast<size_t>(i)],
+                        inputRight[static_cast<size_t>(i)]
+                    );
+                }
+                cursor[fillSlot] = nextTimelineFrame(
+                    cursor[fillSlot],
+                    localPath[fillSlot],
+                    jumpConsumed[fillSlot],
+                    loopDisabledLocally[fillSlot]
+                );
+            }
+
+            if (expectedGeneration != bankGenerations_[fillSlot].load(std::memory_order_acquire)) continue;
+            auto &stretch = stretchers[fillSlot];
+            stretch.setTransposeSemitones(appliedPitch);
+            std::array<float *, 2> inputs{inputLeft.data(), inputRight.data()};
+            std::array<float *, 2> outputs{outputLeft.data(), outputRight.data()};
+            const auto dspStart = std::chrono::steady_clock::now();
+            stretch.process(inputs, inputFrames, outputs, outputFrames);
+            const double dspElapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - dspStart).count();
+            const double dspBudget = static_cast<double>(outputFrames) / sr;
+            const float blockLoad = dspBudget > 0.0 ? static_cast<float>(dspElapsed / dspBudget) : 0.0f;
+            const float oldLoad = dspCpuLoad_.load(std::memory_order_relaxed);
+            dspCpuLoad_.store(oldLoad * 0.95f + blockLoad * 0.05f, std::memory_order_relaxed);
+
+            if (expectedGeneration != bankGenerations_[fillSlot].load(std::memory_order_acquire)) continue;
+            for (int i = 0; i < outputFrames; ++i) {
+                if (!ring.writeStereo(outputLeft[static_cast<size_t>(i)], outputRight[static_cast<size_t>(i)])) break;
+                written++;
+            }
         }
 
         const size_t readyThreshold = std::min<size_t>(
@@ -339,6 +452,7 @@ uint64_t NativeAudioEngine::requestHardPathReset(int64_t frame, const PathState 
     callbackGeneration_ = 0;
     callbackJumpConsumed_ = false;
     callbackLoopDisabledLocally_ = false;
+    timelineFraction_.store(0.0, std::memory_order_release);
     return generation;
 }
 
@@ -365,7 +479,12 @@ void NativeAudioEngine::stagePathChange(const PathState &path) {
     const uint64_t generation = generationCounter_.fetch_add(1, std::memory_order_acq_rel) + 1;
     bankGenerations_[inactive].store(generation, std::memory_order_release);
     pendingStartOutputFrame_.store(outputFrameCounter_.load(std::memory_order_acquire), std::memory_order_release);
-    pendingSafeOutputFrames_.store(firstDivergenceFrames(current, path, startFrame), std::memory_order_release);
+    const int64_t sourceSafeFrames = firstDivergenceFrames(current, path, startFrame);
+    const double tempo = std::max(0.01, static_cast<double>(tempoRatio_.load(std::memory_order_acquire)));
+    pendingSafeOutputFrames_.store(
+        sourceSafeFrames < 0 ? -1 : static_cast<int64_t>(std::floor(sourceSafeFrames / tempo)),
+        std::memory_order_release
+    );
     pendingBank_.store(inactive, std::memory_order_release);
     pendingGeneration_.store(generation, std::memory_order_release);
 }
@@ -444,6 +563,7 @@ bool NativeAudioEngine::tryActivatePendingPath(int32_t numFrames) noexcept {
     callbackGeneration_ = generation;
     callbackJumpConsumed_ = false;
     callbackLoopDisabledLocally_ = false;
+    timelineFraction_.store(0.0, std::memory_order_release);
     pendingBank_.store(-1, std::memory_order_release);
     pendingGeneration_.store(0, std::memory_order_release);
     pathSwaps_.fetch_add(1, std::memory_order_relaxed);
@@ -537,6 +657,37 @@ void NativeAudioEngine::setClickOutputBus(int bus) {
     clickOutputBus_.store(std::clamp(bus, 0, 3), std::memory_order_release);
 }
 
+void NativeAudioEngine::reprimeDspFromControl() {
+    if (tracks_.empty()) return;
+    const bool resume = playing_.exchange(false, std::memory_order_acq_rel);
+    clearGuideCue();
+    const int64_t frame = playheadFrame_.load(std::memory_order_acquire);
+    const PathState path = loadPathState(activeBank_.load(std::memory_order_acquire));
+    const uint64_t generation = requestHardPathReset(frame, path);
+    if (dspIdentity(tempoRatio_.load(std::memory_order_acquire), pitchSemitones_.load(std::memory_order_acquire))) {
+        dspLatencyFrames_.store(0, std::memory_order_release);
+        dspCpuLoad_.store(0.0f, std::memory_order_release);
+    }
+    waitForActivePreload(generation, 350);
+    playing_.store(resume, std::memory_order_release);
+}
+
+void NativeAudioEngine::setTempoRatio(float ratio) {
+    const float safe = std::clamp(ratio, MIN_TEMPO_RATIO, MAX_TEMPO_RATIO);
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    const float previous = tempoRatio_.exchange(safe, std::memory_order_acq_rel);
+    if (std::abs(previous - safe) <= 0.0001f) return;
+    reprimeDspFromControl();
+}
+
+void NativeAudioEngine::setPitchSemitones(float semitones) {
+    const float safe = std::clamp(semitones, MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES);
+    std::lock_guard<std::mutex> lock(controlMutex_);
+    const float previous = pitchSemitones_.exchange(safe, std::memory_order_acq_rel);
+    if (std::abs(previous - safe) <= 0.0001f) return;
+    reprimeDspFromControl();
+}
+
 void NativeAudioEngine::setLoop(bool enabled, int64_t startMs, int64_t endMs) {
     clearGuideCue();
     trackGateUntilFrame_.store(-1, std::memory_order_release);
@@ -594,6 +745,7 @@ bool NativeAudioEngine::scheduleGuideCue(
     cue->route = std::clamp(route, static_cast<int>(BOTH), static_cast<int>(RIGHT));
     cue->bus = std::clamp(bus, 0, 3);
     cue->volume = std::clamp(volume, 0.0f, 1.5f);
+    cue->playbackIndex.store(-1, std::memory_order_relaxed);
     cue->consumed.store(false, std::memory_order_relaxed);
 
     std::lock_guard<std::mutex> lock(guideCueControlMutex_);
@@ -765,7 +917,7 @@ int64_t NativeAudioEngine::framesToMs(int64_t frames) const noexcept {
 int64_t NativeAudioEngine::positionMs() const { return framesToMs(playheadFrame_.load(std::memory_order_acquire)); }
 int64_t NativeAudioEngine::durationMs() const { return framesToMs(durationFrames_.load(std::memory_order_acquire)); }
 
-float NativeAudioEngine::generatedClickSample(int64_t timelineFrame) const noexcept {
+float NativeAudioEngine::generatedClickSample(double timelineFrame, float tempoRatio) const noexcept {
     if (!clickEnabled_.load(std::memory_order_relaxed)) return 0.0f;
     const double bpm = bpm_.load(std::memory_order_relaxed);
     if (bpm <= 0.0) return 0.0f;
@@ -777,19 +929,21 @@ float NativeAudioEngine::generatedClickSample(int64_t timelineFrame) const noexc
     const double framesPerTick = framesPerBeat / subdivision;
     if (framesPerTick < 1.0) return 0.0f;
 
-    const double relative = static_cast<double>(timelineFrame - gridOffset);
+    const double relative = timelineFrame - static_cast<double>(gridOffset);
     const int64_t tickIndex = static_cast<int64_t>(std::floor(relative / framesPerTick));
     const double tickStart = tickIndex * framesPerTick;
-    const double offset = relative - tickStart;
+    const double sourceOffset = relative - tickStart;
+    const double safeTempo = std::max(0.01, static_cast<double>(tempoRatio));
+    const double outputOffset = sourceOffset / safeTempo;
     const double clickFrames = sr * 0.022;
-    if (offset < 0.0 || offset >= clickFrames) return 0.0f;
+    if (outputOffset < 0.0 || outputOffset >= clickFrames) return 0.0f;
 
     const bool onBeat = (tickIndex % subdivision) == 0;
     const int64_t beatIndex = tickIndex / subdivision;
     const bool barAccent = onBeat && beatIndex % std::max(1, beatsPerBar_.load(std::memory_order_relaxed)) == 0;
     const double freq = barAccent ? 1900.0 : (onBeat ? 1350.0 : 950.0);
     const double gain = barAccent ? 1.0 : (onBeat ? 0.82 : 0.58);
-    const double t = offset / sr;
+    const double t = outputOffset / sr;
     const double envelope = std::exp(-t * 105.0);
     return static_cast<float>(std::sin(2.0 * PI * freq * t) * envelope * gain *
                               clickVolume_.load(std::memory_order_relaxed));
@@ -897,18 +1051,22 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
     for (const auto &track : tracks_) anySolo = anySolo || track->solo.load(std::memory_order_relaxed);
 
     int64_t frame = playheadFrame_.load(std::memory_order_relaxed);
+    double timelineFraction = timelineFraction_.load(std::memory_order_relaxed);
+    const float tempo = std::clamp(tempoRatio_.load(std::memory_order_relaxed), MIN_TEMPO_RATIO, MAX_TEMPO_RATIO);
     const int64_t duration = durationFrames_.load(std::memory_order_relaxed);
     int32_t renderedFrames = 0;
     for (int32_t i = 0; i < numFrames; ++i) {
+        const double timelinePosition = static_cast<double>(frame) + timelineFraction;
         std::array<float, 8> mix{};
         bool trackUnderrun = false;
         const int64_t gateUntil = trackGateUntilFrame_.load(std::memory_order_relaxed);
-        const bool suppressImportedTracks = gateUntil >= 0 && frame < gateUntil;
-        if (gateUntil >= 0 && frame >= gateUntil) {
+        const bool suppressImportedTracks = gateUntil >= 0 && timelinePosition < static_cast<double>(gateUntil);
+        if (gateUntil >= 0 && timelinePosition >= static_cast<double>(gateUntil)) {
             trackGateUntilFrame_.store(-1, std::memory_order_relaxed);
         }
         const bool guideCueEnabled = guideCue && !guideCue->consumed.load(std::memory_order_relaxed) &&
-            frame >= guideCue->startFrame && frame < guideCue->suppressUntilFrame;
+            timelinePosition >= static_cast<double>(guideCue->startFrame) &&
+            timelinePosition < static_cast<double>(guideCue->suppressUntilFrame);
 
         for (const auto &track : tracks_) {
             float l = 0.0f, r = 0.0f;
@@ -937,15 +1095,17 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
         if (trackUnderrun) underruns_.fetch_add(1, std::memory_order_relaxed);
 
         if (guideCueEnabled && guideEnabled_.load(std::memory_order_relaxed)) {
-            const int64_t cueOffset = frame - guideCue->startFrame;
-            if (cueOffset >= 0 && cueOffset < static_cast<int64_t>(guideCue->monoSamples.size())) {
+            int64_t cueIndex = guideCue->playbackIndex.load(std::memory_order_relaxed);
+            if (cueIndex < 0) cueIndex = 0;
+            if (cueIndex < static_cast<int64_t>(guideCue->monoSamples.size())) {
                 routeMono(
                     mix,
                     channelCount,
                     guideCue->bus,
                     guideCue->route,
-                    guideCue->monoSamples[static_cast<size_t>(cueOffset)] * guideCue->volume
+                    guideCue->monoSamples[static_cast<size_t>(cueIndex)] * guideCue->volume
                 );
+                guideCue->playbackIndex.store(cueIndex + 1, std::memory_order_relaxed);
             }
         }
 
@@ -954,7 +1114,7 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
             channelCount,
             clickOutputBus_.load(std::memory_order_relaxed),
             clickRoute_.load(std::memory_order_relaxed),
-            generatedClickSample(frame)
+            generatedClickSample(timelinePosition, tempo)
         );
         addTestTone(mix);
 
@@ -965,21 +1125,35 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
         renderedFrames++;
 
         const int64_t previousFrame = frame;
-        const int64_t nextFrame = nextTimelineFrame(frame, callbackPath, callbackJumpConsumed_, callbackLoopDisabledLocally_);
+        bool discontinuity = false;
+        timelineFraction += tempo;
+        while (timelineFraction >= 1.0) {
+            const int64_t beforeAdvance = frame;
+            frame = nextTimelineFrame(frame, callbackPath, callbackJumpConsumed_, callbackLoopDisabledLocally_);
+            timelineFraction -= 1.0;
+            if (frame != beforeAdvance + 1) {
+                timelineFraction = 0.0;
+                discontinuity = true;
+                break;
+            }
+        }
+
         if (guideCue && !guideCue->consumed.load(std::memory_order_relaxed)) {
-            if (previousFrame + 1 >= guideCue->suppressUntilFrame ||
-                (previousFrame >= guideCue->startFrame && nextFrame != previousFrame + 1)) {
+            const double nextTimelinePosition = static_cast<double>(frame) + timelineFraction;
+            if (nextTimelinePosition >= static_cast<double>(guideCue->suppressUntilFrame) ||
+                (previousFrame >= guideCue->startFrame && discontinuity)) {
                 guideCue->consumed.store(true, std::memory_order_release);
             }
         }
-        frame = nextFrame;
         if (frame >= duration) {
             frame = duration;
+            timelineFraction = 0.0;
             playing_.store(false, std::memory_order_release);
             break;
         }
     }
     playheadFrame_.store(frame, std::memory_order_release);
+    timelineFraction_.store(timelineFraction, std::memory_order_release);
     if (renderedFrames > 0) outputFrameCounter_.fetch_add(static_cast<uint64_t>(renderedFrames), std::memory_order_relaxed);
     outputTestRemainingFrames_.store(std::max<int64_t>(0, testRemaining), std::memory_order_relaxed);
     outputTestFrame_.store(testFrame, std::memory_order_relaxed);
