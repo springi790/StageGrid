@@ -11,6 +11,7 @@ import dev.stagegrid.guide.GuideCueAnalyzer
 import dev.stagegrid.guide.GuidePackManager
 import dev.stagegrid.guide.NativeGuideReanalyzer
 import dev.stagegrid.importer.SongImporter
+import dev.stagegrid.midi.MidiDeviceManager
 import dev.stagegrid.session.PerformanceSessionStore
 import dev.stagegrid.settings.AppSettingsRepository
 import java.io.File
@@ -25,6 +26,8 @@ class StageGridApplication : Application() {
     lateinit var backupManager: LibraryBackupManager
         private set
     lateinit var audioDevices: AudioDeviceManager
+        private set
+    lateinit var midiDevices: MidiDeviceManager
         private set
     lateinit var nativeAudio: NativeAudioEngine
         private set
@@ -50,6 +53,7 @@ class StageGridApplication : Application() {
         nativeGuideReanalyzer = NativeGuideReanalyzer(filesDir, repository, guidePacks)
         backupManager = LibraryBackupManager(this, repository)
         audioDevices = AudioDeviceManager(this)
+        midiDevices = MidiDeviceManager(this).also { it.start() }
         nativeAudio = NativeAudioEngine()
         audio = AudioEngineController(this, repository, nativeAudio, guidePacks)
         sessionStore = PerformanceSessionStore(filesDir)
