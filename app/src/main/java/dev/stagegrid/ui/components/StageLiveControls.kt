@@ -1,9 +1,16 @@
 package dev.stagegrid.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,9 +32,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -80,6 +90,11 @@ fun StageTransportDock(
 ) {
     val progress = if (durationMs > 0L) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
     val dockShape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+    val playAccent by animateColorAsState(
+        targetValue = if (isPlaying) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
+        animationSpec = tween(StageMotion.ShortMs, easing = StageMotion.Standard),
+        label = "transport-play-accent",
+    )
     Column(
         modifier
             .fillMaxWidth()
@@ -90,8 +105,6 @@ fun StageTransportDock(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (countInText != null) {
-            // While counting in, the dock takes over: nothing else on screen matters until the
-            // stems drop, and the musician needs the number, not a row of disabled buttons.
             Text(
                 countInText,
                 style = MaterialTheme.typography.headlineMedium,
@@ -120,6 +133,7 @@ fun StageTransportDock(
                 onClick = onPlayPause,
                 enabled = enabled,
                 modifier = Modifier.weight(1.6f).heightIn(min = 60.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = playAccent),
             ) {
                 StageGlyph(if (isPlaying) StageIcon.PAUSE else StageIcon.PLAY, contentDescription = null, size = 20.dp)
                 Spacer(Modifier.width(8.dp))
@@ -192,6 +206,11 @@ fun StageMiniTransport(
     modifier: Modifier = Modifier,
 ) {
     val openLabel = stringResource(R.string.cd_open_live)
+    val playTint by animateColorAsState(
+        targetValue = if (isPlaying) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
+        animationSpec = tween(StageMotion.ShortMs, easing = StageMotion.Standard),
+        label = "mini-transport-play",
+    )
     Row(
         modifier
             .fillMaxWidth()
@@ -224,7 +243,7 @@ fun StageMiniTransport(
                 if (isPlaying) StageIcon.PAUSE else StageIcon.PLAY,
                 contentDescription = if (isPlaying) stringResource(R.string.cd_pause) else stringResource(R.string.cd_play),
                 size = 22.dp,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = playTint,
             )
         }
         IconButton(onClick = onStop, enabled = enabled) {
@@ -256,26 +275,56 @@ fun StageSectionButton(
     modifier: Modifier = Modifier,
 ) {
     val queuedColor = MaterialTheme.colorScheme.tertiary
-    val border = when {
+    val targetBorder = when {
         isQueued -> queuedColor
         isCurrent -> accent
         else -> StageGridColors.Outline
     }
-    val background = when {
+    val targetBackground = when {
         isCurrent -> accent.copy(alpha = 0.26f)
         isQueued -> queuedColor.copy(alpha = 0.18f)
         else -> StageGridColors.SurfaceRaised
     }
+    val border by animateColorAsState(
+        targetValue = targetBorder,
+        animationSpec = tween(StageMotion.ShortMs, easing = StageMotion.Standard),
+        label = "section-border",
+    )
+    val background by animateColorAsState(
+        targetValue = targetBackground,
+        animationSpec = tween(StageMotion.ShortMs, easing = StageMotion.Standard),
+        label = "section-background",
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val targetScale = when {
+        pressed -> 0.97f
+        isQueued -> 1.012f
+        isCurrent -> 1.008f
+        else -> 1f
+    }
+    val scale by animateFloatAsState(
+        targetValue = targetScale,
+        animationSpec = tween(StageMotion.QuickMs, easing = StageMotion.Standard),
+        label = "section-scale",
+    )
     val shape = RoundedCornerShape(16.dp)
 
     Row(
         modifier
+            .scale(scale)
             .heightIn(min = 64.dp)
             .widthIn(min = 116.dp)
             .clip(shape)
             .background(background)
             .border(width = if (isCurrent || isQueued) 2.dp else 1.dp, color = border, shape = shape)
-            .clickable(enabled = enabled, onClickLabel = clickLabel, onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                enabled = enabled,
+                onClickLabel = clickLabel,
+                onClick = onClick,
+            )
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -294,6 +343,21 @@ fun StageSectionButton(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (isQueued) {
+                Text(
+                    stringResource(R.string.ui_queued),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = queuedColor,
+                    fontWeight = FontWeight.Bold,
+                )
+            } else if (isCurrent) {
+                Text(
+                    stringResource(R.string.ui_selected),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = accent,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
             supportingText?.let {
                 Text(
                     it,
@@ -332,13 +396,23 @@ fun StageBeatPulse(
     ) {
         repeat(grid.signature.beatsPerBar) { index ->
             val isCurrent = active && index == position.beat - 1
-            val color = when {
+            val targetColor = when {
                 isCurrent && index == 0 -> downbeat
                 isCurrent -> accent
                 else -> idle
             }
+            val color by animateColorAsState(
+                targetValue = targetColor,
+                animationSpec = tween(StageMotion.QuickMs, easing = StageMotion.Standard),
+                label = "beat-color-$index",
+            )
+            val diameter by animateDpAsState(
+                targetValue = if (isCurrent) 15.dp else 10.dp,
+                animationSpec = tween(StageMotion.QuickMs, easing = StageMotion.Standard),
+                label = "beat-size-$index",
+            )
             Box(Modifier.height(16.dp), contentAlignment = Alignment.Center) {
-                Canvas(Modifier.size(if (isCurrent) 15.dp else 10.dp)) {
+                Canvas(Modifier.size(diameter)) {
                     drawCircle(color = color, radius = size.minDimension / 2f)
                 }
             }
