@@ -314,6 +314,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                         valueMs = gridOffsetMs.toLongOrNull() ?: result.gridOffsetMs,
                         onValueChange = { gridOffsetMs = it.toString() },
                         referenceIsDetected = true,
+                        bpm = bpm.trim().replace(',', '.').toDoubleOrNull(),
                     )
                     OutlinedTextField(notes, { notes = it }, label = { Text(stringResource(R.string.notes)) }, modifier = Modifier.fillMaxWidth())
                 }
@@ -428,6 +429,7 @@ private fun SongMetadataDialog(
                     valueMs = gridOffsetMs.toLongOrNull() ?: song.gridOffsetMs,
                     onValueChange = { gridOffsetMs = it.toString() },
                     referenceIsDetected = false,
+                    bpm = bpm.trim().replace(',', '.').toDoubleOrNull(),
                 )
                 OutlinedTextField(notes, { notes = it }, label = { Text(stringResource(R.string.notes)) }, modifier = Modifier.fillMaxWidth())
             }
