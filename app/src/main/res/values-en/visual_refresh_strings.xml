@@ -27,6 +27,10 @@
     <string name="grid_calibration_current">CURRENT</string>
     <string name="grid_calibration_delta">ADJUSTMENT</string>
     <string name="grid_calibration_reset">Reset</string>
+    <string name="grid_calibration_unit_ms">Milliseconds</string>
+    <string name="grid_calibration_unit_beats">Beats</string>
+    <string name="grid_calibration_beats_requires_bpm">Beats mode requires a valid BPM between 20 and 400.</string>
+    <string name="grid_calibration_beat_tip">%1$.2f BPM · 1 beat = %2$.1f ms. The slider covers ±1 beat and the buttons adjust 1 or ¼ beat.</string>
     <string name="grid_calibration_tip">Use the slider for coarse alignment and the 1 ms / 10 ms buttons for fine tuning. The saved value drives Click, sections and musical positions.</string>
     <string name="labs_title">StageGrid Labs</string>
     <string name="labs_badge">EXPERIMENTAL</string>
