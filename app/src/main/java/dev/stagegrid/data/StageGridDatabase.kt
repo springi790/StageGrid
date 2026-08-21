@@ -20,7 +20,7 @@ import dev.stagegrid.model.TrackEntity
         SetlistEntity::class,
         SetlistSongEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class StageGridDatabase : RoomDatabase() {
@@ -44,9 +44,15 @@ abstract class StageGridDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sections ADD COLUMN cueCountEnabled INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun create(context: Context): StageGridDatabase =
             Room.databaseBuilder(context, StageGridDatabase::class.java, "stagegrid.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }
