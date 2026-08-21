@@ -244,7 +244,8 @@ void NativeAudioEngine::decoderLoop(TrackState *track) {
         const float tempo = std::clamp(tempoRatio_.load(std::memory_order_acquire), MIN_TEMPO_RATIO, MAX_TEMPO_RATIO);
         const float requestedPitch = std::clamp(pitchSemitones_.load(std::memory_order_acquire), MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES);
         const float appliedPitch = track->type == GUIDE ? 0.0f : requestedPitch;
-        if (dspIdentity(tempo, appliedPitch)) return;
+        const bool globalDspActive = !dspIdentity(tempo, requestedPitch);
+        if (!globalDspActive || track->type == CLICK) return;
 
         auto &stretch = stretchers[slot];
         stretch.presetCheaper(2, static_cast<float>(sr), true);
@@ -306,7 +307,8 @@ void NativeAudioEngine::decoderLoop(TrackState *track) {
         const float tempo = std::clamp(tempoRatio_.load(std::memory_order_acquire), MIN_TEMPO_RATIO, MAX_TEMPO_RATIO);
         const float requestedPitch = std::clamp(pitchSemitones_.load(std::memory_order_acquire), MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES);
         const float appliedPitch = track->type == GUIDE ? 0.0f : requestedPitch;
-        const bool useDsp = !dspIdentity(tempo, appliedPitch);
+        const bool globalDspActive = !dspIdentity(tempo, requestedPitch);
+        const bool useDsp = globalDspActive && track->type != CLICK;
 
         if (!useDsp) {
             for (; written < targetFrames; ++written) {
@@ -669,6 +671,14 @@ void NativeAudioEngine::reprimeDspFromControl() {
         dspCpuLoad_.store(0.0f, std::memory_order_release);
     }
     waitForActivePreload(generation, 350);
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        TAG,
+        "DSP reprime tempo=%.4f pitch=%.2f latencyFrames=%d",
+        tempoRatio_.load(std::memory_order_acquire),
+        pitchSemitones_.load(std::memory_order_acquire),
+        dspLatencyFrames_.load(std::memory_order_acquire)
+    );
     playing_.store(resume, std::memory_order_release);
 }
 
@@ -1053,20 +1063,26 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
     int64_t frame = playheadFrame_.load(std::memory_order_relaxed);
     double timelineFraction = timelineFraction_.load(std::memory_order_relaxed);
     const float tempo = std::clamp(tempoRatio_.load(std::memory_order_relaxed), MIN_TEMPO_RATIO, MAX_TEMPO_RATIO);
+    const float pitch = std::clamp(pitchSemitones_.load(std::memory_order_relaxed), MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES);
+    const bool dspOn = !dspIdentity(tempo, pitch);
+    const double dspDelaySourceFrames = dspOn
+        ? static_cast<double>(std::max(0, dspLatencyFrames_.load(std::memory_order_relaxed))) * static_cast<double>(tempo)
+        : 0.0;
     const int64_t duration = durationFrames_.load(std::memory_order_relaxed);
     int32_t renderedFrames = 0;
     for (int32_t i = 0; i < numFrames; ++i) {
         const double timelinePosition = static_cast<double>(frame) + timelineFraction;
+        const double audibleTimelinePosition = timelinePosition - dspDelaySourceFrames;
         std::array<float, 8> mix{};
         bool trackUnderrun = false;
         const int64_t gateUntil = trackGateUntilFrame_.load(std::memory_order_relaxed);
-        const bool suppressImportedTracks = gateUntil >= 0 && timelinePosition < static_cast<double>(gateUntil);
-        if (gateUntil >= 0 && timelinePosition >= static_cast<double>(gateUntil)) {
+        const bool suppressImportedTracks = gateUntil >= 0 && audibleTimelinePosition < static_cast<double>(gateUntil);
+        if (gateUntil >= 0 && audibleTimelinePosition >= static_cast<double>(gateUntil)) {
             trackGateUntilFrame_.store(-1, std::memory_order_relaxed);
         }
         const bool guideCueEnabled = guideCue && !guideCue->consumed.load(std::memory_order_relaxed) &&
-            timelinePosition >= static_cast<double>(guideCue->startFrame) &&
-            timelinePosition < static_cast<double>(guideCue->suppressUntilFrame);
+            audibleTimelinePosition >= static_cast<double>(guideCue->startFrame) &&
+            audibleTimelinePosition < static_cast<double>(guideCue->suppressUntilFrame);
 
         for (const auto &track : tracks_) {
             float l = 0.0f, r = 0.0f;
@@ -1114,7 +1130,7 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
             channelCount,
             clickOutputBus_.load(std::memory_order_relaxed),
             clickRoute_.load(std::memory_order_relaxed),
-            generatedClickSample(timelinePosition, tempo)
+            generatedClickSample(audibleTimelinePosition, tempo)
         );
         addTestTone(mix);
 
@@ -1140,8 +1156,9 @@ oboe::DataCallbackResult NativeAudioEngine::onAudioReady(oboe::AudioStream *stre
 
         if (guideCue && !guideCue->consumed.load(std::memory_order_relaxed)) {
             const double nextTimelinePosition = static_cast<double>(frame) + timelineFraction;
-            if (nextTimelinePosition >= static_cast<double>(guideCue->suppressUntilFrame) ||
-                (previousFrame >= guideCue->startFrame && discontinuity)) {
+            const double nextAudibleTimelinePosition = nextTimelinePosition - dspDelaySourceFrames;
+            if (nextAudibleTimelinePosition >= static_cast<double>(guideCue->suppressUntilFrame) ||
+                (audibleTimelinePosition >= static_cast<double>(guideCue->startFrame) && discontinuity)) {
                 guideCue->consumed.store(true, std::memory_order_release);
             }
         }
