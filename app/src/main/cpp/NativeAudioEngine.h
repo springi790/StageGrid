@@ -2,8 +2,10 @@
 #include <oboe/Oboe.h>
 #include "SpscRingBuffer.h"
 #include "WavReader.h"
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <mutex>
