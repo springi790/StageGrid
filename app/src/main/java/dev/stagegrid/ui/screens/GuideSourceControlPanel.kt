@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.stagegrid.R
@@ -40,7 +41,7 @@ fun GuideSourceControlHost(
     val enabled = player.song != null && (cueAvailable || cueState.source == GuideSource.CUE)
 
     StageGridPanel(modifier = modifier, accent = StageGridColors.Violet) {
-        Column(verticalArrangement = Arrangement.spacedBy(androidx.compose.ui.unit.dp(6f))) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 stringResource(R.string.guide_source),
                 style = MaterialTheme.typography.titleMedium,
