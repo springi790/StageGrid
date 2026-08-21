@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -133,23 +134,30 @@ private fun NudgeButton(label: String, modifier: Modifier = Modifier, onClick: (
 
 @Composable
 private fun GridOffsetRuler(deltaMs: Long, minDeltaMs: Long, maxDeltaMs: Long) {
-    val line = MaterialTheme.colorScheme.outline
-    val center = MaterialTheme.colorScheme.onSurfaceVariant
-    val marker = MaterialTheme.colorScheme.primary
+    // Keep the ruler deliberately high-contrast. This control is used for fine alignment in dark
+    // stage environments, so the grid itself should remain visible independently of theme outlines.
+    val line = Color.White.copy(alpha = 0.62f)
+    val center = Color.White.copy(alpha = 0.96f)
+    val marker = Color.White
     Canvas(Modifier.fillMaxWidth().height(42.dp)) {
         val y = size.height * 0.68f
-        drawLine(line, Offset(0f, y), Offset(size.width, y), strokeWidth = 2f)
+        drawLine(line, Offset(0f, y), Offset(size.width, y), strokeWidth = 3f)
         repeat(11) { index ->
             val fraction = index / 10f
             val x = size.width * fraction
             val major = index == 0 || index == 5 || index == 10
             val tickHeight = if (major) size.height * 0.34f else size.height * 0.2f
-            drawLine(if (index == 5) center else line, Offset(x, y - tickHeight), Offset(x, y + 2f), strokeWidth = if (major) 2f else 1f)
+            drawLine(
+                if (index == 5) center else line,
+                Offset(x, y - tickHeight),
+                Offset(x, y + 2f),
+                strokeWidth = if (major) 2.5f else 1.5f,
+            )
         }
         val span = (maxDeltaMs - minDeltaMs).coerceAtLeast(1L).toFloat()
         val markerFraction = ((deltaMs - minDeltaMs).toFloat() / span).coerceIn(0f, 1f)
         val markerX = size.width * markerFraction
-        drawLine(marker, Offset(markerX, 0f), Offset(markerX, size.height), strokeWidth = 4f)
+        drawLine(marker, Offset(markerX, 0f), Offset(markerX, size.height), strokeWidth = 5f)
     }
 }
 
