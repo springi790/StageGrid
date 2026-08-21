@@ -1,6 +1,7 @@
 package dev.stagegrid.data
 
 import androidx.room.withTransaction
+import dev.stagegrid.debug.StageGridDebugLog
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.SetlistBundle
 import dev.stagegrid.model.SetlistEntity
@@ -30,6 +31,7 @@ class LibraryRepository(private val db: StageGridDatabase) {
     }
 
     suspend fun snapshot(): LibrarySnapshot = db.withTransaction {
+        StageGridDebugLog.io("LIBRARY", "SNAPSHOT create")
         LibrarySnapshot(
             songs = db.songDao().getAll(),
             tracks = db.trackDao().getAll(),
@@ -40,6 +42,7 @@ class LibraryRepository(private val db: StageGridDatabase) {
     }
 
     suspend fun restoreSnapshot(snapshot: LibrarySnapshot) = db.withTransaction {
+        StageGridDebugLog.io("LIBRARY", "SNAPSHOT restore songs=${snapshot.songs.size} tracks=${snapshot.tracks.size} sections=${snapshot.sections.size} setlists=${snapshot.setlists.size}")
         snapshot.songs.forEach { song ->
             db.trackDao().clearForSong(song.id)
             db.sectionDao().clearForSong(song.id)
@@ -57,15 +60,25 @@ class LibraryRepository(private val db: StageGridDatabase) {
         tracks: List<TrackEntity>,
         sections: List<SectionEntity>,
     ) = db.withTransaction {
+        StageGridDebugLog.io("IMPORT", "SAVE song=${song.id} tracks=${tracks.size} sections=${sections.size} bpm=${song.bpm} gridOffsetMs=${song.gridOffsetMs}")
         db.songDao().insert(song)
         db.trackDao().insertAll(tracks)
         db.sectionDao().insertAll(sections)
     }
 
-    suspend fun updateSong(song: SongEntity) = db.songDao().update(song)
+    suspend fun updateSong(song: SongEntity) {
+        StageGridDebugLog.action("LIBRARY", "UPDATE_SONG id=${song.id} title=${song.title} bpm=${song.bpm} gridOffsetMs=${song.gridOffsetMs}")
+        db.songDao().update(song)
+    }
     suspend fun updateTrack(track: TrackEntity) = db.trackDao().update(track)
-    suspend fun saveTrack(track: TrackEntity) = db.trackDao().insertAll(listOf(track))
-    suspend fun saveSection(section: SectionEntity) = db.sectionDao().insert(section)
+    suspend fun saveTrack(track: TrackEntity) {
+        StageGridDebugLog.io("LIBRARY", "SAVE_TRACK song=${track.songId} track=${track.id} type=${track.type}")
+        db.trackDao().insertAll(listOf(track))
+    }
+    suspend fun saveSection(section: SectionEntity) {
+        StageGridDebugLog.action("SECTIONS", "SAVE song=${section.songId} section=${section.id} name=${section.name} startMs=${section.startMs} endMs=${section.endMs}")
+        db.sectionDao().insert(section)
+    }
     suspend fun getSections(songId: String): List<SectionEntity> = db.sectionDao().getForSong(songId)
 
     suspend fun replacePlaceholderSections(
@@ -80,6 +93,7 @@ class LibraryRepository(private val db: StageGridDatabase) {
             current[0].startMs == 0L &&
             current[0].endMs == durationMs
         if (!placeholder) return@withTransaction false
+        StageGridDebugLog.io("SECTIONS", "REPLACE_PLACEHOLDER song=$songId sections=${sections.size}")
         db.sectionDao().clearForSong(songId)
         db.sectionDao().insertAll(sections)
         true
@@ -93,29 +107,43 @@ class LibraryRepository(private val db: StageGridDatabase) {
         if (replacements.isEmpty()) return@withTransaction false
         val current = db.sectionDao().getForSong(songId)
         if (current != expectedCurrent) return@withTransaction false
+        StageGridDebugLog.io("SECTIONS", "REPLACE song=$songId sections=${replacements.size}")
         db.sectionDao().clearForSong(songId)
         db.sectionDao().insertAll(replacements)
         true
     }
 
-    suspend fun deleteSection(section: SectionEntity) = db.sectionDao().delete(section)
-    suspend fun deleteSong(song: SongEntity) = db.songDao().delete(song)
+    suspend fun deleteSection(section: SectionEntity) {
+        StageGridDebugLog.action("SECTIONS", "DELETE song=${section.songId} section=${section.id} name=${section.name}")
+        db.sectionDao().delete(section)
+    }
+    suspend fun deleteSong(song: SongEntity) {
+        StageGridDebugLog.action("LIBRARY", "DELETE_SONG id=${song.id} title=${song.title}")
+        db.songDao().delete(song)
+    }
 
     suspend fun createSetlist(name: String): SetlistEntity {
         val item = SetlistEntity(name = name.trim().ifBlank { "New Setlist" })
+        StageGridDebugLog.action("SETLIST", "CREATE id=${item.id} name=${item.name}")
         db.setlistDao().insert(item)
         return item
     }
 
-    suspend fun deleteSetlist(setlist: SetlistEntity) = db.setlistDao().delete(setlist)
+    suspend fun deleteSetlist(setlist: SetlistEntity) {
+        StageGridDebugLog.action("SETLIST", "DELETE id=${setlist.id} name=${setlist.name}")
+        db.setlistDao().delete(setlist)
+    }
 
     suspend fun addSongToSetlist(setlistId: String, songId: String) {
         val nextOrder = db.setlistSongDao().nextSortOrder(setlistId)
+        StageGridDebugLog.action("SETLIST", "ADD_SONG setlist=$setlistId song=$songId order=$nextOrder")
         db.setlistSongDao().insert(SetlistSongEntity(setlistId, songId, nextOrder))
     }
 
-    suspend fun removeSongFromSetlist(setlistId: String, songId: String) =
+    suspend fun removeSongFromSetlist(setlistId: String, songId: String) {
+        StageGridDebugLog.action("SETLIST", "REMOVE_SONG setlist=$setlistId song=$songId")
         db.setlistSongDao().remove(setlistId, songId)
+    }
 
     suspend fun getSetlistBundle(setlistId: String): SetlistBundle? = db.withTransaction {
         val setlist = db.setlistDao().get(setlistId) ?: return@withTransaction null
@@ -126,6 +154,7 @@ class LibraryRepository(private val db: StageGridDatabase) {
 
     suspend fun markPlayed(songId: String) {
         val song = db.songDao().get(songId) ?: return
+        StageGridDebugLog.state("LIBRARY", "MARK_PLAYED song=$songId count=${song.playCount + 1}")
         db.songDao().update(
             song.copy(
                 playCount = song.playCount + 1,
