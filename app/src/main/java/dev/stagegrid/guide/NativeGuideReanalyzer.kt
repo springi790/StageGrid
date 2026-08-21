@@ -28,22 +28,28 @@ class NativeGuideReanalyzer(
         onProgress: ((Int) -> Unit)? = null,
     ): Result {
         val startedNs = System.nanoTime()
+        val progressLock = Any()
         var lastLoggedProgressBucket = -1
+        var highestProgress = 0
         fun progress(percent: Int, stage: String) {
-            val safe = percent.coerceIn(0, 100)
-            onProgress?.invoke(safe)
-            val bucket = safe / 5
-            if (bucket != lastLoggedProgressBucket || safe == 100) {
-                lastLoggedProgressBucket = bucket
-                StageGridDebugLog.state(
-                    "NATIVE_GUIDE",
-                    "REANALYZE_PROGRESS percent=$safe stage=$stage elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}",
-                )
+            synchronized(progressLock) {
+                val safe = maxOf(highestProgress, percent.coerceIn(0, 100))
+                highestProgress = safe
+                onProgress?.invoke(safe)
+                val bucket = safe / 5
+                if (bucket != lastLoggedProgressBucket || safe == 100) {
+                    lastLoggedProgressBucket = bucket
+                    StageGridDebugLog.state(
+                        "NATIVE_GUIDE",
+                        "REANALYZE_PROGRESS percent=$safe stage=$stage elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}",
+                    )
+                }
             }
         }
 
         StageGridDebugLog.action("NATIVE_GUIDE", "REANALYZE_START song=$songId preferredLanguage=$preferredLanguage")
         progress(1, "load_song")
+        var progressSessionId: Long? = null
         try {
             val bundle = repository.getSongBundle(songId) ?: error("Song data is no longer available.")
             val song = bundle.song
@@ -68,13 +74,50 @@ class NativeGuideReanalyzer(
                 error("This song already uses the maximum track count, so a Native Guide track cannot be added.")
             }
 
+            progressSessionId = NativeGuideProgressTracker.start(
+                referenceFile = referenceFile,
+                templateFiles = samples.map { it.file },
+            ) { snapshot ->
+                when (snapshot.phase) {
+                    NativeGuideProgressTracker.Phase.TEMPLATES -> {
+                        val mapped = (3f + snapshot.fraction * 19f).roundToInt().coerceIn(3, 22)
+                        progress(mapped, "prepare_templates")
+                    }
+                    NativeGuideProgressTracker.Phase.REFERENCE -> {
+                        val mapped = (23f + snapshot.fraction * 11f).roundToInt().coerceIn(23, 34)
+                        progress(mapped, "fingerprint_reference")
+                    }
+                }
+            }
+
+            // Preparing templates first is deliberate. Previously startup cache creation and CUES.wav
+            // fingerprinting could run at the same time on separate workers, saturating an emulator
+            // and making the UI appear stuck at 6%. If another worker already owns template creation,
+            // prepare() waits for that synchronized cache build to finish before CUES.wav is touched.
+            progress(3, "prepare_templates")
+            StageGridDebugLog.state("NATIVE_GUIDE", "TEMPLATE_PREPARE_WAIT samples=${samples.size}")
+            val preparedTemplates = GuideCueAnalyzer.prepare(samples)
+            require(preparedTemplates > 0) { "The installed Guide pack did not produce any usable fingerprints." }
+            StageGridDebugLog.state(
+                "NATIVE_GUIDE",
+                "TEMPLATE_PREPARE_DONE templates=$preparedTemplates elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}",
+            )
+            progress(22, "templates_ready")
+
             val sidecar = File(filesDir, "library/$songId/native-guide-events.json")
             val previousProposals = NativeGuideEventStore.readSectionProposals(sidecar)
             val autoSectionsUntouched = matchesStoredAutoSections(bundle.sections, previousProposals, song.durationMs)
 
+            progress(23, "fingerprint_reference")
             StageGridDebugLog.state("NATIVE_GUIDE", "ANALYZE_START reference=${referenceFile.name}")
             val analysis = GuideCueAnalyzer.analyze(referenceFile, samples) { fraction ->
-                progress((5f + fraction * 60f).roundToInt().coerceIn(5, 65), "analyze")
+                // 0.00..0.12 is the reference WAV fingerprint/candidate setup and is reported by the
+                // low-level tracker above. From 0.12 onward this callback represents language probe
+                // and candidate/template matching, so map only that portion to avoid fake jumps.
+                if (fraction >= 0.12f) {
+                    val normalized = ((fraction - 0.12f) / 0.88f).coerceIn(0f, 1f)
+                    progress((35f + normalized * 30f).roundToInt().coerceIn(35, 65), "match")
+                }
             }
             StageGridDebugLog.state(
                 "NATIVE_GUIDE",
@@ -228,6 +271,8 @@ class NativeGuideReanalyzer(
                 t,
             )
             throw t
+        } finally {
+            progressSessionId?.let(NativeGuideProgressTracker::stop)
         }
     }
 
