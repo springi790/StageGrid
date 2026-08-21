@@ -43,7 +43,13 @@ add_library(stagegrid_audio SHARED
 )
 
 target_compile_features(stagegrid_audio PRIVATE cxx_std_20)
-target_compile_options(stagegrid_audio PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(stagegrid_audio PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -include
+    "${CMAKE_CURRENT_SOURCE_DIR}/StageGridSignalsmithPolicy.h"
+)
 target_include_directories(stagegrid_audio PRIVATE
     ${signalsmith_stretch_SOURCE_DIR}
     ${STAGEGRID_SIGNALSMITH_INCLUDE_ROOT}
