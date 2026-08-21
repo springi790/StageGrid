@@ -19,8 +19,9 @@ import java.util.zip.ZipInputStream
  * they are licensed to use through Android's document picker. Only WAV files inside recognized
  * Guide folders are copied; click samples, Ableton sidecars and macOS metadata are ignored.
  *
- * Native Guide is experimental. Installed files remain on disk while the feature is disabled, but
- * [listSamples] and [findSample] intentionally expose no playable samples until the user opts in.
+ * Native Guide is experimental. Installed files and their lightweight index remain available for
+ * startup/cache preparation while the experiment is off, but playable sample resolution is gated.
+ * This avoids a DataStore-startup race while still preventing Native Guide cues from being emitted.
  */
 class GuidePackManager(private val context: Context) {
     enum class CueKind { SECTION, COUNT, DYNAMIC }
@@ -60,9 +61,8 @@ class GuidePackManager(private val context: Context) {
         )
     }
 
-    /** Returns playable Native Guide samples only when the user explicitly enabled the experiment. */
-    fun listSamples(): List<GuideSample> =
-        if (NativeGuideFeatureGate.enabled) installedSamples() else emptyList()
+    /** Returns the installed sample index. Emission remains gated by [findSample]. */
+    fun listSamples(): List<GuideSample> = installedSamples()
 
     private fun installedSamples(): List<GuideSample> {
         cachedSamples?.let { return it }
@@ -89,12 +89,16 @@ class GuidePackManager(private val context: Context) {
         }
     }
 
-    fun findSample(language: String, key: String): GuideSample? =
-        listSamples().firstOrNull { it.language == language && it.key == key }
+    fun findSample(language: String, key: String): GuideSample? {
+        if (!NativeGuideFeatureGate.enabled) return null
+        return installedSamples().firstOrNull { it.language == language && it.key == key }
+    }
 
-    fun findSample(language: String, key: String, kind: CueKind): GuideSample? =
-        listSamples().firstOrNull { it.language == language && it.key == key && it.kind == kind }
-            ?: findSample(language, key)
+    fun findSample(language: String, key: String, kind: CueKind): GuideSample? {
+        if (!NativeGuideFeatureGate.enabled) return null
+        return installedSamples().firstOrNull { it.language == language && it.key == key && it.kind == kind }
+            ?: installedSamples().firstOrNull { it.language == language && it.key == key }
+    }
 
     /** Call after a backup restore replaces the private Guide-pack directory. */
     fun invalidateCache() {
