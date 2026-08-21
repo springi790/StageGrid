@@ -21,10 +21,36 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.ui.StageGridDspUiState
+import dev.stagegrid.ui.StageGridViewModel
+import dev.stagegrid.ui.dspState
+import dev.stagegrid.ui.resetDsp
+import dev.stagegrid.ui.setPitchSemitones
+import dev.stagegrid.ui.setTempoRatio
 import java.util.Locale
 import kotlin.math.roundToInt
+
+@Composable
+fun StageGridDspControlHost(
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    stageGridViewModel: StageGridViewModel = viewModel(),
+) {
+    val dsp by stageGridViewModel.dspState.collectAsStateWithLifecycle()
+    val player by stageGridViewModel.player.collectAsStateWithLifecycle()
+    DspControlPanel(
+        dsp = dsp,
+        originalBpm = player.song?.bpm,
+        onTempo = stageGridViewModel::setTempoRatio,
+        onPitch = stageGridViewModel::setPitchSemitones,
+        onReset = stageGridViewModel::resetDsp,
+        enabled = enabled && player.song != null,
+        modifier = modifier,
+    )
+}
 
 @Composable
 fun DspControlPanel(
