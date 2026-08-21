@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_no_matches_title">No encontramos coincidencias</string>
+    <string name="library_no_matches_desc">Prueba con otro título, artista o tonalidad.</string>
+    <string name="library_clear_search">Limpiar búsqueda</string>
+    <string name="library_import_hint">Importa un ZIP de multitracks, una carpeta o archivos WAV para comenzar.</string>
+    <string name="workspace_ready_hint">Carga una canción desde Biblioteca para abrir el espacio de interpretación.</string>
+    <string name="workspace_section_queued_hint">Cambio preparado para el siguiente límite musical.</string>
+    <string name="ui_selected">Seleccionado</string>
+    <string name="ui_queued">En cola</string>
+</resources>
