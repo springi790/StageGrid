@@ -259,6 +259,11 @@ private fun PerformanceSurface(
             )
         }
 
+        StageGridDspControlHost(
+            enabled = !state.crossfadeInProgress && !state.isCountingIn,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.workspace_now), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
