@@ -26,6 +26,8 @@ class StageGridApplication : Application() {
         private set
     lateinit var audioDevices: AudioDeviceManager
         private set
+    lateinit var nativeAudio: NativeAudioEngine
+        private set
     lateinit var audio: AudioEngineController
         private set
     lateinit var settings: AppSettingsRepository
@@ -48,7 +50,8 @@ class StageGridApplication : Application() {
         nativeGuideReanalyzer = NativeGuideReanalyzer(filesDir, repository, guidePacks)
         backupManager = LibraryBackupManager(this, repository)
         audioDevices = AudioDeviceManager(this)
-        audio = AudioEngineController(this, repository, NativeAudioEngine(), guidePacks)
+        nativeAudio = NativeAudioEngine()
+        audio = AudioEngineController(this, repository, nativeAudio, guidePacks)
         sessionStore = PerformanceSessionStore(filesDir)
     }
 }
