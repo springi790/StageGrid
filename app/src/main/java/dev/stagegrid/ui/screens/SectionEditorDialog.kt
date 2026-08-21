@@ -65,6 +65,7 @@ fun SectionEditorDialog(
     var snap by remember { mutableStateOf(GridSnap.BAR) }
     var showPrecise by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
+    var cueCountEnabled by remember { mutableStateOf(false) }
     var startBar by remember { mutableStateOf("1") }
     var startBeat by remember { mutableStateOf("1") }
     var endBar by remember { mutableStateOf("1") }
@@ -86,6 +87,7 @@ fun SectionEditorDialog(
             val start = grid.positionAt(selected.startMs)
             val end = grid.positionAt(selected.endMs)
             name = selected.name
+            cueCountEnabled = selected.cueCountEnabled
             startBar = start.bar.toString()
             startBeat = start.beat.toString()
             endBar = end.bar.toString()
@@ -215,6 +217,32 @@ fun SectionEditorDialog(
                             }
                         }
 
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                FilterChip(
+                                    selected = cueCountEnabled,
+                                    onClick = { cueCountEnabled = !cueCountEnabled },
+                                    enabled = !isPlaying,
+                                    label = { Text(stringResource(R.string.section_cue_count)) },
+                                )
+                                Text(
+                                    stringResource(R.string.section_cue_count_help),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (cueCountEnabled) {
+                                    Text(
+                                        stringResource(R.string.section_cue_count_example),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                            }
+                        }
+
                         val startText = "$startBar.$startBeat"
                         val endText = "$endBar.$endBeat"
                         Card(Modifier.fillMaxWidth()) {
@@ -298,7 +326,14 @@ fun SectionEditorDialog(
                                     val newEnd = grid.msAt(endPosition).coerceIn(0L, safeDuration)
                                     validationError = newEnd <= newStart
                                     if (!validationError) {
-                                        onSave(section.copy(name = name.trim().ifBlank { section.name }, startMs = newStart, endMs = newEnd))
+                                        onSave(
+                                            section.copy(
+                                                name = name.trim().ifBlank { section.name },
+                                                startMs = newStart,
+                                                endMs = newEnd,
+                                                cueCountEnabled = cueCountEnabled,
+                                            ),
+                                        )
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
