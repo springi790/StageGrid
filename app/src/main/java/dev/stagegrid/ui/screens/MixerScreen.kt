@@ -221,6 +221,10 @@ fun MixerScreen(
             }
         }
 
+        item {
+            GuideSourceControlHost(modifier = Modifier.fillMaxWidth())
+        }
+
         if (showAdvancedRouting) {
             item {
                 StageGridPanel(accent = MaterialTheme.colorScheme.tertiary) {
