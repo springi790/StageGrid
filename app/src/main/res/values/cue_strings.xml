@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="guide_source">Guía</string>
+    <string name="guide_source_original">Original</string>
+    <string name="guide_source_cue">Cue</string>
+    <string name="guide_source_cue_help">Cue usa las secciones manuales y los samples de guía instalados.</string>
+    <string name="guide_source_cue_unavailable">Instala samples de guía para usar Cue.</string>
+    <string name="section_cue_count">Añadir conteo a la sección</string>
+    <string name="section_cue_count_help">En el compás de entrada: sección en beat 1 y conteo desde beat 2.</string>
+    <string name="section_cue_count_example">Ejemplo: Intro · 2 · 3 · 4</string>
+</resources>
