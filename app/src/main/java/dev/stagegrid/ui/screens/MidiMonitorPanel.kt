@@ -1,11 +1,11 @@
 package dev.stagegrid.ui.screens
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -123,15 +123,13 @@ private fun MidiDeviceRow(
     connectionState: MidiConnectionState,
     onConnect: (Int) -> Unit,
 ) {
+    val transportText = transportLabel(device.transport)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text(device.name, fontWeight = FontWeight.Bold)
                 Text(
-                    buildString {
-                        append(transportLabel(device.transport))
-                        device.manufacturer?.let { append(" · ").append(it) }
-                    },
+                    if (device.manufacturer.isNullOrBlank()) transportText else "$transportText · ${device.manufacturer}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
