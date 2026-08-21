@@ -67,6 +67,10 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        // Debug logging touches android.util.Log. Local JVM unit tests need framework stubs to
+        // return defaults so Guide analysis reaches the real fingerprint path instead of being
+        // converted into an empty recognition result by a "not mocked" Log exception.
+        unitTests.isReturnDefaultValues = true
     }
 }
 
