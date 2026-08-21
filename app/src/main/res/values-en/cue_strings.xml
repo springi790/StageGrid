@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="guide_source">Guide</string>
+    <string name="guide_source_original">Original</string>
+    <string name="guide_source_cue">Cue</string>
+    <string name="guide_source_cue_help">Cue uses the manual sections and the installed Guide samples.</string>
+    <string name="guide_source_cue_unavailable">Install Guide samples to use Cue.</string>
+    <string name="section_cue_count">Add count to this section</string>
+    <string name="section_cue_count_help">In the lead-in bar: section on beat 1, then spoken count from beat 2.</string>
+    <string name="section_cue_count_example">Example: Intro · 2 · 3 · 4</string>
+</resources>
