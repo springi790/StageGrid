@@ -27,6 +27,10 @@
     <string name="grid_calibration_current">ACTUAL</string>
     <string name="grid_calibration_delta">AJUSTE</string>
     <string name="grid_calibration_reset">Restablecer</string>
+    <string name="grid_calibration_unit_ms">Milisegundos</string>
+    <string name="grid_calibration_unit_beats">Beats</string>
+    <string name="grid_calibration_beats_requires_bpm">El modo Beats necesita un BPM válido entre 20 y 400.</string>
+    <string name="grid_calibration_beat_tip">%1$.2f BPM · 1 beat = %2$.1f ms. El deslizador cubre ±1 beat y los botones ajustan 1 o ¼ de beat.</string>
     <string name="grid_calibration_tip">Usa el deslizador para aproximar y los botones de 1 ms / 10 ms para afinar. El nuevo valor se aplica al Click, secciones y posiciones musicales al guardar.</string>
     <string name="labs_title">StageGrid Labs</string>
     <string name="labs_badge">EXPERIMENTAL</string>
