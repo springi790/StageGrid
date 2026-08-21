@@ -23,7 +23,55 @@ data class MidiDeviceDescriptor(
     val serialNumber: String?,
     val transport: MidiTransport,
     val inputPorts: List<MidiPortDescriptor>,
+    /** Device output ports are inputs from StageGrid's point of view. */
     val outputPorts: List<MidiPortDescriptor>,
+)
+
+enum class MidiConnectionState {
+    DISCONNECTED,
+    OPENING,
+    CONNECTED,
+    ERROR,
+}
+
+enum class MidiMessageKind {
+    NOTE_ON,
+    NOTE_OFF,
+    POLY_PRESSURE,
+    CONTROL_CHANGE,
+    PROGRAM_CHANGE,
+    CHANNEL_PRESSURE,
+    PITCH_BEND,
+    SONG_POSITION,
+    CLOCK,
+    START,
+    CONTINUE,
+    STOP,
+    SYSEX,
+    SYSTEM,
+    UNKNOWN,
+}
+
+data class MidiMessageEvent(
+    val kind: MidiMessageKind,
+    val status: Int,
+    /** 1-based channel for channel messages, null for system messages. */
+    val channel: Int? = null,
+    val data1: Int? = null,
+    val data2: Int? = null,
+    val timestampNanos: Long = 0L,
+)
+
+data class MidiMonitorState(
+    val connectionState: MidiConnectionState = MidiConnectionState.DISCONNECTED,
+    val deviceStableKey: String? = null,
+    val deviceName: String? = null,
+    val androidDeviceId: Int? = null,
+    val portNumber: Int? = null,
+    val lastMessage: MidiMessageEvent? = null,
+    val messageCount: Long = 0L,
+    val clockCount: Long = 0L,
+    val error: String? = null,
 )
 
 /**
