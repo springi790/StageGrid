@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import dev.stagegrid.importer.WavMetadataReader
+import dev.stagegrid.settings.NativeGuideFeatureGate
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -17,6 +18,9 @@ import java.util.zip.ZipInputStream
  * StageGrid deliberately does not bundle third-party Guide audio. Users install a sample pack
  * they are licensed to use through Android's document picker. Only WAV files inside recognized
  * Guide folders are copied; click samples, Ableton sidecars and macOS metadata are ignored.
+ *
+ * Native Guide is experimental. Installed files remain on disk while the feature is disabled, but
+ * [listSamples] and [findSample] intentionally expose no playable samples until the user opts in.
  */
 class GuidePackManager(private val context: Context) {
     enum class CueKind { SECTION, COUNT, DYNAMIC }
@@ -45,8 +49,9 @@ class GuidePackManager(private val context: Context) {
     @Volatile
     private var cachedSamples: List<GuideSample>? = null
 
+    /** Reports what is installed even when the experimental feature is switched off. */
     fun status(): Status {
-        val samples = listSamples()
+        val samples = installedSamples()
         return Status(
             installed = samples.isNotEmpty(),
             sampleCount = samples.size,
@@ -55,7 +60,11 @@ class GuidePackManager(private val context: Context) {
         )
     }
 
-    fun listSamples(): List<GuideSample> {
+    /** Returns playable Native Guide samples only when the user explicitly enabled the experiment. */
+    fun listSamples(): List<GuideSample> =
+        if (NativeGuideFeatureGate.enabled) installedSamples() else emptyList()
+
+    private fun installedSamples(): List<GuideSample> {
         cachedSamples?.let { return it }
         return synchronized(this) {
             cachedSamples?.let { return@synchronized it }
@@ -94,6 +103,7 @@ class GuidePackManager(private val context: Context) {
     }
 
     fun resolveOutputLanguage(preferred: String, detected: String?): String? {
+        if (!NativeGuideFeatureGate.enabled) return null
         val available = status().languages
         if (available.isEmpty()) return null
         if (preferred != "auto" && preferred in available) return preferred
