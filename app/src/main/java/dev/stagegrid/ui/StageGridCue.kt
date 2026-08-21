@@ -5,7 +5,6 @@ import dev.stagegrid.StageGridApplication
 import dev.stagegrid.audio.GuideSource
 import dev.stagegrid.debug.StageGridDebugLog
 import dev.stagegrid.guide.GuideCueLoader
-import dev.stagegrid.guide.GuidePackManager
 import dev.stagegrid.guide.ManualSectionCuePlanner
 import dev.stagegrid.model.OutputBus
 import dev.stagegrid.model.SectionEntity
@@ -66,6 +65,11 @@ private class StageGridCueController(private val viewModel: StageGridViewModel) 
 
     fun setSource(source: GuideSource) {
         if (_state.value.source == source) return
+        if (source == GuideSource.CUE && !app.guidePacks.status().installed) {
+            StageGridDebugLog.warning("CUE", "SOURCE_CUE rejected: no Guide Pack installed")
+            _state.value = _state.value.copy(error = "Install Guide samples before selecting Cue.")
+            return
+        }
         StageGridDebugLog.action("CUE", "SOURCE ${_state.value.source.name} -> ${source.name}")
         invalidateSchedule("source_change")
         _state.value = _state.value.copy(source = source, preparing = false, error = null)
@@ -105,7 +109,7 @@ private class StageGridCueController(private val viewModel: StageGridViewModel) 
 
     private fun maybeSchedule(player: dev.stagegrid.audio.PlayerState) {
         if (_state.value.source != GuideSource.CUE || !player.guideEnabled || !player.isPlaying) {
-            if (!player.isPlaying || !player.guideEnabled) invalidateSchedule("inactive")
+            if ((!player.isPlaying || !player.guideEnabled) && hasScheduledWork()) invalidateSchedule("inactive")
             return
         }
         val song = player.song ?: return
@@ -258,14 +262,17 @@ private class StageGridCueController(private val viewModel: StageGridViewModel) 
         )
     }
 
+    private fun hasScheduledWork(): Boolean =
+        scheduledToken != null || renderJob?.isActive == true || _state.value.scheduledSectionId != null
+
     private fun invalidateSchedule(reason: String) {
-        val hadWork = scheduledToken != null || renderJob?.isActive == true
+        if (!hasScheduledWork()) return
         scheduledToken = null
         renderSerial.incrementAndGet()
         renderJob?.cancel()
         renderJob = null
         app.nativeAudio.clearGuideCue()
-        if (hadWork) StageGridDebugLog.state("CUE", "INVALIDATE reason=$reason")
+        StageGridDebugLog.state("CUE", "INVALIDATE reason=$reason")
         _state.value = _state.value.copy(preparing = false, scheduledSectionId = null)
     }
 
