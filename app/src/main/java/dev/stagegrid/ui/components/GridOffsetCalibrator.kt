@@ -25,6 +25,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.stagegrid.R
+import dev.stagegrid.debug.StageGridDebugLog
 import java.util.Locale
 import kotlin.math.roundToLong
 
@@ -63,6 +64,17 @@ fun GridOffsetCalibrator(
     val minimumValue = reference + minDelta
     val maximumValue = reference + maxDelta
 
+    fun applyOffset(source: String, requestedMs: Long) {
+        val next = requestedMs.coerceIn(minimumValue, maximumValue)
+        if (next != current) {
+            StageGridDebugLog.action(
+                "GRID",
+                "OFFSET source=$source unit=${if (beatMode) "beats" else "ms"} oldMs=$current newMs=$next deltaMs=${next - reference} bpm=${validBpm ?: 0.0}",
+            )
+        }
+        onValueChange(next)
+    }
+
     Card(modifier.fillMaxWidth()) {
         Column(
             Modifier.fillMaxWidth().padding(14.dp),
@@ -81,13 +93,21 @@ fun GridOffsetCalibrator(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = !beatMode,
-                    onClick = { unit = CalibrationUnit.MILLISECONDS },
+                    onClick = {
+                        StageGridDebugLog.action("GRID", "UNIT ms")
+                        unit = CalibrationUnit.MILLISECONDS
+                    },
                     label = { Text(stringResource(R.string.grid_calibration_unit_ms)) },
                     modifier = Modifier.weight(1f),
                 )
                 FilterChip(
                     selected = beatMode,
-                    onClick = { if (beatDurationMs != null) unit = CalibrationUnit.BEATS },
+                    onClick = {
+                        if (beatDurationMs != null) {
+                            StageGridDebugLog.action("GRID", "UNIT beats bpm=$validBpm")
+                            unit = CalibrationUnit.BEATS
+                        }
+                    },
                     enabled = beatDurationMs != null,
                     label = { Text(stringResource(R.string.grid_calibration_unit_beats)) },
                     modifier = Modifier.weight(1f),
@@ -148,9 +168,7 @@ fun GridOffsetCalibrator(
 
             Slider(
                 value = sliderDelta.toFloat(),
-                onValueChange = { raw ->
-                    onValueChange((reference + raw.roundToLong()).coerceIn(minimumValue, maximumValue))
-                },
+                onValueChange = { raw -> applyOffset("slider", reference + raw.roundToLong()) },
                 valueRange = minDelta.toFloat()..maxDelta.toFloat(),
             )
 
@@ -159,22 +177,14 @@ fun GridOffsetCalibrator(
                 val beatStep = beatMs.roundToLong().coerceAtLeast(1L)
                 val quarterBeatStep = (beatMs / 4.0).roundToLong().coerceAtLeast(1L)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    NudgeButton("−1B", Modifier.weight(1f)) {
-                        onValueChange((current - beatStep).coerceIn(minimumValue, maximumValue))
-                    }
-                    NudgeButton("−¼B", Modifier.weight(1f)) {
-                        onValueChange((current - quarterBeatStep).coerceIn(minimumValue, maximumValue))
-                    }
+                    NudgeButton("−1B", Modifier.weight(1f)) { applyOffset("-1beat", current - beatStep) }
+                    NudgeButton("−¼B", Modifier.weight(1f)) { applyOffset("-quarterBeat", current - quarterBeatStep) }
                     OutlinedButton(
-                        onClick = { onValueChange(reference) },
+                        onClick = { applyOffset("reset", reference) },
                         modifier = Modifier.weight(1.7f),
                     ) { Text(stringResource(R.string.grid_calibration_reset)) }
-                    NudgeButton("+¼B", Modifier.weight(1f)) {
-                        onValueChange((current + quarterBeatStep).coerceIn(minimumValue, maximumValue))
-                    }
-                    NudgeButton("+1B", Modifier.weight(1f)) {
-                        onValueChange((current + beatStep).coerceIn(minimumValue, maximumValue))
-                    }
+                    NudgeButton("+¼B", Modifier.weight(1f)) { applyOffset("+quarterBeat", current + quarterBeatStep) }
+                    NudgeButton("+1B", Modifier.weight(1f)) { applyOffset("+1beat", current + beatStep) }
                 }
                 Text(
                     stringResource(R.string.grid_calibration_beat_tip, validBpm ?: 0.0, beatMs),
@@ -183,22 +193,14 @@ fun GridOffsetCalibrator(
                 )
             } else {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    NudgeButton("−10", Modifier.weight(1f)) {
-                        onValueChange((current - 10L).coerceIn(minimumValue, maximumValue))
-                    }
-                    NudgeButton("−1", Modifier.weight(1f)) {
-                        onValueChange((current - 1L).coerceIn(minimumValue, maximumValue))
-                    }
+                    NudgeButton("−10", Modifier.weight(1f)) { applyOffset("-10ms", current - 10L) }
+                    NudgeButton("−1", Modifier.weight(1f)) { applyOffset("-1ms", current - 1L) }
                     OutlinedButton(
-                        onClick = { onValueChange(reference) },
+                        onClick = { applyOffset("reset", reference) },
                         modifier = Modifier.weight(1.7f),
                     ) { Text(stringResource(R.string.grid_calibration_reset)) }
-                    NudgeButton("+1", Modifier.weight(1f)) {
-                        onValueChange((current + 1L).coerceIn(minimumValue, maximumValue))
-                    }
-                    NudgeButton("+10", Modifier.weight(1f)) {
-                        onValueChange((current + 10L).coerceIn(minimumValue, maximumValue))
-                    }
+                    NudgeButton("+1", Modifier.weight(1f)) { applyOffset("+1ms", current + 1L) }
+                    NudgeButton("+10", Modifier.weight(1f)) { applyOffset("+10ms", current + 10L) }
                 }
                 Text(
                     stringResource(R.string.grid_calibration_tip),
@@ -217,8 +219,6 @@ private fun NudgeButton(label: String, modifier: Modifier = Modifier, onClick: (
 
 @Composable
 private fun GridOffsetRuler(deltaMs: Long, minDeltaMs: Long, maxDeltaMs: Long) {
-    // Keep the ruler deliberately high-contrast. This control is used for fine alignment in dark
-    // stage environments, so the grid itself should remain visible independently of theme outlines.
     val line = Color.White.copy(alpha = 0.62f)
     val center = Color.White.copy(alpha = 0.96f)
     val marker = Color.White
