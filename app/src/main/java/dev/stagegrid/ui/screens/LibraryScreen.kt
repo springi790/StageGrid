@@ -12,7 +12,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -26,9 +25,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.stagegrid.R
 import dev.stagegrid.model.SongEntity
+import dev.stagegrid.ui.components.StageGridMetric
+import dev.stagegrid.ui.components.StageGridPanel
+import dev.stagegrid.ui.components.StageGridPill
+import dev.stagegrid.ui.components.StageGridScreenHeader
+import dev.stagegrid.ui.theme.StageGridColors
 import java.util.Locale
 
 @Composable
@@ -53,40 +58,76 @@ fun LibraryScreen(
         }
     }
 
-    Column(modifier.fillMaxSize().padding(16.dp)) {
-        Text(stringResource(R.string.library), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(stringResource(R.string.local_multitrack_player), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(16.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(onClick = onImportZip, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.import_zip)) }
-            OutlinedButton(onClick = onImportFolder, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.import_folder)) }
-            OutlinedButton(onClick = onImportFiles, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.import_files)) }
+    LazyColumn(
+        modifier.fillMaxSize().padding(horizontal = 14.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 14.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            StageGridScreenHeader(
+                kicker = stringResource(R.string.brand_library_kicker),
+                title = stringResource(R.string.library),
+                subtitle = stringResource(R.string.local_multitrack_player),
+                badge = stringResource(R.string.library_song_count, songs.size),
+            )
         }
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = onOpenCloud, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.cloud_folder_button))
-        }
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text(stringResource(R.string.search_library)) },
-        )
-        Spacer(Modifier.height(12.dp))
-        if (visible.isEmpty()) {
-            Text(stringResource(R.string.no_songs), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(visible, key = { it.id }) { song ->
-                    SongCard(
-                        song = song,
-                        onLoadSong = onLoadSong,
-                        onEditSong = onEditSong,
-                        onDeleteSong = onDeleteSong,
-                    )
+
+        item {
+            StageGridPanel(accent = MaterialTheme.colorScheme.primary) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text(stringResource(R.string.library_import_primary), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.library_sources), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        StageGridPill("WAV · ZIP", MaterialTheme.colorScheme.primary)
+                    }
+                    Button(onClick = onImportZip, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.import_zip), fontWeight = FontWeight.Bold)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = onImportFolder, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.import_folder))
+                        }
+                        OutlinedButton(onClick = onImportFiles, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.import_files))
+                        }
+                    }
+                    TextButton(onClick = onOpenCloud, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.cloud_folder_button))
+                    }
                 }
+            }
+        }
+
+        item {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text(stringResource(R.string.search_library)) },
+                leadingIcon = { Text("⌕", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary) },
+            )
+        }
+
+        if (visible.isEmpty()) {
+            item {
+                StageGridPanel {
+                    Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text(stringResource(R.string.library_empty_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.library_empty_desc), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        } else {
+            items(visible, key = { it.id }) { song ->
+                SongCard(
+                    song = song,
+                    onLoadSong = onLoadSong,
+                    onEditSong = onEditSong,
+                    onDeleteSong = onDeleteSong,
+                )
             }
         }
     }
@@ -99,20 +140,54 @@ private fun SongCard(
     onEditSong: (SongEntity) -> Unit,
     onDeleteSong: (SongEntity) -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(song.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            if (song.artist.isNotBlank()) Text(song.artist, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(song.bpm?.let { stringResource(R.string.bpm_value, it) } ?: stringResource(R.string.bpm_unknown))
-                Text(song.musicalKey?.let { stringResource(R.string.key_value, it) } ?: stringResource(R.string.key_unknown))
-                Text(stringResource(R.string.duration_value, formatDuration(song.durationMs)))
+    StageGridPanel {
+        Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        song.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        song.artist.ifBlank { "—" },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                StageGridPill(stringResource(R.string.brand_ready), StageGridColors.Mint)
             }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onLoadSong(song.id) }) { Text(stringResource(R.string.load)) }
-                OutlinedButton(onClick = { onEditSong(song) }) { Text(stringResource(R.string.edit)) }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                StageGridMetric(
+                    label = "BPM",
+                    value = song.bpm?.let { if (it % 1.0 == 0.0) it.toInt().toString() else String.format(Locale.ROOT, "%.1f", it) } ?: "—",
+                    modifier = Modifier.weight(1f),
+                )
+                StageGridMetric(
+                    label = stringResource(R.string.key),
+                    value = song.musicalKey ?: "—",
+                    modifier = Modifier.weight(1f),
+                    accent = MaterialTheme.colorScheme.tertiary,
+                )
+                StageGridMetric(
+                    label = "TIME",
+                    value = formatDuration(song.durationMs),
+                    modifier = Modifier.weight(1f),
+                    accent = MaterialTheme.colorScheme.secondary,
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { onLoadSong(song.id) }, modifier = Modifier.weight(1.25f)) {
+                    Text(stringResource(R.string.load), fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(onClick = { onEditSong(song) }, modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.edit))
+                }
                 TextButton(
                     onClick = { onDeleteSong(song) },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
