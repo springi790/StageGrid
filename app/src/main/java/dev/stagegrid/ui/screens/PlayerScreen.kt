@@ -37,6 +37,7 @@ import dev.stagegrid.audio.PlayerState
 import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.StereoRoute
 import dev.stagegrid.music.MusicalGrid
+import dev.stagegrid.settings.NativeGuideFeatureGate
 import dev.stagegrid.ui.StageGridViewModel
 import dev.stagegrid.ui.components.SongWaveformOverview
 
@@ -286,10 +287,10 @@ fun PlayerScreen(
             }
         }
 
-        if ((nativeGuide.available || nativeGuide.canReanalyze) && nativeGuide.songId == song.id) {
+        if (NativeGuideFeatureGate.enabled && (nativeGuide.available || nativeGuide.canReanalyze) && nativeGuide.songId == song.id) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.native_guide_song_title), fontWeight = FontWeight.Bold)
+                    Text("${stringResource(R.string.native_guide_song_title)} · ${stringResource(R.string.labs_badge)}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
                     if (nativeGuide.available) {
                         Text(stringResource(R.string.native_guide_events_count, nativeGuide.eventCount), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
