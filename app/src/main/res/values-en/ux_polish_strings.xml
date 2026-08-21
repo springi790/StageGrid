@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_no_matches_title">No matches found</string>
+    <string name="library_no_matches_desc">Try another title, artist, or key.</string>
+    <string name="library_clear_search">Clear search</string>
+    <string name="library_import_hint">Import a multitrack ZIP, folder, or WAV files to get started.</string>
+    <string name="workspace_ready_hint">Load a song from Library to open the performance workspace.</string>
+    <string name="workspace_section_queued_hint">Change prepared for the next musical boundary.</string>
+    <string name="ui_selected">Selected</string>
+    <string name="ui_queued">Queued</string>
+</resources>
