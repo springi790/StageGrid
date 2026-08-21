@@ -27,6 +27,11 @@ class NativeAudioEngine : Closeable {
         val pathSwaps: Long,
         val pathSwapMisses: Long,
         val pathChangePending: Boolean,
+        val tempoRatio: Float,
+        val pitchSemitones: Float,
+        val dspActive: Boolean,
+        val dspCpuLoad: Float,
+        val dspLatencyMs: Int,
         val lastError: String,
     )
 
@@ -85,14 +90,20 @@ class NativeAudioEngine : Closeable {
         clickSubdivision: Int,
         clickRoute: StereoRoute,
         clickBus: OutputBus,
+        tempoRatio: Float = 1f,
+        pitchSemitones: Float = 0f,
     ) {
         if (!standbyReady) return
-        StageGridDebugLog.audio("PRELOAD_CONFIG click=$clickEnabled guide=$guideEnabled subdivision=$clickSubdivision route=$clickRoute bus=$clickBus")
+        StageGridDebugLog.audio(
+            "PRELOAD_CONFIG click=$clickEnabled guide=$guideEnabled subdivision=$clickSubdivision route=$clickRoute bus=$clickBus tempo=$tempoRatio pitch=$pitchSemitones",
+        )
         nativeSetClickEnabled(standbyHandle, clickEnabled)
         nativeSetGuideEnabled(standbyHandle, guideEnabled)
         nativeSetClickSubdivision(standbyHandle, clickSubdivision)
         nativeSetClickRoute(standbyHandle, clickRoute.nativeCode)
         nativeSetClickOutputBus(standbyHandle, clickBus.nativeCode)
+        nativeSetTempoRatio(standbyHandle, tempoRatio.coerceIn(MIN_TEMPO_RATIO, MAX_TEMPO_RATIO))
+        nativeSetPitchSemitones(standbyHandle, pitchSemitones.coerceIn(MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES))
     }
 
     fun hasPreloadedSong(): Boolean = standbyReady
@@ -236,6 +247,38 @@ class NativeAudioEngine : Closeable {
         StageGridDebugLog.action("ROUTING", "CLICK_BUS=$bus")
         nativeSetClickOutputBus(handle, bus.nativeCode)
     }
+    fun setTempoRatio(value: Float): Diagnostics {
+        val safe = value.coerceIn(MIN_TEMPO_RATIO, MAX_TEMPO_RATIO)
+        val before = nativeTempoRatio(handle)
+        StageGridDebugLog.action("DSP", "TEMPO ratio=$before -> $safe percent=${(safe * 100f)}")
+        nativeSetTempoRatio(handle, safe)
+        val result = diagnostics()
+        StageGridDebugLog.state(
+            "DSP",
+            "TEMPO_APPLIED ratio=${result.tempoRatio} active=${result.dspActive} latencyMs=${result.dspLatencyMs} dspCpu=${result.dspCpuLoad}",
+        )
+        return result
+    }
+    fun setPitchSemitones(value: Float): Diagnostics {
+        val safe = value.coerceIn(MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES)
+        val before = nativePitchSemitones(handle)
+        StageGridDebugLog.action("DSP", "PITCH semitones=$before -> $safe")
+        nativeSetPitchSemitones(handle, safe)
+        val result = diagnostics()
+        StageGridDebugLog.state(
+            "DSP",
+            "PITCH_APPLIED semitones=${result.pitchSemitones} active=${result.dspActive} latencyMs=${result.dspLatencyMs} dspCpu=${result.dspCpuLoad}",
+        )
+        return result
+    }
+    fun resetDsp(): Diagnostics {
+        StageGridDebugLog.action("DSP", "RESET tempo=1.0 pitch=0.0")
+        nativeSetTempoRatio(handle, 1f)
+        nativeSetPitchSemitones(handle, 0f)
+        val result = diagnostics()
+        StageGridDebugLog.state("DSP", "RESET_APPLIED active=${result.dspActive}")
+        return result
+    }
     fun setLoop(enabled: Boolean, startMs: Long, endMs: Long) {
         StageGridDebugLog.action("LOOP", "SET enabled=$enabled startMs=$startMs endMs=$endMs")
         nativeSetLoop(handle, enabled, startMs, endMs)
@@ -309,6 +352,11 @@ class NativeAudioEngine : Closeable {
         pathSwaps = nativePathSwaps(handle),
         pathSwapMisses = nativePathSwapMisses(handle),
         pathChangePending = nativePathChangePending(handle),
+        tempoRatio = nativeTempoRatio(handle),
+        pitchSemitones = nativePitchSemitones(handle),
+        dspActive = nativeDspActive(handle),
+        dspCpuLoad = nativeDspCpuLoad(handle),
+        dspLatencyMs = nativeDspLatencyMs(handle).coerceAtLeast(0),
         lastError = nativeLastError(handle),
     )
 
@@ -349,6 +397,8 @@ class NativeAudioEngine : Closeable {
     private external fun nativeSetClickSubdivision(handle: Long, subdivisionsPerBeat: Int)
     private external fun nativeSetClickRoute(handle: Long, route: Int)
     private external fun nativeSetClickOutputBus(handle: Long, bus: Int)
+    private external fun nativeSetTempoRatio(handle: Long, ratio: Float)
+    private external fun nativeSetPitchSemitones(handle: Long, semitones: Float)
     private external fun nativeSetLoop(handle: Long, enabled: Boolean, startMs: Long, endMs: Long)
     private external fun nativeScheduleJump(handle: Long, atMs: Long, targetMs: Long, disableLoopAfterJump: Boolean)
     private external fun nativeClearScheduledJump(handle: Long)
@@ -370,6 +420,11 @@ class NativeAudioEngine : Closeable {
     private external fun nativePathSwaps(handle: Long): Long
     private external fun nativePathSwapMisses(handle: Long): Long
     private external fun nativePathChangePending(handle: Long): Boolean
+    private external fun nativeTempoRatio(handle: Long): Float
+    private external fun nativePitchSemitones(handle: Long): Float
+    private external fun nativeDspActive(handle: Long): Boolean
+    private external fun nativeDspCpuLoad(handle: Long): Float
+    private external fun nativeDspLatencyMs(handle: Long): Int
     private external fun nativeLastError(handle: Long): String
 
     private fun normalizeOutputChannels(value: Int): Int = when {
@@ -380,6 +435,11 @@ class NativeAudioEngine : Closeable {
     }
 
     companion object {
+        const val MIN_TEMPO_RATIO = 0.75f
+        const val MAX_TEMPO_RATIO = 1.50f
+        const val MIN_PITCH_SEMITONES = -12f
+        const val MAX_PITCH_SEMITONES = 12f
+
         init { System.loadLibrary("stagegrid_audio") }
     }
 }
