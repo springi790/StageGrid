@@ -114,6 +114,8 @@ data class SectionEntity(
     val endMs: Long,
     val sortOrder: Int,
     val colorArgb: Long = 0xFF5B8CFF,
+    /** When Cue Guide is selected, speak beats 2..N after the section name in the lead-in bar. */
+    val cueCountEnabled: Boolean = false,
 )
 
 @Entity(tableName = "setlists")
