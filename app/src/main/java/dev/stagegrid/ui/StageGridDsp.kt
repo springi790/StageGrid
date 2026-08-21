@@ -4,6 +4,7 @@ import androidx.lifecycle.viewModelScope
 import dev.stagegrid.StageGridApplication
 import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.debug.StageGridDebugLog
+import dev.stagegrid.music.MusicalKey
 import java.util.IdentityHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -68,6 +69,18 @@ private class StageGridDspController(private val viewModel: StageGridViewModel) 
         }
     }
 
+    fun setTargetBpm(targetBpm: Double) {
+        val song = viewModel.player.value.song ?: return
+        val baseBpm = song.bpm?.takeIf { it > 0.0 } ?: return
+        val ratio = (targetBpm / baseBpm).toFloat()
+            .coerceIn(NativeAudioEngine.MIN_TEMPO_RATIO, NativeAudioEngine.MAX_TEMPO_RATIO)
+        StageGridDebugLog.action(
+            "DSP",
+            "BPM_SELECT song=${song.id} base=$baseBpm target=$targetBpm ratio=$ratio",
+        )
+        setTempoRatio(ratio)
+    }
+
     fun setPitchSemitones(value: Float) {
         val songId = viewModel.player.value.song?.id ?: return
         apply(songId, "pitch") {
@@ -77,8 +90,20 @@ private class StageGridDspController(private val viewModel: StageGridViewModel) 
         }
     }
 
+    fun setTargetMusicalKey(targetKey: String) {
+        val song = viewModel.player.value.song ?: return
+        val baseKey = song.musicalKey ?: return
+        val semitones = MusicalKey.semitoneDelta(baseKey, targetKey) ?: return
+        StageGridDebugLog.action(
+            "DSP",
+            "KEY_SELECT song=${song.id} base=$baseKey target=$targetKey semitones=$semitones",
+        )
+        setPitchSemitones(semitones.toFloat())
+    }
+
     fun reset() {
         val songId = viewModel.player.value.song?.id ?: return
+        StageGridDebugLog.action("DSP", "RESET_TO_SONG_METADATA song=$songId")
         apply(songId, "reset") { app.nativeAudio.resetDsp() }
     }
 
@@ -155,5 +180,7 @@ val StageGridViewModel.dspState: StateFlow<StageGridDspUiState>
     get() = StageGridDspRegistry.controller(this).state
 
 fun StageGridViewModel.setTempoRatio(value: Float) = StageGridDspRegistry.controller(this).setTempoRatio(value)
+fun StageGridViewModel.setTargetBpm(value: Double) = StageGridDspRegistry.controller(this).setTargetBpm(value)
 fun StageGridViewModel.setPitchSemitones(value: Float) = StageGridDspRegistry.controller(this).setPitchSemitones(value)
+fun StageGridViewModel.setTargetMusicalKey(value: String) = StageGridDspRegistry.controller(this).setTargetMusicalKey(value)
 fun StageGridViewModel.resetDsp() = StageGridDspRegistry.controller(this).reset()
