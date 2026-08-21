@@ -19,9 +19,9 @@ import java.util.zip.ZipInputStream
  * they are licensed to use through Android's document picker. Only WAV files inside recognized
  * Guide folders are copied; click samples, Ableton sidecars and macOS metadata are ignored.
  *
- * Native Guide is experimental. Installed files and their lightweight index remain available for
- * startup/cache preparation while the experiment is off, but playable sample resolution is gated.
- * This avoids a DataStore-startup race while still preventing Native Guide cues from being emitted.
+ * Native Guide analysis remains experimental and its analysis-driven emission is gated. Manual
+ * section Cue playback is a core player feature, however, so it can resolve already-installed
+ * Guide Pack samples even when Native Guide Beta is disabled.
  */
 class GuidePackManager(private val context: Context) {
     enum class CueKind { SECTION, COUNT, DYNAMIC }
@@ -61,7 +61,7 @@ class GuidePackManager(private val context: Context) {
         )
     }
 
-    /** Returns the installed sample index. Emission remains gated by [findSample]. */
+    /** Returns the installed sample index for analysis/cache preparation. */
     fun listSamples(): List<GuideSample> = installedSamples()
 
     private fun installedSamples(): List<GuideSample> {
@@ -89,15 +89,61 @@ class GuidePackManager(private val context: Context) {
         }
     }
 
+    /** Native Guide Beta resolver. Analysis-driven cue emission remains feature-gated. */
     fun findSample(language: String, key: String): GuideSample? {
         if (!NativeGuideFeatureGate.enabled) return null
-        return installedSamples().firstOrNull { it.language == language && it.key == key }
+        return findInstalledSample(language, key, null)
     }
 
+    /** Native Guide Beta resolver. Analysis-driven cue emission remains feature-gated. */
     fun findSample(language: String, key: String, kind: CueKind): GuideSample? {
         if (!NativeGuideFeatureGate.enabled) return null
-        return installedSamples().firstOrNull { it.language == language && it.key == key && it.kind == kind }
-            ?: installedSamples().firstOrNull { it.language == language && it.key == key }
+        return findInstalledSample(language, key, kind)
+    }
+
+    /**
+     * Core manual-section Cue resolver. This deliberately does not depend on Native Guide Beta:
+     * the user explicitly selected Cue as the Guide source and the samples are already installed.
+     */
+    fun findCueSample(language: String, key: String, kind: CueKind): GuideSample? =
+        findInstalledSample(language, canonicalKey(key), kind)
+
+    private fun findInstalledSample(language: String, key: String, kind: CueKind?): GuideSample? {
+        val normalizedKey = canonicalKey(key)
+        if (normalizedKey.isBlank()) return null
+        val samples = installedSamples()
+        val exact = if (kind == null) {
+            samples.firstOrNull { it.language == language && it.key == normalizedKey }
+        } else {
+            samples.firstOrNull { it.language == language && it.key == normalizedKey && it.kind == kind }
+                ?: samples.firstOrNull { it.language == language && it.key == normalizedKey }
+        }
+        if (exact != null) return exact
+
+        // A manually named "Verse 1" normally maps to verse_1, but packs differ. Fall back to the
+        // unnumbered family when an exact numbered sample is not present.
+        val family = normalizedKey.replace(Regex("_[0-9]+$"), "")
+        if (family == normalizedKey) return null
+        return if (kind == null) {
+            samples.firstOrNull { it.language == language && it.key == family }
+        } else {
+            samples.firstOrNull { it.language == language && it.key == family && it.kind == kind }
+                ?: samples.firstOrNull { it.language == language && it.key == family }
+        }
+    }
+
+    /** Canonical key used by manual section names, e.g. "Pre Chorus 2" -> "pre_chorus_2". */
+    fun canonicalCueKey(value: String): String = canonicalKey(value)
+
+    /** Language choice for manual Cue playback; intentionally independent of Native Guide Beta. */
+    fun resolveCueLanguage(preferred: String = "auto"): String? {
+        val available = status().languages
+        if (available.isEmpty()) return null
+        if (preferred != "auto" && preferred in available) return preferred
+        val locale = Locale.getDefault().language.lowercase(Locale.ROOT)
+        return available.firstOrNull { it == locale }
+            ?: available.firstOrNull { it == "en" }
+            ?: available.first()
     }
 
     /** Call after a backup restore replaces the private Guide-pack directory. */
