@@ -62,6 +62,8 @@ extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nat
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetClickSubdivision(JNIEnv *, jobject, jlong h, jint v) { engine(h)->setClickSubdivision(v); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetClickRoute(JNIEnv *, jobject, jlong h, jint route) { engine(h)->setClickRoute(route); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetClickOutputBus(JNIEnv *, jobject, jlong h, jint bus) { engine(h)->setClickOutputBus(bus); }
+extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetTempoRatio(JNIEnv *, jobject, jlong h, jfloat ratio) { engine(h)->setTempoRatio(ratio); }
+extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetPitchSemitones(JNIEnv *, jobject, jlong h, jfloat semitones) { engine(h)->setPitchSemitones(semitones); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeSetLoop(JNIEnv *, jobject, jlong h, jboolean e, jlong s, jlong end) { engine(h)->setLoop(e, s, end); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeScheduleJump(JNIEnv *, jobject, jlong h, jlong at, jlong target, jboolean disableLoop) { engine(h)->scheduleJump(at, target, disableLoop); }
 extern "C" JNIEXPORT void JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeClearScheduledJump(JNIEnv *, jobject, jlong h) { engine(h)->clearScheduledJump(); }
@@ -92,4 +94,9 @@ extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nat
 extern "C" JNIEXPORT jlong JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativePathSwaps(JNIEnv *, jobject, jlong h) { return engine(h)->pathSwaps(); }
 extern "C" JNIEXPORT jlong JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativePathSwapMisses(JNIEnv *, jobject, jlong h) { return engine(h)->pathSwapMisses(); }
 extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativePathChangePending(JNIEnv *, jobject, jlong h) { return engine(h)->pathChangePending() ? JNI_TRUE : JNI_FALSE; }
+extern "C" JNIEXPORT jfloat JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeTempoRatio(JNIEnv *, jobject, jlong h) { return engine(h)->tempoRatio(); }
+extern "C" JNIEXPORT jfloat JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativePitchSemitones(JNIEnv *, jobject, jlong h) { return engine(h)->pitchSemitones(); }
+extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeDspActive(JNIEnv *, jobject, jlong h) { return engine(h)->dspActive() ? JNI_TRUE : JNI_FALSE; }
+extern "C" JNIEXPORT jfloat JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeDspCpuLoad(JNIEnv *, jobject, jlong h) { return engine(h)->dspCpuLoad(); }
+extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeDspLatencyMs(JNIEnv *, jobject, jlong h) { return engine(h)->dspLatencyMs(); }
 extern "C" JNIEXPORT jstring JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeLastError(JNIEnv *env, jobject, jlong h) { const auto error = engine(h)->lastError(); return env->NewStringUTF(error.c_str()); }
