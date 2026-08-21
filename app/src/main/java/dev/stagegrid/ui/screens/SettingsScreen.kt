@@ -159,6 +159,8 @@ fun SettingsScreen(
             }
         }
 
+        item { MidiMonitorPanelHost() }
+
         item { SettingsSectionTitle(stringResource(R.string.settings_audio_title), stringResource(R.string.settings_audio_desc)) }
         item {
             StageGridPanel(accent = MaterialTheme.colorScheme.primary) {
