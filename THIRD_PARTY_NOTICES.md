@@ -17,10 +17,11 @@ StageGrid's own source code is licensed under the MIT License. Third-party compo
 | AndroidX DocumentFile | 1.1.0 | Storage Access Framework tree traversal | Apache-2.0 | Android Open Source Project |
 | Kotlin Coroutines | 1.10.2 | Structured concurrency / Flow | Apache-2.0 | JetBrains |
 | Oboe | 1.10.0 | Native low-latency audio output abstraction | Apache-2.0 | Google |
+| Signalsmith Stretch | 1.3.2 / commit `222093b4cc13ddb4d07c826bc3c1559326091731` | Polyphonic time-stretch and pitch-shift DSP | MIT | Signalsmith Audio / Geraint Luff |
 | JUnit 4 | 4.13.2 | JVM tests only | EPL-1.0 | JUnit project |
 | AndroidX Test JUnit | 1.2.1 | Instrumentation tests | Apache-2.0 | Android Open Source Project |
 | Espresso Core | 3.6.1 | Android UI/instrumentation tests | Apache-2.0 | Android Open Source Project |
 
 The Android SDK/NDK/CMake toolchain is not redistributed in this source archive; Android Studio/SDK Manager installs those components separately under their own terms.
 
-No GPL/LGPL DSP, pitch-shifting, or time-stretching library is bundled in this MVP. Pitch/tempo processing remains intentionally disabled until a production-grade implementation with a distribution-compatible license is selected and documented.
+Signalsmith Stretch is fetched from its official GitHub mirror by CMake at the pinned commit above. Its source and transitive Signalsmith Linear code remain under their upstream MIT licenses and are not relicensed by StageGrid.
