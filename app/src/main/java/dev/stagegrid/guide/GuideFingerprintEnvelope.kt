@@ -14,6 +14,7 @@ import kotlin.math.sqrt
 internal object GuideFingerprintEnvelope {
     fun read(file: java.io.File, windowMs: Int, onProgress: ((Float) -> Unit)? = null): FloatArray {
         val startedNs = System.nanoTime()
+        NativeGuideProgressTracker.onFingerprintOpen(file)
         StageGridDebugLog.io("NATIVE_GUIDE", "FINGERPRINT_OPEN file=${file.name} bytes=${file.length()} windowMs=$windowMs")
         RandomAccessFile(file, "r").use { raf ->
             val wav = parseWav(raf) ?: error("Unsupported WAV: ${file.name}")
@@ -31,6 +32,7 @@ internal object GuideFingerprintEnvelope {
             var index = 0
             var lastBucket = -1
             onProgress?.invoke(0f)
+            NativeGuideProgressTracker.onFingerprintProgress(file, 0f)
             while (remaining > 0 && index < envelope.size) {
                 val frames = minOf(framesPerWindow.toLong(), remaining).toInt()
                 var sumFrameEnergy = 0.0
@@ -52,6 +54,7 @@ internal object GuideFingerprintEnvelope {
                 if (bucket != lastBucket) {
                     lastBucket = bucket
                     onProgress?.invoke(fraction.coerceIn(0f, 1f))
+                    NativeGuideProgressTracker.onFingerprintProgress(file, fraction)
                     StageGridDebugLog.state(
                         "NATIVE_GUIDE",
                         "FINGERPRINT_PROGRESS percent=${(fraction * 100f).toInt().coerceIn(0, 100)} window=$index/$windowCount elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}",
@@ -64,6 +67,7 @@ internal object GuideFingerprintEnvelope {
                 "FINGERPRINT_DONE windows=${result.size} elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}",
             )
             onProgress?.invoke(1f)
+            NativeGuideProgressTracker.onFingerprintDone(file)
             return result
         }
     }
