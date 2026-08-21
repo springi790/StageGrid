@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="startup_tagline">Your live multitrack workspace</string>
+    <string name="startup_loading">Preparing StageGrid…</string>
+    <string name="quick_setup_title">Set up StageGrid</string>
+    <string name="quick_setup_subtitle">One minute to get the essentials ready before your first session.</string>
+    <string name="quick_setup_skip">Skip</string>
+    <string name="quick_setup_back">Back</string>
+    <string name="quick_setup_next">Next</string>
+    <string name="quick_setup_finish">Finish</string>
+    <string name="quick_setup_step">Step %1$d of %2$d</string>
+    <string name="quick_setup_stage_title">Stage use</string>
+    <string name="quick_setup_stage_desc">Choose how StageGrid should behave during rehearsals and live performances.</string>
+    <string name="quick_setup_live_mode">Live mode</string>
+    <string name="quick_setup_live_mode_desc">Keeps the screen awake while you use StageGrid.</string>
+    <string name="quick_setup_performance_lock">Performance lock</string>
+    <string name="quick_setup_performance_lock_desc">Limits navigation to Live, Mixer and Settings to reduce accidental taps.</string>
+    <string name="quick_setup_click_title">Click and count-in</string>
+    <string name="quick_setup_click_desc">You can change these options later for different workflows.</string>
+    <string name="quick_setup_subdivision">Click subdivision</string>
+    <string name="quick_setup_count_in">Count-in bars</string>
+    <string name="quick_setup_no_count_in">No count-in</string>
+    <string name="quick_setup_one_bar">1 bar</string>
+    <string name="quick_setup_two_bars">2 bars</string>
+    <string name="quick_setup_guide_title">Cues and guide</string>
+    <string name="quick_setup_guide_desc">Choose the preferred language for generated cues from the Guide Pack.</string>
+    <string name="quick_setup_guide_auto">Automatic</string>
+    <string name="quick_setup_summary_title">Ready to start</string>
+    <string name="quick_setup_summary_desc">StageGrid will apply these preferences. You can change them anytime in Settings.</string>
+    <string name="quick_setup_summary_live">Live mode: %1$s</string>
+    <string name="quick_setup_summary_lock">Lock: %1$s</string>
+    <string name="quick_setup_summary_click">Click: %1$s</string>
+    <string name="quick_setup_summary_count">Count-in: %1$s</string>
+    <string name="quick_setup_summary_guide">Cues: %1$s</string>
+    <string name="quick_setup_on">On</string>
+    <string name="quick_setup_off">Off</string>
+</resources>
