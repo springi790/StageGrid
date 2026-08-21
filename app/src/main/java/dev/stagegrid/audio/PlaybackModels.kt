@@ -28,6 +28,11 @@ data class PlayerState(
     val clickRoute: StereoRoute = StereoRoute.BOTH,
     val clickBus: OutputBus = OutputBus.OUT_1_2,
     val masterVolume: Float = 1f,
+    val tempoRatio: Float = 1f,
+    val pitchSemitones: Float = 0f,
+    val dspActive: Boolean = false,
+    val dspLatencyMs: Int = 0,
+    val dspCpuLoad: Float = 0f,
     val loopSectionId: String? = null,
     val queuedSectionId: String? = null,
     val queuedJumpAtMs: Long? = null,
@@ -47,6 +52,7 @@ data class PlayerState(
     val isPlaying: Boolean get() = engineState == EngineState.PLAYING
     val isCountingIn: Boolean get() = countInRemainingMs > 0L
     val hasPreloadedSong: Boolean get() = preloadedSongId != null
+    val effectiveBpm: Double? get() = song?.bpm?.let { it * tempoRatio }
     val currentSection: SectionEntity?
         get() = sections.lastOrNull { positionMs >= it.startMs && positionMs < it.endMs }
             ?: sections.lastOrNull { positionMs >= it.startMs }
