@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="brand_live_console">LIVE CONSOLE</string>
+    <string name="brand_library_kicker">LOCAL PERFORMANCE LIBRARY</string>
+    <string name="brand_ready">READY</string>
+    <string name="library_song_count">%1$d canciones</string>
+    <string name="library_empty_title">Tu escenario empieza aquí</string>
+    <string name="library_empty_desc">Importa un multitrack, una carpeta o archivos de audio para preparar tu primera canción.</string>
+    <string name="library_import_primary">Importar multitrack</string>
+    <string name="library_sources">Fuentes</string>
+    <string name="settings_kicker">SYSTEM &amp; PERFORMANCE</string>
+    <string name="settings_stage_title">Escenario</string>
+    <string name="settings_stage_desc">Controles que cambian cómo se comporta StageGrid durante una presentación.</string>
+    <string name="settings_audio_title">Audio y salidas</string>
+    <string name="settings_audio_desc">Selecciona dispositivo, verifica canales y revisa el estado del motor.</string>
+    <string name="settings_data_title">Biblioteca y respaldo</string>
+    <string name="settings_data_desc">Administra almacenamiento y copias portátiles.</string>
+    <string name="labs_title">StageGrid Labs</string>
+    <string name="labs_badge">EXPERIMENTAL</string>
+    <string name="labs_description">Funciones en desarrollo que pueden cambiar, fallar o requerir configuración adicional. Están desactivadas por defecto.</string>
+    <string name="native_guide_experimental_toggle">Native Guide (Beta)</string>
+    <string name="native_guide_experimental_desc">Genera llamadas de secciones, conteos y dinámicas usando un pack de muestras. No afecta las pistas Guide importadas.</string>
+    <string name="native_guide_experimental_off">Native Guide está desactivado. Tus packs instalados se conservan y las pistas Guide importadas siguen funcionando normalmente.</string>
+    <string name="native_guide_experimental_on">Beta activa · úsala en ensayo antes de depender de ella en vivo.</string>
+    <string name="status_engine">ENGINE</string>
+    <string name="status_output">OUTPUT</string>
+    <string name="status_tracks">TRACKS</string>
+    <string name="status_cpu">CPU</string>
+</resources>
