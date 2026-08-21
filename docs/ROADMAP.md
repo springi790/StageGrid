@@ -87,25 +87,38 @@ Without an external interface, validate now:
 
 When USB hardware is available, add the outstanding 0.4 matrix plus dual-deck behavior through the external interface.
 
-## 0.6 — DSP — NEXT
+## 0.6 — DSP — FEATURE COMPLETE IN ALPHA
+
+Final integration line: `0.6.0-alpha05.x`.
+
+Delivered:
+
+- production time-stretch/pitch-shift backend using Signalsmith Stretch;
+- global per-deck tempo ratio and pitch controls rather than independent track clocks;
+- background decoder-worker DSP, keeping heavy processing outside the Oboe callback;
+- shared authoritative timeline across all stems;
+- latency compensation using the effective Signalsmith input + output latency;
+- synchronization-safe DSP reprime on tempo/pitch changes, seeks and path resets;
+- generated Click remains locked to the musical timeline while tempo changes;
+- Guide voice is protected from pitch transposition;
+- DSP active/latency/CPU diagnostics and existing underrun diagnostics;
+- manual Guide source mode with Original / Cue Auto selection;
+- optional per-section spoken count, e.g. `Intro · 2 · 3 · 4`, sourced directly from installed Guide Pack samples without requiring Native Guide Beta.
+
+Core on-device musical validation has confirmed working tempo changes, pitch changes and corrected synchronization. Long-duration thermal/load qualification and representative external-interface qualification remain part of the broader 1.0 acceptance gate.
+
+## 0.7 — MIDI — NEXT
 
 Planned complete milestone scope:
 
-- tempo/time-stretch processor abstraction;
-- pitch-shift processor abstraction;
-- production DSP library selection based on license, quality and Android performance;
-- shared-timeline latency compensation across stems;
-- synchronization-safe enable/disable/bypass;
-- parameter changes without restarting independent track clocks;
-- CPU/thermal/underrun diagnostics under DSP load.
-
-## 0.7 — MIDI
-
 - Android MIDI USB/BLE discovery;
-- MIDI Learn/mapping;
-- timeline MIDI cues;
-- MIDI Clock tied to authoritative transport;
-- reconnect/device-loss handling.
+- stable device/port identity and reconnect handling;
+- MIDI Learn/mapping for StageGrid actions;
+- persistent per-device mappings;
+- timeline MIDI cues tied to authored sections/arrangement state;
+- MIDI Clock tied to the authoritative transport and effective tempo;
+- Start/Continue/Stop transport messages where configured;
+- device-loss safety so local audio transport remains authoritative.
 
 ## 0.8 — pads, automation, timecode
 
