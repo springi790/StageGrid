@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dev.stagegrid.audio.ClickSubdivision
+import dev.stagegrid.debug.StageGridDebugLog
 import dev.stagegrid.model.OutputBus
 import dev.stagegrid.model.StereoRoute
 import java.util.concurrent.atomic.AtomicBoolean
@@ -59,36 +60,45 @@ class AppSettingsRepository(private val context: Context) {
     }
 
     suspend fun setLiveMode(enabled: Boolean) {
+        StageGridDebugLog.action("SETTINGS", "LIVE_MODE enabled=$enabled")
         context.stageGridDataStore.edit { it[LIVE_MODE] = enabled }
     }
 
     suspend fun setPerformanceLock(enabled: Boolean) {
+        StageGridDebugLog.action("SETTINGS", "PERFORMANCE_LOCK enabled=$enabled")
         context.stageGridDataStore.edit { it[PERFORMANCE_LOCK] = enabled }
     }
 
     suspend fun setClickSubdivision(subdivision: ClickSubdivision) {
+        StageGridDebugLog.action("SETTINGS", "CLICK_SUBDIVISION value=${subdivision.name}")
         context.stageGridDataStore.edit { it[CLICK_SUBDIVISION] = subdivision.subdivisionsPerBeat }
     }
 
     suspend fun setClickRoute(route: StereoRoute) {
+        StageGridDebugLog.action("SETTINGS", "CLICK_ROUTE value=$route")
         context.stageGridDataStore.edit { it[CLICK_ROUTE] = route.name }
     }
 
     suspend fun setClickBus(bus: OutputBus) {
+        StageGridDebugLog.action("SETTINGS", "CLICK_BUS value=$bus")
         context.stageGridDataStore.edit { it[CLICK_BUS] = bus.nativeCode }
     }
 
     suspend fun setCountInBars(bars: Int) {
-        context.stageGridDataStore.edit { it[COUNT_IN_BARS] = bars.coerceIn(0, 2) }
+        val normalized = bars.coerceIn(0, 2)
+        StageGridDebugLog.action("SETTINGS", "COUNT_IN bars=$normalized")
+        context.stageGridDataStore.edit { it[COUNT_IN_BARS] = normalized }
     }
 
     suspend fun setNativeGuideExperimentalEnabled(enabled: Boolean) {
+        StageGridDebugLog.action("LABS", "NATIVE_GUIDE enabled=$enabled")
         NativeGuideFeatureGate.update(enabled)
         context.stageGridDataStore.edit { it[NATIVE_GUIDE_EXPERIMENTAL] = enabled }
     }
 
     suspend fun setNativeGuideLanguage(language: String) {
         val normalized = language.takeIf { it in setOf("auto", "es", "en", "fr", "pt") } ?: "auto"
+        StageGridDebugLog.action("LABS", "NATIVE_GUIDE_LANGUAGE value=$normalized")
         context.stageGridDataStore.edit { it[NATIVE_GUIDE_LANGUAGE] = normalized }
     }
 
