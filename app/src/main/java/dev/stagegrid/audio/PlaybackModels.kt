@@ -15,6 +15,14 @@ enum class ClickSubdivision(val subdivisionsPerBeat: Int, val label: String) {
     SIXTEENTH(4, "1/16"),
 }
 
+/** Which Guide source is heard while the main Guide toggle is enabled. */
+enum class GuideSource {
+    /** Play the imported/rendered Guide track stored with the song. */
+    ORIGINAL,
+    /** Mute the imported Guide and synthesize section cues from the installed Guide Pack. */
+    CUE,
+}
+
 data class PlayerState(
     val engineState: EngineState = EngineState.IDLE,
     val song: SongEntity? = null,
@@ -24,6 +32,7 @@ data class PlayerState(
     val durationMs: Long = 0L,
     val clickEnabled: Boolean = true,
     val guideEnabled: Boolean = true,
+    val guideSource: GuideSource = GuideSource.ORIGINAL,
     val clickSubdivision: ClickSubdivision = ClickSubdivision.QUARTER,
     val clickRoute: StereoRoute = StereoRoute.BOTH,
     val clickBus: OutputBus = OutputBus.OUT_1_2,
