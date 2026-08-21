@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="midi_settings_title">MIDI</string>
+    <string name="midi_settings_desc">Connect a controller to verify ports and messages before creating MIDI Learn mappings.</string>
+    <string name="midi_no_devices">No MIDI devices are available. Connect a USB MIDI device or a MIDI device already paired with Android.</string>
+    <string name="midi_receive_ports">Inputs to StageGrid</string>
+    <string name="midi_port_number">Port %1$d</string>
+    <string name="midi_connect">Connect</string>
+    <string name="midi_disconnect">Disconnect</string>
+    <string name="midi_connected">Connected</string>
+    <string name="midi_opening">Connecting</string>
+    <string name="midi_disconnected">Disconnected</string>
+    <string name="midi_error">Error</string>
+    <string name="midi_monitor_title">MIDI monitor</string>
+    <string name="midi_monitor_waiting">Move a key, pad, knob or fader on the controller.</string>
+    <string name="midi_monitor_last">Last: %1$s</string>
+    <string name="midi_messages">Messages</string>
+    <string name="midi_clock_pulses">Clock</string>
+    <string name="midi_device_no_receive_ports">This device does not expose MIDI output ports toward StageGrid.</string>
+    <string name="midi_transport_usb">USB</string>
+    <string name="midi_transport_bluetooth">Bluetooth</string>
+    <string name="midi_transport_virtual">Virtual</string>
+    <string name="midi_transport_unknown">MIDI</string>
+</resources>
