@@ -38,11 +38,12 @@ fun GridOffsetCalibrator(
     modifier: Modifier = Modifier,
 ) {
     val reference = referenceOffsetMs.coerceIn(0L, MAX_GRID_OFFSET_MS)
-    val current = valueMs.coerceIn(0L, MAX_GRID_OFFSET_MS)
-    val delta = current - reference
     val minDelta = -minOf(reference, FINE_RANGE_MS)
     val maxDelta = minOf(MAX_GRID_OFFSET_MS - reference, FINE_RANGE_MS)
-    val safeDelta = delta.coerceIn(minDelta, maxDelta)
+    val minimumValue = reference + minDelta
+    val maximumValue = reference + maxDelta
+    val current = valueMs.coerceIn(minimumValue, maximumValue)
+    val delta = current - reference
 
     Card(modifier.fillMaxWidth()) {
         Column(
@@ -92,28 +93,28 @@ fun GridOffsetCalibrator(
             }
 
             GridOffsetRuler(
-                deltaMs = safeDelta,
+                deltaMs = delta,
                 minDeltaMs = minDelta,
                 maxDeltaMs = maxDelta,
             )
 
             Slider(
-                value = safeDelta.toFloat(),
+                value = delta.toFloat(),
                 onValueChange = { raw ->
-                    onValueChange((reference + raw.roundToLong()).coerceIn(0L, MAX_GRID_OFFSET_MS))
+                    onValueChange((reference + raw.roundToLong()).coerceIn(minimumValue, maximumValue))
                 },
                 valueRange = minDelta.toFloat()..maxDelta.toFloat(),
             )
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                NudgeButton("−10", Modifier.weight(1f)) { onValueChange((current - 10L).coerceAtLeast(0L)) }
-                NudgeButton("−1", Modifier.weight(1f)) { onValueChange((current - 1L).coerceAtLeast(0L)) }
+                NudgeButton("−10", Modifier.weight(1f)) { onValueChange((current - 10L).coerceAtLeast(minimumValue)) }
+                NudgeButton("−1", Modifier.weight(1f)) { onValueChange((current - 1L).coerceAtLeast(minimumValue)) }
                 OutlinedButton(
                     onClick = { onValueChange(reference) },
                     modifier = Modifier.weight(1.7f),
                 ) { Text(stringResource(R.string.grid_calibration_reset)) }
-                NudgeButton("+1", Modifier.weight(1f)) { onValueChange((current + 1L).coerceAtMost(MAX_GRID_OFFSET_MS)) }
-                NudgeButton("+10", Modifier.weight(1f)) { onValueChange((current + 10L).coerceAtMost(MAX_GRID_OFFSET_MS)) }
+                NudgeButton("+1", Modifier.weight(1f)) { onValueChange((current + 1L).coerceAtMost(maximumValue)) }
+                NudgeButton("+10", Modifier.weight(1f)) { onValueChange((current + 10L).coerceAtMost(maximumValue)) }
             }
 
             Text(
