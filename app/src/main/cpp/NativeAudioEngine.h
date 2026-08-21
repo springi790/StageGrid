@@ -121,10 +121,17 @@ private:
             : reader(std::move(readerIn)),
               type(typeIn),
               rings{std::make_unique<SpscRingBuffer>(kRingCapacitySamples),
-                    std::make_unique<SpscRingBuffer>(kRingCapacitySamples)} {}
+                    std::make_unique<SpscRingBuffer>(kRingCapacitySamples)} {
+            // A prepared path bank is activated by the audio callback after it has been aligned with
+            // the already-audible bank. Pairing them here lets the ring itself smooth only that
+            // handoff; normal playback remains a single read with no additional mixing cost.
+            rings[0]->setCrossfadePeer(rings[1].get(), kPathSwapCrossfadeFrames);
+            rings[1]->setCrossfadePeer(rings[0].get(), kPathSwapCrossfadeFrames);
+        }
         ~TrackState();
 
         static constexpr size_t kRingCapacitySamples = 96000;
+        static constexpr size_t kPathSwapCrossfadeFrames = 192;
         std::unique_ptr<WavReader> reader;
         int type{OTHER};
         std::array<std::unique_ptr<SpscRingBuffer>, 2> rings;
