@@ -132,7 +132,7 @@ class GuidePackManager(private val context: Context) {
         }
     }
 
-    /** Canonical key used by manual section names, e.g. "Pre Chorus 2" -> "pre_chorus_2". */
+    /** Canonical key used by manual section names, including StageGrid's localized presets. */
     fun canonicalCueKey(value: String): String = canonicalKey(value)
 
     /** Language choice for manual Cue playback; intentionally independent of Native Guide Beta. */
@@ -287,7 +287,21 @@ class GuidePackManager(private val context: Context) {
             .replace(Regex("\\p{M}+"), "")
             .lowercase(Locale.ROOT)
             .replace("a capella", "acapella")
-        return ascii.replace(Regex("[^a-z0-9]+"), "_").trim('_')
+        val raw = ascii.replace(Regex("[^a-z0-9]+"), "_").trim('_')
+        if (raw.isBlank()) return raw
+
+        val suffix = Regex("_([0-9]+)$").find(raw)?.value.orEmpty()
+        val base = if (suffix.isEmpty()) raw else raw.removeSuffix(suffix)
+        val canonicalBase = when (base) {
+            "introduccion", "introducao" -> "intro"
+            "verso" -> "verse"
+            "pre_coro", "precoro", "pre_refrain" -> "pre_chorus"
+            "coro", "refrao", "refrain" -> "chorus"
+            "puente", "ponte" -> "bridge"
+            "final", "fim" -> "outro"
+            else -> base
+        }
+        return canonicalBase + suffix
     }
 
     private fun queryDisplayName(uri: Uri): String? {
