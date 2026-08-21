@@ -20,6 +20,14 @@
     <string name="mixer_quick_routing">Quick routing</string>
     <string name="mixer_channel_strip">CHANNEL</string>
     <string name="mixer_reference_badge">REFERENCE</string>
+    <string name="grid_calibration_title">Grid calibration</string>
+    <string name="grid_calibration_help">Visually align the first grid beat when automatic detection lands slightly early or late.</string>
+    <string name="grid_calibration_detected">DETECTED</string>
+    <string name="grid_calibration_reference">SAVED REFERENCE</string>
+    <string name="grid_calibration_current">CURRENT</string>
+    <string name="grid_calibration_delta">ADJUSTMENT</string>
+    <string name="grid_calibration_reset">Reset</string>
+    <string name="grid_calibration_tip">Use the slider for coarse alignment and the 1 ms / 10 ms buttons for fine tuning. The saved value drives Click, sections and musical positions.</string>
     <string name="labs_title">StageGrid Labs</string>
     <string name="labs_badge">EXPERIMENTAL</string>
     <string name="labs_description">Features in development may change, fail or require extra setup. They are disabled by default.</string>
