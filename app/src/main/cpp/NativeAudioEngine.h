@@ -38,6 +38,8 @@ public:
     void setClickSubdivision(int subdivisionsPerBeat);
     void setClickRoute(int route);
     void setClickOutputBus(int bus);
+    void setTempoRatio(float ratio);
+    void setPitchSemitones(float semitones);
     void setLoop(bool enabled, int64_t startMs, int64_t endMs);
     void scheduleJump(int64_t atMs, int64_t targetMs, bool disableLoopAfterJump);
     void clearScheduledJump();
@@ -65,6 +67,17 @@ public:
     bool pathChangePending() const noexcept {
         const auto generation = pendingGeneration_.load(std::memory_order_acquire);
         return generation != 0 && generation != kPathClaimedGeneration;
+    }
+    float tempoRatio() const noexcept { return tempoRatio_.load(std::memory_order_acquire); }
+    float pitchSemitones() const noexcept { return pitchSemitones_.load(std::memory_order_acquire); }
+    bool dspActive() const noexcept {
+        return std::abs(tempoRatio_.load(std::memory_order_acquire) - 1.0f) > 0.0001f ||
+            std::abs(pitchSemitones_.load(std::memory_order_acquire)) > 0.0001f;
+    }
+    float dspCpuLoad() const noexcept { return dspCpuLoad_.load(std::memory_order_acquire); }
+    int dspLatencyMs() const noexcept {
+        const int sr = std::max(1, outputSampleRate_.load(std::memory_order_acquire));
+        return static_cast<int>(dspLatencyFrames_.load(std::memory_order_acquire) * 1000LL / sr);
     }
     std::string lastError() const;
 
@@ -97,6 +110,7 @@ private:
         int route{BOTH};
         int bus{0};
         float volume{1.0f};
+        std::atomic<int64_t> playbackIndex{-1};
         std::atomic<bool> consumed{false};
     };
 
@@ -129,6 +143,7 @@ private:
     void startDecoderThreads();
     void stopDecoderThreads();
     void decoderLoop(TrackState *track);
+    void reprimeDspFromControl();
 
     PathState loadPathState(int bank) const noexcept;
     void storePathState(int bank, const PathState &state) noexcept;
@@ -142,7 +157,7 @@ private:
 
     int64_t msToFrames(int64_t ms) const noexcept;
     int64_t framesToMs(int64_t frames) const noexcept;
-    float generatedClickSample(int64_t timelineFrame) const noexcept;
+    float generatedClickSample(double timelineFrame, float tempoRatio) const noexcept;
     int normalizedBus(int bus, int channelCount) const noexcept;
     void routeStereoPair(std::array<float, 8> &mix, int channelCount, int bus, int route, float l, float r, float pan, float volume) const noexcept;
     void routeMono(std::array<float, 8> &mix, int channelCount, int bus, int route, float sample) const noexcept;
@@ -173,6 +188,15 @@ private:
     std::atomic<int> beatsPerBar_{4};
     std::atomic<int64_t> gridOffsetFrame_{0};
     std::atomic<int64_t> trackGateUntilFrame_{-1};
+
+    // DSP is bypassed bit-for-bit at 100% tempo / 0 semitones. When active, each stem owns an
+    // independent Signalsmith processor but all processors consume the same authoritative source
+    // timeline ratio/generation, preventing stem drift while keeping per-track routing intact.
+    std::atomic<float> tempoRatio_{1.0f};
+    std::atomic<float> pitchSemitones_{0.0f};
+    std::atomic<double> timelineFraction_{0.0};
+    std::atomic<float> dspCpuLoad_{0.0f};
+    std::atomic<int> dspLatencyFrames_{0};
 
     std::atomic<int> outputTestChannel_{-1};
     std::atomic<int64_t> outputTestRemainingFrames_{0};
