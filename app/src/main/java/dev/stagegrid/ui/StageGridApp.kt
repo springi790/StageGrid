@@ -38,6 +38,7 @@ import dev.stagegrid.R
 import dev.stagegrid.backup.BackupStage
 import dev.stagegrid.importer.ImportStage
 import dev.stagegrid.model.SongEntity
+import dev.stagegrid.ui.components.GridOffsetCalibrator
 import dev.stagegrid.ui.screens.CloudBrowserDialog
 import dev.stagegrid.ui.screens.LibraryScreen
 import dev.stagegrid.ui.screens.LiveWorkspaceScreen
@@ -308,7 +309,12 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                     OutlinedTextField(bpm, { bpm = it }, label = { Text(stringResource(R.string.bpm)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                     OutlinedTextField(key, { key = it }, label = { Text(stringResource(R.string.key)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                     OutlinedTextField(timeSignature, { timeSignature = it }, label = { Text(stringResource(R.string.time_signature)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    OutlinedTextField(gridOffsetMs, { gridOffsetMs = it.filter(Char::isDigit) }, label = { Text(stringResource(R.string.grid_offset_ms)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    GridOffsetCalibrator(
+                        referenceOffsetMs = result.gridOffsetMs,
+                        valueMs = gridOffsetMs.toLongOrNull() ?: result.gridOffsetMs,
+                        onValueChange = { gridOffsetMs = it.toString() },
+                        referenceIsDetected = true,
+                    )
                     OutlinedTextField(notes, { notes = it }, label = { Text(stringResource(R.string.notes)) }, modifier = Modifier.fillMaxWidth())
                 }
             },
@@ -417,7 +423,12 @@ private fun SongMetadataDialog(
                 OutlinedTextField(bpm, { bpm = it }, label = { Text(stringResource(R.string.bpm)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(key, { key = it }, label = { Text(stringResource(R.string.key)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(signature, { signature = it }, label = { Text(stringResource(R.string.time_signature)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                OutlinedTextField(gridOffsetMs, { gridOffsetMs = it.filter(Char::isDigit) }, label = { Text(stringResource(R.string.grid_offset_ms)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                GridOffsetCalibrator(
+                    referenceOffsetMs = song.gridOffsetMs,
+                    valueMs = gridOffsetMs.toLongOrNull() ?: song.gridOffsetMs,
+                    onValueChange = { gridOffsetMs = it.toString() },
+                    referenceIsDetected = false,
+                )
                 OutlinedTextField(notes, { notes = it }, label = { Text(stringResource(R.string.notes)) }, modifier = Modifier.fillMaxWidth())
             }
         },
