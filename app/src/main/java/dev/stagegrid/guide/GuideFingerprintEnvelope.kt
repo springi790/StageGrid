@@ -1,5 +1,6 @@
 package dev.stagegrid.guide
 
+import dev.stagegrid.debug.StageGridDebugLog
 import java.io.RandomAccessFile
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -11,17 +12,25 @@ import kotlin.math.sqrt
  * with inverted or decorrelated stereo channels cannot cancel its own speech during fingerprinting.
  */
 internal object GuideFingerprintEnvelope {
-    fun read(file: java.io.File, windowMs: Int): FloatArray {
+    fun read(file: java.io.File, windowMs: Int, onProgress: ((Float) -> Unit)? = null): FloatArray {
+        val startedNs = System.nanoTime()
+        StageGridDebugLog.io("NATIVE_GUIDE", "FINGERPRINT_OPEN file=${file.name} bytes=${file.length()} windowMs=$windowMs")
         RandomAccessFile(file, "r").use { raf ->
             val wav = parseWav(raf) ?: error("Unsupported WAV: ${file.name}")
             val framesPerWindow = max(1, wav.sampleRate * windowMs / 1000)
             val windowCount = ((wav.frameCount + framesPerWindow - 1L) / framesPerWindow)
                 .coerceAtMost(Int.MAX_VALUE.toLong())
                 .toInt()
+            StageGridDebugLog.state(
+                "NATIVE_GUIDE",
+                "FINGERPRINT_INFO channels=${wav.channels} sampleRate=${wav.sampleRate} bits=${wav.bitsPerSample} frames=${wav.frameCount} windows=$windowCount",
+            )
             val envelope = FloatArray(windowCount)
             raf.seek(wav.dataOffset)
             var remaining = wav.frameCount
             var index = 0
+            var lastBucket = -1
+            onProgress?.invoke(0f)
             while (remaining > 0 && index < envelope.size) {
                 val frames = minOf(framesPerWindow.toLong(), remaining).toInt()
                 var sumFrameEnergy = 0.0
@@ -37,8 +46,25 @@ internal object GuideFingerprintEnvelope {
                 }
                 envelope[index++] = sqrt(sumFrameEnergy / frames.coerceAtLeast(1)).toFloat()
                 remaining -= frames
+
+                val fraction = if (windowCount > 0) index.toFloat() / windowCount.toFloat() else 1f
+                val bucket = (fraction * 20f).toInt().coerceIn(0, 20)
+                if (bucket != lastBucket) {
+                    lastBucket = bucket
+                    onProgress?.invoke(fraction.coerceIn(0f, 1f))
+                    StageGridDebugLog.state(
+                        "NATIVE_GUIDE",
+                        "FINGERPRINT_PROGRESS percent=${(fraction * 100f).toInt().coerceIn(0, 100)} window=$index/$windowCount elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}",
+                    )
+                }
             }
-            return if (index == envelope.size) envelope else envelope.copyOf(index)
+            val result = if (index == envelope.size) envelope else envelope.copyOf(index)
+            StageGridDebugLog.state(
+                "NATIVE_GUIDE",
+                "FINGERPRINT_DONE windows=${result.size} elapsedMs=${(System.nanoTime() - startedNs) / 1_000_000L}",
+            )
+            onProgress?.invoke(1f)
+            return result
         }
     }
 
