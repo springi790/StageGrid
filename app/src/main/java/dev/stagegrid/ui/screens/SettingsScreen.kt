@@ -1,6 +1,5 @@
 package dev.stagegrid.ui.screens
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,7 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.Card
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -35,11 +34,16 @@ import dev.stagegrid.audio.NativeAudioEngine
 import dev.stagegrid.settings.AppSettingsRepository
 import dev.stagegrid.storage.StorageCacheManager
 import dev.stagegrid.ui.StageGridViewModel
+import dev.stagegrid.ui.components.StageGridMetric
+import dev.stagegrid.ui.components.StageGridPanel
+import dev.stagegrid.ui.components.StageGridPill
+import dev.stagegrid.ui.components.StageGridScreenHeader
+import dev.stagegrid.ui.theme.StageGridColors
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Locale
 
 @Composable
 fun SettingsScreen(
@@ -69,6 +73,7 @@ fun SettingsScreen(
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val settingsRepository = remember(context.applicationContext) { AppSettingsRepository(context.applicationContext) }
     val storageManager = remember(context.filesDir) { StorageCacheManager(context.filesDir) }
     var storageSnapshot by remember { mutableStateOf<StorageCacheManager.Snapshot?>(null) }
     var storageBusy by remember { mutableStateOf(false) }
@@ -78,10 +83,21 @@ fun SettingsScreen(
         storageSnapshot = withContext(Dispatchers.IO) { storageManager.snapshot() }
     }
 
-    LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(
+        modifier.fillMaxSize().padding(horizontal = 14.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 14.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         item {
-            Text(stringResource(R.string.settings), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            StageGridScreenHeader(
+                kicker = stringResource(R.string.settings_kicker),
+                title = stringResource(R.string.settings),
+                subtitle = "StageGrid  ·  ${diagnostics.sampleRate / 1000f} kHz  ·  ${diagnostics.outputChannelCount} OUT",
+                badge = stringResource(R.string.brand_ready),
+            )
         }
+
+        item { SettingsSectionTitle(stringResource(R.string.settings_stage_title), stringResource(R.string.settings_stage_desc)) }
         item {
             SettingSwitch(
                 title = stringResource(R.string.live_mode),
@@ -96,196 +112,109 @@ fun SettingsScreen(
                 description = stringResource(R.string.performance_lock_desc),
                 checked = settings.performanceLock,
                 onCheckedChange = onPerformanceLock,
+                accent = MaterialTheme.colorScheme.tertiary,
             )
         }
+
         item {
-            Text(stringResource(R.string.native_guide_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(stringResource(R.string.native_guide_description), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (guidePackState.installing) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            CircularProgressIndicator()
-                            Text(stringResource(R.string.guide_pack_installing))
-                        }
-                    } else if (guidePackState.status.installed) {
-                        val languageSummary = guidePackState.status.languages.joinToString(", ") { it.uppercase(Locale.ROOT) }
-                        Text(
-                            stringResource(
-                                R.string.guide_pack_installed,
-                                guidePackState.status.sampleCount,
-                                languageSummary,
-                            ),
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        guidePackState.status.sourceName?.let {
-                            Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Text(stringResource(R.string.native_guide_language), fontWeight = FontWeight.SemiBold)
-                        Row(
-                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            val options = listOf("auto") + guidePackState.status.languages
-                            options.distinct().forEach { language ->
-                                FilterChip(
-                                    selected = settings.nativeGuideLanguage == language,
-                                    onClick = { onNativeGuideLanguage(language) },
-                                    label = {
-                                        Text(
-                                            if (language == "auto") stringResource(R.string.guide_language_auto)
-                                            else guideLanguageLabel(language),
-                                        )
-                                    },
-                                )
-                            }
-                        }
-                    } else {
-                        Text(stringResource(R.string.guide_pack_not_installed), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    guidePackState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    OutlinedButton(onClick = onInstallGuidePack, enabled = !guidePackState.installing) {
-                        Text(
-                            if (guidePackState.status.installed) stringResource(R.string.guide_pack_replace)
-                            else stringResource(R.string.guide_pack_install),
-                        )
-                    }
-                    Text(stringResource(R.string.native_guide_import_note), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-        item {
-            Text(stringResource(R.string.backup_restore_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(stringResource(R.string.backup_restore_description), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(stringResource(R.string.backup_restore_contents), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = onCreateBackup,
-                            enabled = !backupBusy,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(stringResource(R.string.backup_create_button))
-                        }
-                        OutlinedButton(
-                            onClick = onRestoreBackup,
-                            enabled = !backupBusy,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(stringResource(R.string.backup_restore_button))
-                        }
-                    }
-                    Text(stringResource(R.string.backup_restore_provider_note), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-        item {
-            Text(stringResource(R.string.storage_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(stringResource(R.string.storage_description), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    val snapshot = storageSnapshot
-                    if (snapshot == null) {
-                        Text(stringResource(R.string.storage_calculating))
-                    } else {
-                        Text(stringResource(R.string.storage_total, formatStorageBytes(snapshot.totalBytes)), fontWeight = FontWeight.SemiBold)
-                        Text(stringResource(R.string.storage_songs, snapshot.songCount))
-                        Text(stringResource(R.string.storage_library, formatStorageBytes(snapshot.libraryBytes)))
-                        Text(stringResource(R.string.storage_audio, formatStorageBytes(snapshot.playbackAudioBytes)))
-                        Text(stringResource(R.string.storage_cache, formatStorageBytes(snapshot.regenerableCacheBytes)))
-                        Text(stringResource(R.string.storage_guide, formatStorageBytes(snapshot.guideBytes)))
-                        reclaimedBytes?.let { Text(stringResource(R.string.storage_reclaimed, formatStorageBytes(it)), color = MaterialTheme.colorScheme.primary) }
-                        OutlinedButton(
-                            onClick = {
-                                storageBusy = true
-                                reclaimedBytes = null
-                                scope.launch {
-                                    val reclaimed = withContext(Dispatchers.IO) { storageManager.clearRegenerableCaches() }
-                                    val refreshed = withContext(Dispatchers.IO) { storageManager.snapshot() }
-                                    reclaimedBytes = reclaimed
-                                    storageSnapshot = refreshed
-                                    storageBusy = false
-                                }
-                            },
-                            enabled = !storageBusy && snapshot.regenerableCacheBytes > 0L,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                if (storageBusy) stringResource(R.string.storage_clearing)
-                                else stringResource(R.string.storage_clear_cache),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        item {
-            Text(stringResource(R.string.audio_outputs), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text(stringResource(R.string.bluetooth_latency_warning), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(
-                stringResource(R.string.negotiated_output, diagnostics.outputChannelCount, diagnostics.sampleRate),
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-            Text(
-                stringResource(R.string.requested_output_channels, diagnostics.requestedOutputChannelCount),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (diagnostics.multichannelFallback) {
-                Text(stringResource(R.string.multichannel_fallback_warning), color = MaterialTheme.colorScheme.tertiary)
-            }
-        }
-        items(outputs, key = { it.id }) { device ->
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            StageGridPanel(accent = MaterialTheme.colorScheme.tertiary) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(Modifier.weight(1f)) {
-                            Text(device.productName, fontWeight = FontWeight.SemiBold)
+                            Text(stringResource(R.string.labs_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                            Text(stringResource(R.string.labs_description), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        StageGridPill(stringResource(R.string.labs_badge), MaterialTheme.colorScheme.tertiary)
+                    }
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.native_guide_experimental_toggle), fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.native_guide_experimental_desc), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(
+                            checked = settings.nativeGuideExperimentalEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch { settingsRepository.setNativeGuideExperimentalEnabled(enabled) }
+                            },
+                        )
+                    }
+
+                    Text(
+                        if (settings.nativeGuideExperimentalEnabled) stringResource(R.string.native_guide_experimental_on)
+                        else stringResource(R.string.native_guide_experimental_off),
+                        color = if (settings.nativeGuideExperimentalEnabled) StageGridColors.Amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+
+                    if (settings.nativeGuideExperimentalEnabled) {
+                        NativeGuideLabControls(
+                            settings = settings,
+                            guidePackState = guidePackState,
+                            onInstallGuidePack = onInstallGuidePack,
+                            onNativeGuideLanguage = onNativeGuideLanguage,
+                        )
+                    }
+                }
+            }
+        }
+
+        item { SettingsSectionTitle(stringResource(R.string.settings_audio_title), stringResource(R.string.settings_audio_desc)) }
+        item {
+            StageGridPanel(accent = MaterialTheme.colorScheme.primary) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        StageGridMetric(stringResource(R.string.status_engine), if (diagnostics.lastError.isBlank()) "OK" else "ERR", Modifier.weight(1f), if (diagnostics.lastError.isBlank()) StageGridColors.Mint else MaterialTheme.colorScheme.error)
+                        StageGridMetric(stringResource(R.string.status_output), "${diagnostics.outputChannelCount} CH", Modifier.weight(1f))
+                        StageGridMetric(stringResource(R.string.status_tracks), diagnostics.loadedTracks.toString(), Modifier.weight(1f), MaterialTheme.colorScheme.tertiary)
+                        StageGridMetric(stringResource(R.string.status_cpu), String.format(Locale.ROOT, "%.0f%%", diagnostics.cpuLoad * 100f), Modifier.weight(1f), StageGridColors.Amber)
+                    }
+                    Text(stringResource(R.string.negotiated_output, diagnostics.outputChannelCount, diagnostics.sampleRate), fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.requested_output_channels, diagnostics.requestedOutputChannelCount), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (diagnostics.multichannelFallback) {
+                        StageGridPill(stringResource(R.string.output_fallback_active), StageGridColors.Amber)
+                    }
+                }
+            }
+        }
+
+        items(outputs, key = { it.id }) { device ->
+            StageGridPanel(accent = if (selectedOutputId == device.id) MaterialTheme.colorScheme.primary else null) {
+                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text(device.productName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                             val type = when {
                                 device.isUsb -> stringResource(R.string.usb)
                                 device.isBluetooth -> stringResource(R.string.bluetooth)
                                 else -> stringResource(R.string.android_audio)
                             }
                             Text(
-                                stringResource(
-                                    R.string.device_details,
-                                    type,
-                                    device.maxChannelCount,
-                                    device.sampleRates.maxOrNull() ?: 0,
-                                ),
+                                stringResource(R.string.device_details, type, device.maxChannelCount, device.sampleRates.maxOrNull() ?: 0),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            Text(
-                                stringResource(
-                                    R.string.device_channel_capability,
-                                    device.maxChannelCount,
-                                    device.preferredStageGridChannels,
-                                ),
-                                color = if (device.supportsMultichannel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                         }
-                        OutlinedButton(
-                            onClick = { onOutput(device.id, device.preferredStageGridChannels) },
-                            enabled = selectedOutputId != device.id,
-                        ) {
-                            Text(if (selectedOutputId == device.id) stringResource(R.string.selected) else stringResource(R.string.select))
-                        }
+                        if (selectedOutputId == device.id) StageGridPill(stringResource(R.string.selected), StageGridColors.Mint)
                     }
-                    if (selectedOutputId == device.id) {
-                        Text(
-                            if (diagnostics.outputChannelCount > 2) stringResource(R.string.usb_multichannel_available)
-                            else stringResource(R.string.usb_stereo_only),
-                            fontWeight = FontWeight.SemiBold,
-                        )
+                    Text(
+                        stringResource(R.string.device_channel_capability, device.maxChannelCount, device.preferredStageGridChannels),
+                        color = if (device.supportsMultichannel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
+                        onClick = { onOutput(device.id, device.preferredStageGridChannels) },
+                        enabled = selectedOutputId != device.id,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (selectedOutputId == device.id) stringResource(R.string.selected) else stringResource(R.string.select))
                     }
                 }
             }
         }
+
         item {
-            Text(stringResource(R.string.output_test_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            StageGridPanel {
+                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Text(stringResource(R.string.output_test_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text(stringResource(R.string.output_test_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(
                         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -300,25 +229,130 @@ fun SettingsScreen(
                 }
             }
         }
+
+        item { SettingsSectionTitle(stringResource(R.string.settings_data_title), stringResource(R.string.settings_data_desc)) }
         item {
-            Text(stringResource(R.string.diagnostics), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(stringResource(R.string.sample_rate_value, diagnostics.sampleRate))
-                    Text(stringResource(R.string.buffer_burst_value, diagnostics.framesPerBurst))
-                    Text(stringResource(R.string.negotiated_output, diagnostics.outputChannelCount, diagnostics.sampleRate))
-                    Text(stringResource(R.string.requested_output_channels, diagnostics.requestedOutputChannelCount))
-                    if (diagnostics.multichannelFallback) Text(stringResource(R.string.output_fallback_active), color = MaterialTheme.colorScheme.tertiary)
-                    Text(stringResource(R.string.underruns_value, diagnostics.underruns))
-                    Text(stringResource(R.string.cpu_load_value, diagnostics.cpuLoad * 100f))
-                    Text(stringResource(R.string.loaded_tracks_value, diagnostics.loadedTracks))
-                    if (diagnostics.lastError.isNotBlank()) Text(stringResource(R.string.last_error_value, diagnostics.lastError), color = MaterialTheme.colorScheme.error)
+            StageGridPanel {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(stringResource(R.string.backup_restore_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.backup_restore_description), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.backup_restore_contents), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onCreateBackup, enabled = !backupBusy, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.backup_create_button))
+                        }
+                        OutlinedButton(onClick = onRestoreBackup, enabled = !backupBusy, modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.backup_restore_button))
+                        }
+                    }
                 }
             }
         }
+
         item {
-            Text(stringResource(R.string.pcm_wav_note), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            StageGridPanel {
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text(stringResource(R.string.storage_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.storage_description), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val snapshot = storageSnapshot
+                    if (snapshot == null) {
+                        Text(stringResource(R.string.storage_calculating))
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            StageGridMetric("TOTAL", formatStorageBytes(snapshot.totalBytes), Modifier.weight(1f))
+                            StageGridMetric("CACHE", formatStorageBytes(snapshot.regenerableCacheBytes), Modifier.weight(1f), MaterialTheme.colorScheme.tertiary)
+                            StageGridMetric("SONGS", snapshot.songCount.toString(), Modifier.weight(1f), MaterialTheme.colorScheme.secondary)
+                        }
+                        Text(stringResource(R.string.storage_audio, formatStorageBytes(snapshot.playbackAudioBytes)), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.storage_guide, formatStorageBytes(snapshot.guideBytes)), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        reclaimedBytes?.let { Text(stringResource(R.string.storage_reclaimed, formatStorageBytes(it)), color = MaterialTheme.colorScheme.primary) }
+                        OutlinedButton(
+                            onClick = {
+                                storageBusy = true
+                                reclaimedBytes = null
+                                scope.launch {
+                                    val reclaimed = withContext(Dispatchers.IO) { storageManager.clearRegenerableCaches() }
+                                    storageSnapshot = withContext(Dispatchers.IO) { storageManager.snapshot() }
+                                    reclaimedBytes = reclaimed
+                                    storageBusy = false
+                                }
+                            },
+                            enabled = !storageBusy && snapshot.regenerableCacheBytes > 0L,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (storageBusy) stringResource(R.string.storage_clearing) else stringResource(R.string.storage_clear_cache))
+                        }
+                    }
+                }
+            }
         }
+
+        item {
+            StageGridPanel {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(stringResource(R.string.diagnostics), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.sample_rate_value, diagnostics.sampleRate))
+                    Text(stringResource(R.string.buffer_burst_value, diagnostics.framesPerBurst))
+                    Text(stringResource(R.string.underruns_value, diagnostics.underruns))
+                    Text(stringResource(R.string.cpu_load_value, diagnostics.cpuLoad * 100f))
+                    Text(stringResource(R.string.loaded_tracks_value, diagnostics.loadedTracks))
+                    if (diagnostics.lastError.isNotBlank()) {
+                        Text(stringResource(R.string.last_error_value, diagnostics.lastError), color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NativeGuideLabControls(
+    settings: AppSettingsRepository.Settings,
+    guidePackState: StageGridViewModel.GuidePackUiState,
+    onInstallGuidePack: () -> Unit,
+    onNativeGuideLanguage: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        if (guidePackState.installing) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CircularProgressIndicator()
+                Text(stringResource(R.string.guide_pack_installing))
+            }
+        } else if (guidePackState.status.installed) {
+            val languageSummary = guidePackState.status.languages.joinToString(", ") { it.uppercase(Locale.ROOT) }
+            Text(stringResource(R.string.guide_pack_installed, guidePackState.status.sampleCount, languageSummary), fontWeight = FontWeight.SemiBold)
+            guidePackState.status.sourceName?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Text(stringResource(R.string.native_guide_language), fontWeight = FontWeight.SemiBold)
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                (listOf("auto") + guidePackState.status.languages).distinct().forEach { language ->
+                    FilterChip(
+                        selected = settings.nativeGuideLanguage == language,
+                        onClick = { onNativeGuideLanguage(language) },
+                        label = {
+                            Text(if (language == "auto") stringResource(R.string.guide_language_auto) else guideLanguageLabel(language))
+                        },
+                    )
+                }
+            }
+        } else {
+            Text(stringResource(R.string.guide_pack_not_installed), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        guidePackState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        OutlinedButton(onClick = onInstallGuidePack, enabled = !guidePackState.installing, modifier = Modifier.fillMaxWidth()) {
+            Text(if (guidePackState.status.installed) stringResource(R.string.guide_pack_replace) else stringResource(R.string.guide_pack_install))
+        }
+        Text(stringResource(R.string.native_guide_import_note), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SettingsSectionTitle(title: String, description: String) {
+    Column(Modifier.padding(top = 6.dp, bottom = 2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+        Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -337,11 +371,12 @@ private fun SettingSwitch(
     description: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    accent: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary,
 ) {
-    Card(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+    StageGridPanel(accent = if (checked) accent else null) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(title, fontWeight = FontWeight.Bold)
                 Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(checked = checked, onCheckedChange = onCheckedChange)
