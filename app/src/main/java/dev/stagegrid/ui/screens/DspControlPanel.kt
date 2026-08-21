@@ -6,11 +6,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -19,7 +22,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -33,8 +40,6 @@ import dev.stagegrid.ui.setTargetBpm
 import dev.stagegrid.ui.setTargetMusicalKey
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.math.round
 
 @Composable
@@ -70,9 +75,6 @@ fun DspControlPanel(
 ) {
     val baseBpm = originalBpm?.takeIf { it > 0.0 }
     val currentBpm = baseBpm?.times(dsp.tempoRatio)
-    val bpmOptions = remember(baseBpm) {
-        baseBpm?.let(::buildBpmOptions).orEmpty()
-    }
     val keyOptions = remember(originalKey) { MusicalKey.optionsFor(originalKey) }
     val currentKey = MusicalKey.transpose(originalKey, dsp.pitchSemitones)
     val controlsEnabled = enabled && !dsp.applying
@@ -86,12 +88,11 @@ fun DspControlPanel(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                CompactDropdown(
-                    label = "BPM",
-                    value = currentBpm?.let { "${formatBpm(it)} BPM" } ?: "— BPM",
-                    options = bpmOptions.map { it to "${formatBpm(it)} BPM" },
+                CompactBpmField(
+                    baseBpm = baseBpm,
+                    currentBpm = currentBpm,
                     enabled = controlsEnabled && baseBpm != null,
-                    onSelected = onBpm,
+                    onBpm = onBpm,
                     modifier = Modifier.weight(1f),
                 )
                 CompactDropdown(
@@ -130,6 +131,61 @@ fun DspControlPanel(
             }
         }
     }
+}
+
+@Composable
+private fun CompactBpmField(
+    baseBpm: Double?,
+    currentBpm: Double?,
+    enabled: Boolean,
+    onBpm: (Double) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val focusManager = LocalFocusManager.current
+    var bpmText by remember(baseBpm, currentBpm) {
+        mutableStateOf(currentBpm?.let(::formatBpm).orEmpty())
+    }
+    var wasFocused by remember { mutableStateOf(false) }
+
+    fun commitBpm() {
+        val base = baseBpm ?: return
+        val fallback = currentBpm ?: base
+        val parsed = bpmText.trim().replace(',', '.').toDoubleOrNull()
+        if (parsed == null || !parsed.isFinite() || parsed <= 0.0) {
+            bpmText = formatBpm(fallback)
+            return
+        }
+        val min = base * NativeAudioEngine.MIN_TEMPO_RATIO
+        val max = base * NativeAudioEngine.MAX_TEMPO_RATIO
+        val applied = parsed.coerceIn(min, max)
+        bpmText = formatBpm(applied)
+        if (abs(applied - fallback) >= 0.01) onBpm(applied)
+    }
+
+    OutlinedTextField(
+        value = bpmText,
+        onValueChange = { value ->
+            bpmText = value.filter { it.isDigit() || it == '.' || it == ',' }.take(7)
+        },
+        enabled = enabled,
+        singleLine = true,
+        label = { Text("BPM") },
+        suffix = { Text("BPM") },
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Decimal,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(
+            onDone = {
+                commitBpm()
+                focusManager.clearFocus()
+            },
+        ),
+        modifier = modifier.onFocusChanged { state ->
+            if (wasFocused && !state.isFocused) commitBpm()
+            wasFocused = state.isFocused
+        },
+    )
 }
 
 @Composable
@@ -173,14 +229,6 @@ private fun <T> CompactDropdown(
             }
         }
     }
-}
-
-private fun buildBpmOptions(baseBpm: Double): List<Double> {
-    val min = ceil(baseBpm * NativeAudioEngine.MIN_TEMPO_RATIO).toInt().coerceAtLeast(1)
-    val max = floor(baseBpm * NativeAudioEngine.MAX_TEMPO_RATIO).toInt().coerceAtLeast(min)
-    val values = (min..max).map(Int::toDouble).toMutableList()
-    if (values.none { abs(it - baseBpm) < 0.01 }) values += baseBpm
-    return values.distinctBy { round(it * 10.0).toInt() }.sorted()
 }
 
 private fun formatBpm(value: Double): String {
