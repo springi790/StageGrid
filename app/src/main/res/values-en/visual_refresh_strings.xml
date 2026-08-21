@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="brand_live_console">LIVE CONSOLE</string>
+    <string name="brand_library_kicker">LOCAL PERFORMANCE LIBRARY</string>
+    <string name="brand_ready">READY</string>
+    <string name="library_song_count">%1$d songs</string>
+    <string name="library_empty_title">Your stage starts here</string>
+    <string name="library_empty_desc">Import a multitrack, folder or audio files to prepare your first song.</string>
+    <string name="library_import_primary">Import multitrack</string>
+    <string name="library_sources">Sources</string>
+    <string name="settings_kicker">SYSTEM &amp; PERFORMANCE</string>
+    <string name="settings_stage_title">Stage</string>
+    <string name="settings_stage_desc">Controls that change how StageGrid behaves during a performance.</string>
+    <string name="settings_audio_title">Audio &amp; outputs</string>
+    <string name="settings_audio_desc">Choose a device, verify channels and inspect engine health.</string>
+    <string name="settings_data_title">Library &amp; backup</string>
+    <string name="settings_data_desc">Manage storage and portable backups.</string>
+    <string name="labs_title">StageGrid Labs</string>
+    <string name="labs_badge">EXPERIMENTAL</string>
+    <string name="labs_description">Features in development may change, fail or require extra setup. They are disabled by default.</string>
+    <string name="native_guide_experimental_toggle">Native Guide (Beta)</string>
+    <string name="native_guide_experimental_desc">Generates section calls, counts and dynamics from a sample pack. Imported Guide tracks are unaffected.</string>
+    <string name="native_guide_experimental_off">Native Guide is disabled. Installed packs are kept and imported Guide tracks continue to work normally.</string>
+    <string name="native_guide_experimental_on">Beta enabled · rehearse with it before depending on it live.</string>
+    <string name="status_engine">ENGINE</string>
+    <string name="status_output">OUTPUT</string>
+    <string name="status_tracks">TRACKS</string>
+    <string name="status_cpu">CPU</string>
+</resources>
