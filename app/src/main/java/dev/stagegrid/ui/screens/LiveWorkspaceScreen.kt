@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -35,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -43,10 +43,20 @@ import androidx.compose.ui.unit.dp
 import dev.stagegrid.R
 import dev.stagegrid.arrangement.ArrangementNode
 import dev.stagegrid.arrangement.ArrangementRuntimeState
+import dev.stagegrid.audio.EngineState
 import dev.stagegrid.audio.PlayerState
+import dev.stagegrid.model.SectionEntity
 import dev.stagegrid.model.TrackType
+import dev.stagegrid.music.MusicalGrid
 import dev.stagegrid.ui.StageGridViewModel
 import dev.stagegrid.ui.components.SongWaveformOverview
+import dev.stagegrid.ui.components.StageBeatPulse
+import dev.stagegrid.ui.components.StageGridMetric
+import dev.stagegrid.ui.components.StageGridPanel
+import dev.stagegrid.ui.components.StageGridPill
+import dev.stagegrid.ui.components.StageSectionButton
+import dev.stagegrid.ui.components.StageTransportDock
+import dev.stagegrid.ui.components.sectionDisplayColor
 import kotlin.math.roundToInt
 
 private enum class WorkspaceSheet { QUICK_MIX, ARRANGEMENT, SETLIST }
@@ -71,6 +81,7 @@ fun LiveWorkspaceScreen(
     onArrangementStop: () -> Unit,
     onArrangementExitLoop: () -> Unit,
     onArrangementNode: (String) -> Unit,
+    onSection: (SectionEntity) -> Unit,
     onArrangementMove: (String, Int) -> Unit,
     onArrangementRepeat: (String, Int) -> Unit,
     onArrangementPreRoll: (String, Int) -> Unit,
@@ -112,6 +123,9 @@ fun LiveWorkspaceScreen(
                     onArrangementStop = onArrangementStop,
                     onArrangementExitLoop = onArrangementExitLoop,
                     onArrangementNode = onArrangementNode,
+                    onSection = onSection,
+                    onSetlistPrevious = onSetlistPrevious,
+                    onSetlistNext = onSetlistNext,
                     onOpenQuickMix = { sheet = WorkspaceSheet.QUICK_MIX },
                     onOpenArrangement = { sheet = WorkspaceSheet.ARRANGEMENT },
                     onOpenSetlist = { sheet = WorkspaceSheet.SETLIST },
@@ -153,6 +167,9 @@ fun LiveWorkspaceScreen(
                 onArrangementStop = onArrangementStop,
                 onArrangementExitLoop = onArrangementExitLoop,
                 onArrangementNode = onArrangementNode,
+                onSection = onSection,
+                onSetlistPrevious = onSetlistPrevious,
+                onSetlistNext = onSetlistNext,
                 onOpenQuickMix = { sheet = WorkspaceSheet.QUICK_MIX },
                 onOpenArrangement = { sheet = WorkspaceSheet.ARRANGEMENT },
                 onOpenSetlist = { sheet = WorkspaceSheet.SETLIST },
@@ -208,6 +225,9 @@ private fun PerformanceSurface(
     onArrangementStop: () -> Unit,
     onArrangementExitLoop: () -> Unit,
     onArrangementNode: (String) -> Unit,
+    onSection: (SectionEntity) -> Unit,
+    onSetlistPrevious: () -> Unit,
+    onSetlistNext: () -> Unit,
     onOpenQuickMix: () -> Unit,
     onOpenArrangement: () -> Unit,
     onOpenSetlist: () -> Unit,
@@ -215,157 +235,251 @@ private fun PerformanceSurface(
 ) {
     val song = state.song ?: return
     val nodes = arrangement.graph?.nodes.orEmpty()
-    Column(
-        modifier.verticalScroll(rememberScrollState()).padding(if (compact) 12.dp else 6.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    song.title,
-                    style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (song.artist.isNotBlank()) {
-                    Text(song.artist, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val grid = remember(song.bpm, song.timeSignature, song.gridOffsetMs) {
+        MusicalGrid.from(song.bpm, song.timeSignature, song.gridOffsetMs)
+    }
+    val sectionsById = remember(state.sections) { state.sections.associateBy { it.id } }
+    val transportBusy = state.crossfadeInProgress || state.isCountingIn
+    val countInText = if (state.isCountingIn) {
+        val target = state.countInTargetSection?.name ?: state.currentSection?.name ?: stringResource(R.string.workspace_now)
+        val remainingSeconds = ((state.countInRemainingMs + 999L) / 1000L).coerceAtLeast(1L)
+        stringResource(R.string.count_in_active, target, remainingSeconds.toInt())
+    } else {
+        null
+    }
+
+    // The transport is docked outside the scrolling area. Everything above it may scroll; Play,
+    // Stop and Stop All never move, so they stay reachable at any point in a song.
+    Column(modifier) {
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(if (compact) 12.dp else 6.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        song.title,
+                        style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (song.artist.isNotBlank()) {
+                        Text(song.artist, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    state.effectiveBpm?.let { bpm ->
+                        Text(
+                            stringResource(R.string.simple_bpm_value, "%.0f".format(bpm)),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    grid?.let {
+                        val musical = it.positionAt(state.positionMs)
+                        Text(
+                            stringResource(R.string.simple_bar_beat_value, musical.bar, musical.beat),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
-            Text("${formatWorkspaceTime(state.positionMs)} / ${formatWorkspaceTime(state.durationMs)}", fontWeight = FontWeight.SemiBold)
-        }
 
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            StatusChip(state.engineState.name, state.isPlaying)
-            StatusChip(stringResource(R.string.workspace_android_channels, state.outputChannelCount), state.outputChannelCount > 2)
-            if (arrangement.active) StatusChip(stringResource(R.string.workspace_arrangement), true)
-            arrangement.queuedNode?.let { StatusChip("${stringResource(R.string.workspace_queued)} → ${it.label}", true) }
-            if (state.loopSectionId != null) StatusChip("LOOP", true)
-            if (state.crossfadeInProgress) StatusChip(stringResource(R.string.workspace_crossfade), true)
-            if (setlistLive.nextReady && state.preloadedSongId != null) StatusChip(stringResource(R.string.workspace_preloaded), true)
-        }
+            if (grid != null) {
+                StageBeatPulse(grid = grid, positionMs = state.positionMs, active = state.isPlaying)
+            }
 
-        Card(Modifier.fillMaxWidth()) {
+            // Read-only state badges. These were FilterChips with an empty onClick, so every badge
+            // behaved like a button that does nothing and was announced as one by TalkBack.
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StageGridPill(
+                    engineStateLabel(state.engineState),
+                    accent = if (state.isPlaying) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                StageGridPill(stringResource(R.string.workspace_android_channels, state.outputChannelCount))
+                if (arrangement.active) StageGridPill(stringResource(R.string.workspace_arrangement), MaterialTheme.colorScheme.secondary)
+                arrangement.queuedNode?.let {
+                    StageGridPill("${stringResource(R.string.workspace_queued)} → ${it.label}", MaterialTheme.colorScheme.tertiary)
+                }
+                if (state.loopSectionId != null) StageGridPill(stringResource(R.string.workspace_loop), MaterialTheme.colorScheme.tertiary)
+                if (state.crossfadeInProgress) StageGridPill(stringResource(R.string.workspace_crossfade), MaterialTheme.colorScheme.tertiary)
+                if (setlistLive.nextReady && state.preloadedSongId != null) {
+                    StageGridPill(stringResource(R.string.workspace_preloaded), MaterialTheme.colorScheme.secondary)
+                }
+            }
+
             SongWaveformOverview(
                 songId = song.id,
                 positionMs = state.positionMs,
                 durationMs = state.durationMs,
                 sections = state.sections,
-                onSeek = if (state.crossfadeInProgress || state.isCountingIn) null else onSeek,
+                currentSectionId = state.currentSection?.id,
+                onSeek = if (transportBusy) null else onSeek,
                 modifier = Modifier.fillMaxWidth(),
             )
-        }
 
-        StageGridDspControlHost(
-            enabled = !state.crossfadeInProgress && !state.isCountingIn,
-            modifier = Modifier.fillMaxWidth(),
-        )
+            StageGridDspControlHost(
+                enabled = !transportBusy,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.workspace_now), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(arrangement.activeNode?.label ?: state.currentSection?.name ?: "—", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                if (arrangement.active && arrangement.iteration > 1) {
-                    Text(stringResource(R.string.workspace_iteration, arrangement.iteration), style = MaterialTheme.typography.labelMedium)
-                }
-            }
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.workspace_next), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(arrangement.queuedNode?.label ?: state.nextSection?.name ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            }
-        }
-
-        Text(stringResource(R.string.workspace_sections), fontWeight = FontWeight.Bold)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (nodes.isNotEmpty()) {
-                items(nodes, key = { it.id }) { node ->
-                    val active = arrangement.activeNodeId == node.id
-                    val queued = arrangement.queuedNodeId == node.id
-                    FilterChip(
-                        selected = active || queued,
-                        onClick = { onArrangementNode(node.id) },
-                        enabled = !state.crossfadeInProgress && !state.isCountingIn,
-                        label = {
+            StageGridPanel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        StageGridMetric(
+                            label = stringResource(R.string.workspace_now),
+                            value = arrangement.activeNode?.label ?: state.currentSection?.name ?: "—",
+                            accent = state.currentSection?.let { sectionDisplayColor(it) } ?: MaterialTheme.colorScheme.primary,
+                        )
+                        if (arrangement.active && arrangement.iteration > 1) {
                             Text(
-                                when {
-                                    node.repeatCount < 0 -> "${node.label} · ${stringResource(R.string.arrangement_until_continue)}"
-                                    node.repeatCount > 1 -> "${node.label} · ${stringResource(R.string.arrangement_times_short, node.repeatCount)}"
-                                    else -> node.label
-                                },
+                                stringResource(R.string.workspace_iteration, arrangement.iteration),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                        },
-                    )
-                }
-            } else {
-                items(state.sections, key = { it.id }) { section ->
-                    StatusChip(section.name, state.currentSection?.id == section.id || state.queuedSectionId == section.id)
-                }
-            }
-        }
-        Text(stringResource(R.string.workspace_live_hint), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(stringResource(R.string.workspace_transport), fontWeight = FontWeight.Bold)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = onPlayPause,
-                        enabled = !state.crossfadeInProgress,
-                        modifier = Modifier.weight(1.4f),
-                    ) {
-                        Text(if (state.isPlaying) stringResource(R.string.workspace_pause) else stringResource(R.string.workspace_play), fontWeight = FontWeight.Bold)
-                    }
-                    OutlinedButton(onClick = onStop, enabled = !state.crossfadeInProgress, modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.workspace_stop))
-                    }
-                    Button(
-                        onClick = onStopAll,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    ) {
-                        Text(stringResource(R.string.workspace_stop_all))
-                    }
-                }
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    FilterChip(selected = state.clickEnabled, onClick = { onClick(!state.clickEnabled) }, label = { Text(stringResource(R.string.workspace_click)) })
-                    FilterChip(selected = state.guideEnabled, onClick = { onGuide(!state.guideEnabled) }, label = { Text(stringResource(R.string.workspace_guide)) })
-                    if (!arrangement.active) {
-                        OutlinedButton(onClick = onArrangementStart) { Text(stringResource(R.string.workspace_arrangement_start)) }
-                    } else {
-                        OutlinedButton(onClick = onArrangementStop) { Text(stringResource(R.string.workspace_arrangement_stop)) }
-                        if (arrangement.activeNode?.infinite == true) {
-                            Button(onClick = onArrangementExitLoop) { Text(stringResource(R.string.workspace_exit_loop)) }
                         }
                     }
+                    Column(Modifier.weight(1f)) {
+                        StageGridMetric(
+                            label = stringResource(R.string.workspace_next),
+                            value = arrangement.queuedNode?.label ?: state.nextSection?.name ?: "—",
+                            accent = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
                 }
-                Text(stringResource(R.string.workspace_master, (state.masterVolume * 100).roundToInt()))
-                Slider(value = state.masterVolume.coerceIn(0f, 1.25f), onValueChange = onMaster, valueRange = 0f..1.25f)
+            }
+
+            Text(stringResource(R.string.workspace_sections), fontWeight = FontWeight.Bold)
+            if (nodes.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(nodes, key = { it.id }) { node ->
+                        val sectionColor = sectionsById[node.sectionId]?.let { sectionDisplayColor(it) }
+                            ?: MaterialTheme.colorScheme.primary
+                        StageSectionButton(
+                            label = node.label,
+                            accent = sectionColor,
+                            isCurrent = arrangement.activeNodeId == node.id,
+                            isQueued = arrangement.queuedNodeId == node.id,
+                            enabled = !transportBusy,
+                            supportingText = when {
+                                node.repeatCount < 0 -> stringResource(R.string.arrangement_until_continue)
+                                node.repeatCount > 1 -> stringResource(R.string.arrangement_times_short, node.repeatCount)
+                                else -> null
+                            },
+                            clickLabel = stringResource(R.string.cd_jump_to_section, node.label),
+                            onClick = { onArrangementNode(node.id) },
+                        )
+                    }
+                }
+            } else if (state.sections.isNotEmpty()) {
+                // Without an arrangement graph these used to render as StatusChips with an empty
+                // onClick, so the live workspace offered no way at all to jump to a section. They
+                // now request the same bar-aligned transition the arrangement nodes use.
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(state.sections, key = { it.id }) { section ->
+                        StageSectionButton(
+                            label = section.name,
+                            accent = sectionDisplayColor(section),
+                            isCurrent = state.currentSection?.id == section.id,
+                            isQueued = state.queuedSectionId == section.id,
+                            enabled = !transportBusy,
+                            supportingText = formatWorkspaceTime(section.startMs),
+                            clickLabel = stringResource(R.string.cd_jump_to_section, section.name),
+                            onClick = { onSection(section) },
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    stringResource(R.string.arrangement_no_sections),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Text(stringResource(R.string.workspace_live_hint), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            StageGridPanel {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(stringResource(R.string.workspace_transport), fontWeight = FontWeight.Bold)
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(selected = state.clickEnabled, onClick = { onClick(!state.clickEnabled) }, label = { Text(stringResource(R.string.workspace_click)) })
+                        FilterChip(selected = state.guideEnabled, onClick = { onGuide(!state.guideEnabled) }, label = { Text(stringResource(R.string.workspace_guide)) })
+                        if (!arrangement.active) {
+                            OutlinedButton(onClick = onArrangementStart) { Text(stringResource(R.string.workspace_arrangement_start)) }
+                        } else {
+                            OutlinedButton(onClick = onArrangementStop) { Text(stringResource(R.string.workspace_arrangement_stop)) }
+                            if (arrangement.activeNode?.infinite == true) {
+                                Button(onClick = onArrangementExitLoop) { Text(stringResource(R.string.workspace_exit_loop)) }
+                            }
+                        }
+                    }
+                    Text(stringResource(R.string.workspace_master, (state.masterVolume * 100).roundToInt()))
+                    Slider(value = state.masterVolume.coerceIn(0f, 1.25f), onValueChange = onMaster, valueRange = 0f..1.25f)
+                }
+            }
+
+            if (compact) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onOpenQuickMix, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.workspace_quick_mix), maxLines = 1) }
+                    OutlinedButton(onClick = onOpenArrangement, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.workspace_edit_arrangement), maxLines = 1) }
+                    OutlinedButton(onClick = onOpenSetlist, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.workspace_setlist), maxLines = 1) }
+                }
+            } else {
+                OutlinedButton(onClick = onOpenArrangement, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.workspace_edit_arrangement))
+                }
+            }
+
+            // The live workspace never surfaced engine errors; they were only visible on the
+            // advanced screen, which is exactly where a performer is not looking.
+            state.outputNotice?.let {
+                Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium)
+            }
+            state.errorMessage?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
         }
 
-        if (compact) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onOpenQuickMix, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.workspace_quick_mix)) }
-                OutlinedButton(onClick = onOpenArrangement, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.workspace_edit_arrangement)) }
-                OutlinedButton(onClick = onOpenSetlist, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.workspace_setlist)) }
-            }
-        } else {
-            OutlinedButton(onClick = onOpenArrangement, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.workspace_edit_arrangement))
-            }
-        }
+        StageTransportDock(
+            isPlaying = state.isPlaying,
+            enabled = !state.crossfadeInProgress,
+            positionMs = state.positionMs,
+            durationMs = state.durationMs,
+            countInText = countInText,
+            setlistActive = setlistLive.active,
+            hasPreviousSong = setlistLive.hasPrevious,
+            hasNextSong = setlistLive.hasNext,
+            onPlayPause = onPlayPause,
+            onStop = onStop,
+            onStopAll = onStopAll,
+            onPreviousSong = onSetlistPrevious,
+            onNextSong = onSetlistNext,
+        )
     }
 }
 
 @Composable
-private fun StatusChip(label: String, selected: Boolean) {
-    FilterChip(selected = selected, onClick = {}, label = { Text(label) })
+private fun engineStateLabel(state: EngineState): String = when (state) {
+    EngineState.IDLE -> stringResource(R.string.engine_state_idle)
+    EngineState.LOADING -> stringResource(R.string.engine_state_loading)
+    EngineState.READY -> stringResource(R.string.engine_state_ready)
+    EngineState.PLAYING -> stringResource(R.string.engine_state_playing)
+    EngineState.PAUSED -> stringResource(R.string.engine_state_paused)
+    EngineState.SEEKING -> stringResource(R.string.engine_state_seeking)
+    EngineState.STOPPING -> stringResource(R.string.engine_state_stopping)
+    EngineState.ERROR -> stringResource(R.string.engine_state_error)
 }
 
 @Composable

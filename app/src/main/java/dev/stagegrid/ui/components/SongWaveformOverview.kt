@@ -48,6 +48,7 @@ fun SongWaveformOverview(
     positionMs: Long,
     durationMs: Long,
     sections: List<SectionEntity> = emptyList(),
+    currentSectionId: String? = null,
     onSeek: ((Long) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -136,6 +137,22 @@ fun SongWaveformOverview(
                         val x = (section.startMs.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f) * width
                         drawLine(boundary, Offset(x, 8f), Offset(x, size.height - 8f), strokeWidth = 1.2f)
                         drawCircle(boundary, radius = 3.2f, center = Offset(x, 8f))
+                    }
+
+                    // Section identity band. Each section already owns a colour; showing it here and
+                    // on the jump buttons lets a performer match "where am I" to "where do I go" by
+                    // hue instead of by reading two lists of names.
+                    val bandHeight = 7f
+                    sections.forEach { section ->
+                        val startX = (section.startMs.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f) * width
+                        val endX = (section.endMs.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f) * width
+                        val bandWidth = (endX - startX).coerceAtLeast(2f)
+                        val isCurrent = section.id == currentSectionId
+                        drawRect(
+                            color = sectionDisplayColor(section).copy(alpha = if (isCurrent) 0.95f else 0.42f),
+                            topLeft = Offset(startX, size.height - bandHeight),
+                            size = androidx.compose.ui.geometry.Size(bandWidth, bandHeight),
+                        )
                     }
 
                     drawLine(playhead, Offset(playheadX, 0f), Offset(playheadX, size.height), strokeWidth = 2.6f)

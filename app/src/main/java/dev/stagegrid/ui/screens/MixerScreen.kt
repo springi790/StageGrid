@@ -53,6 +53,7 @@ fun MixerScreen(
     var showAdvancedRouting by remember { mutableStateOf(false) }
     val availableBuses = OutputBus.availableForChannels(state.outputChannelCount)
     val playableTracks = state.tracks.count { TrackType.fromStorage(it.type) != TrackType.CLICK }
+    val soloedTrackCount = state.tracks.count { it.solo }
 
     LazyColumn(
         modifier.fillMaxSize().padding(horizontal = 14.dp),
@@ -76,6 +77,37 @@ fun MixerScreen(
                 }
             }
             return@LazyColumn
+        }
+
+        // Solo silences every other stem. Finding out mid-song that a rehearsal solo was left
+        // armed is a classic "why is there no sound" moment, so it gets an unmissable banner and a
+        // one-tap way out instead of being visible only as a chip state further down the list.
+        if (soloedTrackCount > 0) {
+            item {
+                StageGridPanel(accent = StageGridColors.Amber) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(
+                                stringResource(R.string.mixer_solo_active_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Black,
+                                color = StageGridColors.Amber,
+                            )
+                            StageGridPill(stringResource(R.string.solo), StageGridColors.Amber)
+                        }
+                        Text(
+                            stringResource(R.string.mixer_solo_active_desc, soloedTrackCount),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Button(
+                            onClick = {
+                                state.tracks.forEachIndexed { index, track -> if (track.solo) onSolo(index, false) }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(stringResource(R.string.mixer_clear_solo), fontWeight = FontWeight.Bold) }
+                    }
+                }
+            }
         }
 
         item {

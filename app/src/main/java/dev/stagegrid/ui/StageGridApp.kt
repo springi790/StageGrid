@@ -39,6 +39,9 @@ import dev.stagegrid.backup.BackupStage
 import dev.stagegrid.importer.ImportStage
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.ui.components.GridOffsetCalibrator
+import dev.stagegrid.ui.components.StageGlyph
+import dev.stagegrid.ui.components.StageIcon
+import dev.stagegrid.ui.components.StageMiniTransport
 import dev.stagegrid.ui.screens.CloudBrowserDialog
 import dev.stagegrid.ui.screens.LibraryScreen
 import dev.stagegrid.ui.screens.LiveWorkspaceScreen
@@ -48,13 +51,13 @@ import dev.stagegrid.ui.screens.SectionEditorDialog
 import dev.stagegrid.ui.screens.SetlistsScreen
 import dev.stagegrid.ui.screens.SettingsScreen
 
-private enum class MainScreen(val labelRes: Int) {
-    LIBRARY(R.string.library),
-    SETLISTS(R.string.setlists),
-    PLAYER(R.string.live_workspace),
-    MIXER(R.string.mixer),
-    ADVANCED(R.string.advanced_options),
-    SETTINGS(R.string.settings),
+private enum class MainScreen(val labelRes: Int, val icon: StageIcon) {
+    LIBRARY(R.string.library, StageIcon.LIBRARY),
+    SETLISTS(R.string.setlists, StageIcon.SETLISTS),
+    PLAYER(R.string.live_workspace, StageIcon.LIVE),
+    MIXER(R.string.mixer, StageIcon.MIXER),
+    ADVANCED(R.string.advanced_options, StageIcon.ADVANCED),
+    SETTINGS(R.string.settings, StageIcon.SETTINGS),
 }
 
 @Composable
@@ -99,14 +102,34 @@ fun StageGridApp(viewModel: StageGridViewModel) {
     Scaffold(
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
         bottomBar = {
-            NavigationBar {
-                availableScreens.forEach { item ->
-                    NavigationBarItem(
-                        selected = screen == item,
-                        onClick = { screen = item },
-                        icon = { Text(item.name.take(1)) },
-                        label = { Text(stringResource(item.labelRes)) },
-                    )
+            Column {
+                // Transport follows you out of the live workspace. Adjusting a fader or checking a
+                // setting used to leave no way to stop playback without navigating back first.
+                player.song?.let { loadedSong ->
+                    if (screen != MainScreen.PLAYER) {
+                        StageMiniTransport(
+                            songTitle = loadedSong.title,
+                            positionMs = player.positionMs,
+                            durationMs = player.durationMs,
+                            isPlaying = player.isPlaying,
+                            enabled = !player.crossfadeInProgress,
+                            onOpenLive = { screen = MainScreen.PLAYER },
+                            onPlayPause = viewModel::playPause,
+                            onStop = viewModel::stop,
+                        )
+                    }
+                }
+                NavigationBar {
+                    availableScreens.forEach { item ->
+                        NavigationBarItem(
+                            selected = screen == item,
+                            onClick = { screen = item },
+                            // The label is already read out, so the glyph stays decorative rather
+                            // than making TalkBack announce every destination twice.
+                            icon = { StageGlyph(item.icon, contentDescription = null) },
+                            label = { Text(stringResource(item.labelRes)) },
+                        )
+                    }
                 }
             }
         },
@@ -154,6 +177,7 @@ fun StageGridApp(viewModel: StageGridViewModel) {
                 onArrangementStop = viewModel::stopArrangement,
                 onArrangementExitLoop = viewModel::exitArrangementLoop,
                 onArrangementNode = viewModel::selectArrangementNode,
+                onSection = viewModel::selectSection,
                 onArrangementMove = viewModel::moveArrangementNode,
                 onArrangementRepeat = viewModel::setArrangementRepeat,
                 onArrangementPreRoll = viewModel::setArrangementPreRoll,

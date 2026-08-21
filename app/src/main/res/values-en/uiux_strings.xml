@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Accessibility labels for icon-only controls. -->
+    <string name="cd_play">Play</string>
+    <string name="cd_pause">Pause</string>
+    <string name="cd_stop">Stop</string>
+    <string name="cd_open_live">Open live workspace</string>
+    <string name="cd_beat_pulse">Bar %1$d, beat %2$d</string>
+    <string name="cd_jump_to_section">Go to %1$s</string>
+
+    <!-- Engine state, shown as a status badge instead of the raw enum name. -->
+    <string name="engine_state_idle">IDLE</string>
+    <string name="engine_state_loading">LOADING</string>
+    <string name="engine_state_ready">READY</string>
+    <string name="engine_state_playing">PLAYING</string>
+    <string name="engine_state_paused">PAUSED</string>
+    <string name="engine_state_seeking">SEEKING</string>
+    <string name="engine_state_stopping">STOPPING</string>
+    <string name="engine_state_error">ERROR</string>
+
+    <string name="workspace_loop">LOOP</string>
+
+    <!-- Setlists -->
+    <string name="setlists_kicker">SHOW ORDER</string>
+    <string name="setlists_subtitle">Build the running order and drive it without leaving the stage.</string>
+    <string name="setlists_count">%1$d setlists</string>
+    <string name="setlists_empty_hint">Create your first setlist named after the show or the rehearsal.</string>
+    <string name="setlist_summary">%1$d songs · %2$s</string>
+    <string name="setlist_add_search">Search a song to add</string>
+    <string name="setlist_add_no_candidates">No more songs to add. Import new ones from Library.</string>
+    <string name="setlist_add_more">and %1$d more — type to filter</string>
+
+    <!-- Mixer -->
+    <string name="mixer_solo_active_title">Tracks are soloed</string>
+    <string name="mixer_solo_active_desc">%1$d track(s) soloed: the rest of the mix is silent.</string>
+    <string name="mixer_clear_solo">Clear all solos</string>
+</resources>

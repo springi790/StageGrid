@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Accessibility labels for icon-only controls. -->
+    <string name="cd_play">Reproducir</string>
+    <string name="cd_pause">Pausar</string>
+    <string name="cd_stop">Detener</string>
+    <string name="cd_open_live">Abrir espacio en vivo</string>
+    <string name="cd_beat_pulse">Compás %1$d, tiempo %2$d</string>
+    <string name="cd_jump_to_section">Ir a %1$s</string>
+
+    <!-- Engine state, shown as a status badge instead of the raw enum name. -->
+    <string name="engine_state_idle">EN REPOSO</string>
+    <string name="engine_state_loading">CARGANDO</string>
+    <string name="engine_state_ready">LISTO</string>
+    <string name="engine_state_playing">SONANDO</string>
+    <string name="engine_state_paused">EN PAUSA</string>
+    <string name="engine_state_seeking">BUSCANDO</string>
+    <string name="engine_state_stopping">DETENIENDO</string>
+    <string name="engine_state_error">ERROR</string>
+
+    <string name="workspace_loop">BUCLE</string>
+
+    <!-- Setlists -->
+    <string name="setlists_kicker">ORDEN DEL SHOW</string>
+    <string name="setlists_subtitle">Arma el orden de las canciones y ejecútalo sin salir del escenario.</string>
+    <string name="setlists_count">%1$d setlists</string>
+    <string name="setlists_empty_hint">Crea tu primera setlist con el nombre del show o del ensayo.</string>
+    <string name="setlist_summary">%1$d canciones · %2$s</string>
+    <string name="setlist_add_search">Buscar canción para añadir</string>
+    <string name="setlist_add_no_candidates">No hay más canciones para añadir. Importa nuevas desde Biblioteca.</string>
+    <string name="setlist_add_more">y %1$d más — escribe para filtrar</string>
+
+    <!-- Mixer -->
+    <string name="mixer_solo_active_title">Hay pistas en SOLO</string>
+    <string name="mixer_solo_active_desc">%1$d pista(s) en solo: el resto de la mezcla está en silencio.</string>
+    <string name="mixer_clear_solo">Quitar todos los solos</string>
+</resources>
