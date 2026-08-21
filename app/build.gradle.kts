@@ -67,6 +67,12 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        // Production code logs through StageGridDebugLog, which calls android.util.Log. In a local
+        // JVM unit test every android.* method throws "not mocked" unless this is set, and
+        // GuideCueAnalyzer catches that exception and reports "recognized nothing" — which silently
+        // turned the whole Guide recognition suite red. Let the framework stubs return defaults so
+        // the tests exercise the real analysis path instead of an exception handler.
+        unitTests.isReturnDefaultValues = true
     }
 }
 
