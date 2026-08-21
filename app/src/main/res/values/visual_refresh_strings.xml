@@ -20,6 +20,14 @@
     <string name="mixer_quick_routing">Ruteo rápido</string>
     <string name="mixer_channel_strip">CANAL</string>
     <string name="mixer_reference_badge">REFERENCIA</string>
+    <string name="grid_calibration_title">Calibración del Grid</string>
+    <string name="grid_calibration_help">Ajusta visualmente el primer pulso del grid si la detección automática quedó ligeramente adelantada o atrasada.</string>
+    <string name="grid_calibration_detected">DETECTADO</string>
+    <string name="grid_calibration_reference">REFERENCIA GUARDADA</string>
+    <string name="grid_calibration_current">ACTUAL</string>
+    <string name="grid_calibration_delta">AJUSTE</string>
+    <string name="grid_calibration_reset">Restablecer</string>
+    <string name="grid_calibration_tip">Usa el deslizador para aproximar y los botones de 1 ms / 10 ms para afinar. El nuevo valor se aplica al Click, secciones y posiciones musicales al guardar.</string>
     <string name="labs_title">StageGrid Labs</string>
     <string name="labs_badge">EXPERIMENTAL</string>
     <string name="labs_description">Funciones en desarrollo que pueden cambiar, fallar o requerir configuración adicional. Están desactivadas por defecto.</string>
