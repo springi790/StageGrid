@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="metadata_change_cover">Change cover</string>
+    <string name="metadata_add_cover">Add cover</string>
+    <string name="metadata_cover_error">Could not save artwork</string>
+</resources>
