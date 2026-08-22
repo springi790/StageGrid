@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import QuartzCore
 import Darwin
 
 @MainActor
@@ -111,8 +112,8 @@ final class StageGridAudioEngine: ObservableObject {
         basePosition = 0
         if unload {
             for channel in channels.values {
-                engine.disconnectNodeInput(channel.timePitch)
-                engine.disconnectNodeInput(channel.player)
+                engine.disconnectNodeOutput(channel.player)
+                engine.disconnectNodeOutput(channel.timePitch)
                 engine.detach(channel.player)
                 engine.detach(channel.timePitch)
             }
