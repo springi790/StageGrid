@@ -47,12 +47,13 @@ private final class MidiOutputPipe: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard outputPort != 0, destination != 0, !bytes.isEmpty else { return }
         var list = MIDIPacketList()
-        var packet = MIDIPacketListInit(&list)
+        var packet: UnsafeMutablePointer<MIDIPacket>? = MIDIPacketListInit(&list)
         bytes.withUnsafeBufferPointer { buffer in
-            guard let base = buffer.baseAddress else { return }
-            packet = MIDIPacketListAdd(&list, 1024, packet, 0, buffer.count, base)
+            guard let base = buffer.baseAddress, let current = packet else { return }
+            packet = MIDIPacketListAdd(&list, 1024, current, 0, buffer.count, base)
         }
-        if packet != nil { MIDISend(outputPort, destination, &list) }
+        guard packet != nil else { return }
+        MIDISend(outputPort, destination, &list)
     }
 }
 
