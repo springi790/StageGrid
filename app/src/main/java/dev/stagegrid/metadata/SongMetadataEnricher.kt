@@ -40,12 +40,19 @@ class SongMetadataEnricher(
         var online: MetadataCandidate? = null
         var onlineConfidence = 0f
         if (request.onlineEnabled && query.title.isNotBlank()) {
-            runCatching { provider.search(query) }
+            val candidates = runCatching { provider.search(query) }
                 .onFailure {
                     StageGridDebugLog.state("METADATA", "ONLINE_FAILED song=${request.songId} error=${it.javaClass.simpleName}")
                     notes += "Online metadata lookup was unavailable; import continued offline."
                 }
                 .getOrNull()
+
+            if (candidates != null && candidates.isEmpty()) {
+                StageGridDebugLog.state("METADATA", "ONLINE_EMPTY song=${request.songId} title=${query.title} artist=${query.artist}")
+                notes += "No online catalog match was found; local analysis was used where possible."
+            }
+
+            candidates
                 ?.map { candidate -> candidate to score(query, candidate) }
                 ?.maxByOrNull { it.second }
                 ?.let { (candidate, confidence) ->
@@ -82,7 +89,14 @@ class SongMetadataEnricher(
         val finalKey = request.existingKey ?: local.musicalKey
 
         val artworkPath = if (request.downloadArtwork && applyOnline) {
-            online?.artworkUrl?.let { url -> downloadArtwork(url, request.songRoot) }
+            online?.artworkUrl?.let { url ->
+                downloadArtwork(url, request.songRoot).also { saved ->
+                    if (saved == null) {
+                        StageGridDebugLog.state("METADATA", "ARTWORK_MISSING song=${request.songId} provider=${online?.provider}")
+                        notes += "The song matched online, but that catalog entry had no downloadable cover art."
+                    }
+                }
+            }
         } else null
 
         val result = MetadataEnrichment(
@@ -101,8 +115,8 @@ class SongMetadataEnricher(
     }
 
     private fun analyzeLocal(tracks: List<TrackEntity>, existingBpm: Double?, existingKey: String?): LocalMusicAnalysis {
-        val tempoTrack = tracks.firstOrNull { it.type == TrackType.CLICK.name }
-            ?: tracks.firstOrNull { it.type == TrackType.DRUMS.name || it.type == TrackType.PERCUSSION.name }
+        val clickTrack = tracks.firstOrNull { it.type == TrackType.CLICK.name }
+        val musicalTempoTrack = tracks.firstOrNull { it.type == TrackType.DRUMS.name || it.type == TrackType.PERCUSSION.name }
             ?: tracks.firstOrNull { it.type == TrackType.OTHER.name }
         val keyTrack = tracks.firstOrNull { it.type == TrackType.KEYS.name }
             ?: tracks.firstOrNull { it.type == TrackType.GUITAR.name }
@@ -111,15 +125,35 @@ class SongMetadataEnricher(
             ?: tracks.firstOrNull { it.type == TrackType.VOCALS.name }
             ?: tracks.firstOrNull { it.type == TrackType.BASS.name }
 
-        val tempo = if (existingBpm == null) tempoTrack?.let { LocalMusicAnalyzer.analyzeTempo(File(it.filePath)) } else null
+        var bpm: Double? = null
+        var bpmConfidence = 0f
+        var tempoSource = "NONE"
+        if (existingBpm == null) {
+            val clickTempo = clickTrack?.let { ClickTempoAnalyzer.analyze(File(it.filePath)) }
+            if (clickTempo != null) {
+                bpm = clickTempo.bpm
+                bpmConfidence = clickTempo.confidence
+                tempoSource = "CLICK_PULSE"
+                StageGridDebugLog.state(
+                    "METADATA",
+                    "CLICK_TEMPO bpm=${clickTempo.bpm} confidence=${clickTempo.confidence} pulses=${clickTempo.pulseCount} track=${clickTrack.name}",
+                )
+            } else {
+                val generic = musicalTempoTrack?.let { LocalMusicAnalyzer.analyzeTempo(File(it.filePath)) }
+                bpm = generic?.bpm
+                bpmConfidence = generic?.confidence ?: 0f
+                tempoSource = if (generic != null) "MUSIC_AUTOCORR" else "NONE"
+            }
+        }
+
         val key = if (existingKey.isNullOrBlank()) keyTrack?.let { LocalMusicAnalyzer.analyzeKey(File(it.filePath)) } else null
         StageGridDebugLog.state(
             "METADATA",
-            "LOCAL bpm=${tempo?.bpm} bpmConfidence=${tempo?.confidence} key=${key?.key} keyConfidence=${key?.confidence}",
+            "LOCAL bpm=$bpm bpmConfidence=$bpmConfidence tempoSource=$tempoSource key=${key?.key} keyConfidence=${key?.confidence}",
         )
         return LocalMusicAnalysis(
-            bpm = tempo?.bpm,
-            bpmConfidence = tempo?.confidence ?: 0f,
+            bpm = bpm,
+            bpmConfidence = bpmConfidence,
             musicalKey = key?.key,
             keyConfidence = key?.confidence ?: 0f,
         )
@@ -159,7 +193,11 @@ class SongMetadataEnricher(
             instanceFollowRedirects = true
         }
         try {
-            if (connection.responseCode !in 200..299) return@runCatching null
+            val response = connection.responseCode
+            if (response !in 200..299) {
+                StageGridDebugLog.state("METADATA", "ARTWORK_HTTP code=$response source=$source")
+                return@runCatching null
+            }
             val contentType = connection.contentType.orEmpty().lowercase()
             if (!contentType.startsWith("image/")) return@runCatching null
             val extension = when {
@@ -191,7 +229,7 @@ class SongMetadataEnricher(
     private fun writeSidecar(songRoot: File, result: MetadataEnrichment) {
         runCatching {
             val json = JSONObject()
-                .put("version", 1)
+                .put("version", 2)
                 .put("provider", result.onlineCandidate?.provider)
                 .put("providerId", result.onlineCandidate?.providerId)
                 .put("confidence", result.onlineConfidence.toDouble())
