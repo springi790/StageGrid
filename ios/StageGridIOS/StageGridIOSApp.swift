@@ -10,6 +10,9 @@ struct StageGridIOSApp: App {
                 .environmentObject(model)
                 .environmentObject(model.library)
                 .environmentObject(model.audio)
+                .environmentObject(model.guidePacks)
+                .environmentObject(model.midi)
+                .environmentObject(model.backup)
                 .preferredColorScheme(.dark)
         }
     }
@@ -29,13 +32,10 @@ private struct StartupGateView: View {
                         withAnimation(.easeInOut(duration: 0.28)) { showingSplash = false }
                     }
             } else if !model.preferences.setupComplete {
-                QuickSetupView { preferences in
-                    model.finishSetup(preferences)
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                QuickSetupView { preferences in model.finishSetup(preferences) }
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
-                RootView()
-                    .transition(.opacity)
+                RootView().transition(.opacity)
             }
         }
         .background(Color.sgCanvas.ignoresSafeArea())
@@ -47,51 +47,30 @@ struct StageGridSplashView: View {
 
     var body: some View {
         ZStack {
-            RadialGradient(
-                colors: [Color.sgBlue.opacity(0.22), Color.sgCanvas, Color.black],
-                center: .center,
-                startRadius: 12,
-                endRadius: 520
-            )
-            .ignoresSafeArea()
-
+            RadialGradient(colors: [Color.sgBlue.opacity(0.22), Color.sgCanvas, Color.black], center: .center, startRadius: 12, endRadius: 520)
+                .ignoresSafeArea()
             VStack(spacing: 18) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 32, style: .continuous)
-                        .fill(Color.sgBlue.opacity(pulse ? 0.28 : 0.12))
-                        .frame(width: 126, height: 126)
-                        .blur(radius: 8)
-                    StageGridMark()
-                        .frame(width: 92, height: 92)
-                        .scaleEffect(pulse ? 1.04 : 0.96)
+                        .fill(Color.sgBlue.opacity(pulse ? 0.28 : 0.12)).frame(width: 126, height: 126).blur(radius: 8)
+                    StageGridMark().frame(width: 92, height: 92).scaleEffect(pulse ? 1.04 : 0.96)
                 }
-                Text("STAGEGRID")
-                    .font(.system(size: 34, weight: .black, design: .rounded))
-                    .tracking(2.2)
-                Text("Live Multitrack Workspace")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-                ProgressView()
-                    .tint(.sgBlue)
-                    .padding(.top, 8)
+                Text("STAGEGRID").font(.system(size: 34, weight: .black, design: .rounded)).tracking(2.2)
+                Text("Live Multitrack Workspace").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                ProgressView().tint(.sgBlue).padding(.top, 8)
             }
         }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 0.72).repeatForever(autoreverses: true)) { pulse = true }
-        }
+        .onAppear { withAnimation(.easeInOut(duration: 0.72).repeatForever(autoreverses: true)) { pulse = true } }
     }
 }
 
 struct StageGridMark: View {
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color.sgBlue)
+            RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Color.sgBlue)
             HStack(alignment: .center, spacing: 5) {
                 ForEach([22.0, 48.0, 70.0, 42.0, 28.0], id: \.self) { height in
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(.white)
-                        .frame(width: 8, height: height)
+                    RoundedRectangle(cornerRadius: 3).fill(.white).frame(width: 8, height: height)
                 }
             }
         }
@@ -101,7 +80,6 @@ struct StageGridMark: View {
 struct QuickSetupView: View {
     @EnvironmentObject private var model: AppModel
     let onFinish: (StagePreferences) -> Void
-
     @State private var step = 0
     @State private var draft = StagePreferences()
 
@@ -109,10 +87,8 @@ struct QuickSetupView: View {
         VStack(spacing: 18) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Configuración rápida")
-                        .font(.title.bold())
-                    Text("Deja StageGrid listo para tocar en menos de un minuto.")
-                        .foregroundStyle(.secondary)
+                    Text("Configuración rápida").font(.title.bold())
+                    Text("Deja StageGrid listo para tocar en menos de un minuto.").foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Omitir") {
@@ -121,10 +97,7 @@ struct QuickSetupView: View {
                     onFinish(skipped)
                 }
             }
-
-            ProgressView(value: Double(step + 1), total: 4)
-                .tint(.sgBlue)
-
+            ProgressView(value: Double(step + 1), total: 4).tint(.sgBlue)
             Group {
                 switch step {
                 case 0: setupStage
@@ -134,30 +107,21 @@ struct QuickSetupView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.top, 8)
-            .id(step)
+            .padding(.top, 8).id(step)
             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .move(edge: .leading).combined(with: .opacity)))
 
             HStack(spacing: 12) {
-                if step > 0 {
-                    Button("Atrás") { withAnimation(.snappy) { step -= 1 } }
-                        .buttonStyle(.bordered)
-                }
+                if step > 0 { Button("Atrás") { withAnimation(.snappy) { step -= 1 } }.buttonStyle(.bordered) }
                 Button(step == 3 ? "Terminar" : "Siguiente") {
                     if step == 3 {
                         draft.setupComplete = true
                         onFinish(draft)
-                    } else {
-                        withAnimation(.snappy) { step += 1 }
-                    }
+                    } else { withAnimation(.snappy) { step += 1 } }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.sgBlue)
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.borderedProminent).tint(.sgBlue).frame(maxWidth: .infinity)
             }
         }
-        .padding(24)
-        .background(Color.sgCanvas.ignoresSafeArea())
+        .padding(24).background(Color.sgCanvas.ignoresSafeArea())
         .onAppear { draft = model.preferences }
     }
 
@@ -171,18 +135,30 @@ struct QuickSetupView: View {
     private var setupClick: some View {
         SetupCard(title: "Click y conteo", subtitle: "Puedes cambiarlo después desde Ajustes o Live.") {
             Toggle("Click activado", isOn: $draft.clickEnabled)
+            Picker("Subdivisión", selection: Binding(
+                get: { draft.resolvedClickSubdivision },
+                set: { draft.clickSubdivision = $0 }
+            )) {
+                ForEach(StageClickSubdivision.allCases) { Text($0.label).tag($0) }
+            }
             Picker("Conteo antes de sección", selection: $draft.countInBars) {
                 Text("Sin conteo").tag(0)
                 Text("1 compás").tag(1)
                 Text("2 compases").tag(2)
-            }
-            .pickerStyle(.segmented)
+            }.pickerStyle(.segmented)
         }
     }
 
     private var setupGuide: some View {
-        SetupCard(title: "Guía", subtitle: "La pista Guide original se mantiene independiente del cambio de tonalidad.") {
+        SetupCard(title: "Guía", subtitle: "Puedes usar la Guide original o Cue Auto con tu Guide Pack.") {
             Toggle("Guía activada", isOn: $draft.guideEnabled)
+            Picker("Fuente", selection: Binding(
+                get: { draft.resolvedGuideSource },
+                set: { draft.guideSource = $0 }
+            )) {
+                Text("Guía original").tag(StageGuideSource.original)
+                Text("Cue Auto").tag(StageGuideSource.cue)
+            }.pickerStyle(.segmented)
             Picker("Idioma de cues", selection: $draft.guideLanguage) {
                 Text("Auto").tag("auto")
                 Text("Español").tag("es")
@@ -196,10 +172,11 @@ struct QuickSetupView: View {
     private var setupSummary: some View {
         SetupCard(title: "Listo", subtitle: "Estas preferencias se pueden modificar en cualquier momento.") {
             Label(draft.liveMode ? "Modo Live activado" : "Modo Live desactivado", systemImage: draft.liveMode ? "checkmark.circle.fill" : "circle")
-            Label(draft.clickEnabled ? "Click activado" : "Click desactivado", systemImage: draft.clickEnabled ? "metronome.fill" : "metronome")
+            Label(draft.clickEnabled ? "Click activado" : "Click desactivado", systemImage: "metronome")
             Label(draft.guideEnabled ? "Guía activada" : "Guía desactivada", systemImage: "waveform")
-            Text("Conteo: \(draft.countInBars == 0 ? "Off" : "\(draft.countInBars) compás(es)")")
+            Text("Click: \(draft.resolvedClickSubdivision.label) · Conteo: \(draft.countInBars == 0 ? "Off" : "\(draft.countInBars) compás(es)")")
                 .foregroundStyle(.secondary)
+            Text("Guía: \(draft.resolvedGuideSource == .cue ? "Cue Auto" : "Original")").foregroundStyle(.secondary)
         }
     }
 }
@@ -222,8 +199,7 @@ private struct SetupCard<Content: View>: View {
             Divider()
             content
         }
-        .padding(20)
-        .frame(maxWidth: 720, alignment: .leading)
+        .padding(20).frame(maxWidth: 720, alignment: .leading)
         .background(Color.sgSurface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.white.opacity(0.08)))
     }
