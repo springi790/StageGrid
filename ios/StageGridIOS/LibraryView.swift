@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 struct LibraryView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var library: LibraryStore
-    @State private var importerOpen = false
+    @State private var audioImporterOpen = false
+    @State private var zipImporterOpen = false
     @State private var query = ""
     @State private var importError: String?
 
@@ -24,16 +25,17 @@ struct LibraryView: View {
                     ContentUnavailableView {
                         Label("Tu biblioteca está vacía", systemImage: "waveform.badge.plus")
                     } description: {
-                        Text("Importa los WAV/stems de una canción. StageGrid los copiará a su biblioteca local.")
+                        Text("Importa un ZIP de stems o selecciona varios archivos de audio. StageGrid los copiará a su biblioteca local.")
                     } actions: {
-                        Button("Importar stems") { importerOpen = true }
-                            .buttonStyle(.borderedProminent)
+                        Button("Importar ZIP") { zipImporterOpen = true }.buttonStyle(.borderedProminent)
+                        Button("Seleccionar audios") { audioImporterOpen = true }.buttonStyle(.bordered)
                     }
                     .padding(.vertical, 40)
+                } else if filtered.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                        .padding(.vertical, 40)
                 } else {
-                    ForEach(filtered) { song in
-                        SongLibraryCard(song: song)
-                    }
+                    ForEach(filtered) { song in SongLibraryCard(song: song) }
                 }
             }
             .padding(16)
@@ -43,22 +45,26 @@ struct LibraryView: View {
         .searchable(text: $query, prompt: "Título, artista o tonalidad")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { importerOpen = true } label: { Label("Importar", systemImage: "plus") }
+                Menu {
+                    Button { zipImporterOpen = true } label: { Label("Importar ZIP", systemImage: "archivebox") }
+                    Button { audioImporterOpen = true } label: { Label("Seleccionar audios", systemImage: "waveform.badge.plus") }
+                } label: { Label("Importar", systemImage: "plus") }
             }
         }
-        .fileImporter(
-            isPresented: $importerOpen,
-            allowedContentTypes: [.audio, .wav],
-            allowsMultipleSelection: true
-        ) { result in
+        .fileImporter(isPresented: $audioImporterOpen, allowedContentTypes: [.audio, .wav], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls):
-                do {
-                    let song = try library.importAudioFiles(urls)
-                    model.load(song)
-                } catch {
-                    importError = error.localizedDescription
-                }
+                do { model.load(try library.importAudioFiles(urls)) }
+                catch { importError = error.localizedDescription }
+            case .failure(let error): importError = error.localizedDescription
+            }
+        }
+        .fileImporter(isPresented: $zipImporterOpen, allowedContentTypes: [.zip], allowsMultipleSelection: false) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                do { model.load(try library.importZip(url)) }
+                catch { importError = error.localizedDescription }
             case .failure(let error): importError = error.localizedDescription
             }
         }
@@ -86,6 +92,7 @@ private struct SongLibraryCard: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var library: LibraryStore
     let song: StageSong
+    @State private var editing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -95,11 +102,8 @@ private struct SongLibraryCard: View {
                     Text(song.artist.isEmpty ? "Sin artista" : song.artist).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
-                Text("READY")
-                    .font(.caption2.bold())
-                    .foregroundStyle(Color.sgMint)
-                    .padding(.horizontal, 9).padding(.vertical, 5)
-                    .background(Color.sgMint.opacity(0.12), in: Capsule())
+                Text("READY").font(.caption2.bold()).foregroundStyle(Color.sgMint)
+                    .padding(.horizontal, 9).padding(.vertical, 5).background(Color.sgMint.opacity(0.12), in: Capsule())
             }
 
             HStack(spacing: 22) {
@@ -110,8 +114,8 @@ private struct SongLibraryCard: View {
             }
 
             HStack {
-                Button { model.load(song) } label: { Label("Cargar", systemImage: "play.fill") }
-                    .buttonStyle(.borderedProminent)
+                Button { model.load(song) } label: { Label("Cargar", systemImage: "play.fill") }.buttonStyle(.borderedProminent)
+                Button("Editar") { editing = true }.buttonStyle(.bordered)
                 Spacer()
                 Menu {
                     Button(role: .destructive) { library.delete(song) } label: { Label("Eliminar", systemImage: "trash") }
@@ -121,12 +125,73 @@ private struct SongLibraryCard: View {
         .padding(16)
         .background(Color.sgSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.07)))
+        .sheet(isPresented: $editing) { SongMetadataEditor(song: song) }
     }
 
     private func metric(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.caption2).foregroundStyle(.secondary)
             Text(value).font(.headline).foregroundStyle(Color.sgBlue)
+        }
+    }
+}
+
+private struct SongMetadataEditor: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let song: StageSong
+    @State private var title: String
+    @State private var artist: String
+    @State private var bpm: String
+    @State private var key: String
+    @State private var signature: String
+    @State private var gridOffset: String
+    @State private var notes: String
+
+    init(song: StageSong) {
+        self.song = song
+        _title = State(initialValue: song.title)
+        _artist = State(initialValue: song.artist)
+        _bpm = State(initialValue: String(format: "%.2f", song.bpm).replacingOccurrences(of: ".00", with: ""))
+        _key = State(initialValue: song.musicalKey)
+        _signature = State(initialValue: song.timeSignature)
+        _gridOffset = State(initialValue: String(Int(song.resolvedGridOffsetMs)))
+        _notes = State(initialValue: song.notes)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Canción") {
+                    TextField("Título", text: $title)
+                    TextField("Artista", text: $artist)
+                    TextField("BPM", text: $bpm).keyboardType(.decimalPad)
+                    TextField("Tonalidad", text: $key)
+                    TextField("Compás", text: $signature)
+                    TextField("Grid offset (ms)", text: $gridOffset).keyboardType(.numberPad)
+                    TextField("Notas", text: $notes, axis: .vertical)
+                }
+            }
+            .navigationTitle("Editar canción")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Guardar") {
+                        var updated = song
+                        updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? song.title : title.trimmingCharacters(in: .whitespacesAndNewlines)
+                        updated.artist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+                        updated.bpm = min(max(Double(bpm.replacingOccurrences(of: ",", with: ".")) ?? song.bpm, 20), 400)
+                        updated.musicalKey = key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? song.musicalKey : key.trimmingCharacters(in: .whitespacesAndNewlines)
+                        updated.timeSignature = signature.contains("/") ? signature : song.timeSignature
+                        updated.gridOffsetMs = min(max(Double(gridOffset) ?? song.resolvedGridOffsetMs, 0), 60_000)
+                        updated.notes = notes
+                        library.update(updated)
+                        if model.audio.song?.id == song.id { model.load(updated) }
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }
