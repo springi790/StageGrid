@@ -12,7 +12,7 @@ import java.net.URL
 import org.json.JSONObject
 
 class SongMetadataEnricher(
-    private val provider: MetadataProvider = MusicBrainzMetadataProvider(),
+    private val provider: MetadataProvider = PriorityMetadataProvider(),
 ) {
     data class Request(
         val songId: String,
@@ -229,7 +229,7 @@ class SongMetadataEnricher(
     private fun writeSidecar(songRoot: File, result: MetadataEnrichment) {
         runCatching {
             val json = JSONObject()
-                .put("version", 2)
+                .put("version", 3)
                 .put("provider", result.onlineCandidate?.provider)
                 .put("providerId", result.onlineCandidate?.providerId)
                 .put("confidence", result.onlineConfidence.toDouble())
