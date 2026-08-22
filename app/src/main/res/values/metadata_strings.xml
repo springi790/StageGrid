@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="metadata_change_cover">Cambiar portada</string>
+    <string name="metadata_add_cover">Añadir portada</string>
+    <string name="metadata_cover_error">No se pudo guardar la portada</string>
+</resources>
