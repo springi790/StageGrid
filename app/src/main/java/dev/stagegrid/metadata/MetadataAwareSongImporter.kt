@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import dev.stagegrid.data.LibraryRepository
+import dev.stagegrid.debug.StageGridDebugLog
 import dev.stagegrid.importer.ImportProgress
 import dev.stagegrid.importer.ImportStage
 import dev.stagegrid.importer.SongImporter
@@ -55,7 +56,14 @@ class MetadataAwareSongImporter(
             onProgress?.invoke(ImportProgress(100, ImportStage.COMPLETE))
         }
         val appSettings = settings.settings.first()
-        val onlineAvailable = appSettings.metadataOnlineLookupEnabled && hasValidatedInternet()
+        val network = networkState()
+        // NET_CAPABILITY_VALIDATED is intentionally diagnostic only. Some VPN/private-DNS/captive
+        // configurations can reach HTTPS while Android has not marked the network validated yet.
+        val onlineAvailable = appSettings.metadataOnlineLookupEnabled && network.active
+        StageGridDebugLog.state(
+            "METADATA",
+            "NETWORK active=${network.active} internet=${network.internet} validated=${network.validated} onlineAttempt=$onlineAvailable",
+        )
         onProgress?.invoke(
             ImportProgress(
                 percent = 96,
@@ -111,12 +119,22 @@ class MetadataAwareSongImporter(
         )
     }
 
-    private fun hasValidatedInternet(): Boolean {
-        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
-        val network = manager.activeNetwork ?: return false
-        val capabilities = manager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    private data class NetworkState(
+        val active: Boolean,
+        val internet: Boolean,
+        val validated: Boolean,
+    )
+
+    private fun networkState(): NetworkState {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return NetworkState(false, false, false)
+        val network = manager.activeNetwork ?: return NetworkState(false, false, false)
+        val capabilities = manager.getNetworkCapabilities(network)
+        return NetworkState(
+            active = true,
+            internet = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
+            validated = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
+        )
     }
 
     private fun bridgeProgress(
