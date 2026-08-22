@@ -29,6 +29,9 @@ struct SetlistsView: View {
                         }
                     }
                 }
+                .onDelete { offsets in
+                    for offset in offsets { library.deleteSetlist(library.setlists[offset].id) }
+                }
             }
         }
         .scrollContentBackground(.hidden)
@@ -38,10 +41,7 @@ struct SetlistsView: View {
         .alert("Nuevo setlist", isPresented: $creating) {
             TextField("Nombre", text: $newName)
             Button("Cancelar", role: .cancel) { newName = "" }
-            Button("Crear") {
-                library.createSetlist(name: newName)
-                newName = ""
-            }
+            Button("Crear") { library.createSetlist(name: newName); newName = "" }
         }
     }
 }
@@ -60,34 +60,44 @@ private struct SetlistDetailView: View {
 
     var body: some View {
         List {
-            if songs.isEmpty {
-                Text("Este setlist todavía no tiene canciones.").foregroundStyle(.secondary)
+            if let setlist, !songs.isEmpty {
+                Section {
+                    Button {
+                        model.startSetlistLive(setlist)
+                        model.selectedTab = .live
+                    } label: {
+                        Label("Iniciar Setlist Live", systemImage: "play.rectangle.on.rectangle.fill")
+                            .font(.headline.bold()).frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent).tint(.sgBlue)
+                }
             }
-            ForEach(Array(songs.enumerated()), id: \.offset) { index, song in
-                Button {
-                    model.load(song)
-                } label: {
+            Section("Canciones") {
+                if songs.isEmpty { Text("Este setlist todavía no tiene canciones.").foregroundStyle(.secondary) }
+                ForEach(Array(songs.enumerated()), id: \.element.id) { index, song in
                     HStack {
                         Text("\(index + 1)").font(.caption.bold()).foregroundStyle(.secondary).frame(width: 22)
-                        VStack(alignment: .leading) {
-                            Text(song.title).font(.headline).foregroundStyle(.primary)
-                            Text("\(Int(song.bpm)) BPM · \(song.musicalKey)").font(.caption).foregroundStyle(.secondary)
+                        Button { model.load(song) } label: {
+                            VStack(alignment: .leading) {
+                                Text(song.title).font(.headline).foregroundStyle(.primary)
+                                Text("\(Int(song.bpm)) BPM · \(song.musicalKey)").font(.caption).foregroundStyle(.secondary)
+                            }
                         }
+                        .buttonStyle(.plain)
                         Spacer()
-                        Image(systemName: "play.fill").foregroundStyle(Color.sgBlue)
+                        Image(systemName: "line.3.horizontal").foregroundStyle(.secondary)
                     }
                 }
-                .buttonStyle(.plain)
-            }
-            .onMove { from, to in
-                guard var list = setlist else { return }
-                list.songIDs.move(fromOffsets: from, toOffset: to)
-                library.updateSetlist(list)
-            }
-            .onDelete { offsets in
-                guard var list = setlist else { return }
-                list.songIDs.remove(atOffsets: offsets)
-                library.updateSetlist(list)
+                .onMove { from, to in
+                    guard var list = setlist else { return }
+                    list.songIDs.move(fromOffsets: from, toOffset: to)
+                    library.updateSetlist(list)
+                }
+                .onDelete { offsets in
+                    guard var list = setlist else { return }
+                    list.songIDs.remove(atOffsets: offsets)
+                    library.updateSetlist(list)
+                }
             }
         }
         .scrollContentBackground(.hidden)
@@ -111,6 +121,7 @@ private struct SetlistDetailView: View {
                             Text(song.artist).font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    .disabled(setlist?.songIDs.contains(song.id) == true)
                 }
                 .navigationTitle("Añadir canción")
                 .toolbar { Button("Cerrar") { adding = false } }
