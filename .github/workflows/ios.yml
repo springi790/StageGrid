@@ -30,7 +30,6 @@ jobs:
       - name: Build StageGrid for iOS Simulator
         working-directory: ios
         run: |
-          set -o pipefail
           xcodebuild \
             -project StageGridIOS.xcodeproj \
             -scheme StageGridIOS \
@@ -39,7 +38,7 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
-            build | xcpretty
+            build
 
       - name: Package simulator app
         working-directory: ios
