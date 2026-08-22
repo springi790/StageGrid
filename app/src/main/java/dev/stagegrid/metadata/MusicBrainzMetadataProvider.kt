@@ -37,7 +37,8 @@ class MusicBrainzMetadataProvider : MetadataProvider {
         val title = escape(query.title.trim())
         val artist = escape(query.artist.trim())
         return when {
-            title.isNotBlank() && artist.isNotBlank() -> "recording:\"$title\" AND artist:\"$artist\""
+            title.isNotBlank() && artist.isNotBlank() ->
+                "(recording:\"$title\" AND artist:\"$artist\") OR (recording:\"$artist\" AND artist:\"$title\")"
             title.isNotBlank() -> "recording:\"$title\""
             else -> ""
         }
