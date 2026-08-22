@@ -3,7 +3,6 @@ package dev.stagegrid.metadata
 import java.io.File
 import java.io.RandomAccessFile
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.ln
 import kotlin.math.max
@@ -21,132 +20,136 @@ object LocalMusicAnalyzer {
     data class TempoResult(val bpm: Double, val confidence: Float)
     data class KeyResult(val key: String, val confidence: Float)
 
-    fun analyzeTempo(file: File): TempoResult? = runCatching {
-        RandomAccessFile(file, "r").use { raf ->
-            val wav = parseWav(raf) ?: return null
-            val hopFrames = max(256, wav.sampleRate / 50) // ~20 ms
-            val maxFrames = minOf(wav.frameCount, wav.sampleRate.toLong() * 90L)
-            val count = (maxFrames / hopFrames).toInt().coerceAtMost(5_000)
-            if (count < 120) return null
-            val energy = DoubleArray(count)
-            raf.seek(wav.dataOffset)
-            var cursor = 0L
-            for (i in 0 until count) {
-                var sum = 0.0
-                var used = 0
-                while (used < hopFrames && cursor < maxFrames) {
-                    val sample = readMonoFrame(raf, wav)
-                    sum += sample * sample
-                    cursor++
-                    used++
+    fun analyzeTempo(file: File): TempoResult? {
+        return runCatching {
+            RandomAccessFile(file, "r").use { raf ->
+                val wav = parseWav(raf) ?: return@use null
+                val hopFrames = max(256, wav.sampleRate / 50) // ~20 ms
+                val maxFrames = minOf(wav.frameCount, wav.sampleRate.toLong() * 90L)
+                val count = (maxFrames / hopFrames).toInt().coerceAtMost(5_000)
+                if (count < 120) return@use null
+                val energy = DoubleArray(count)
+                raf.seek(wav.dataOffset)
+                var cursor = 0L
+                for (i in 0 until count) {
+                    var sum = 0.0
+                    var used = 0
+                    while (used < hopFrames && cursor < maxFrames) {
+                        val sample = readMonoFrame(raf, wav)
+                        sum += sample * sample
+                        cursor++
+                        used++
+                    }
+                    energy[i] = sqrt(sum / used.coerceAtLeast(1))
                 }
-                energy[i] = sqrt(sum / used.coerceAtLeast(1))
-            }
-            val onset = DoubleArray(count)
-            for (i in 1 until count) onset[i] = max(0.0, energy[i] - energy[i - 1])
-            val mean = onset.average()
-            var variance = 0.0
-            for (value in onset) variance += (value - mean) * (value - mean)
-            if (variance <= 1e-12) return null
+                val onset = DoubleArray(count)
+                for (i in 1 until count) onset[i] = max(0.0, energy[i] - energy[i - 1])
+                val mean = onset.average()
+                var variance = 0.0
+                for (value in onset) variance += (value - mean) * (value - mean)
+                if (variance <= 1e-12) return@use null
 
-            val minBpm = 60.0
-            val maxBpm = 200.0
-            val secondsPerHop = hopFrames.toDouble() / wav.sampleRate
-            val minLag = (60.0 / maxBpm / secondsPerHop).toInt().coerceAtLeast(1)
-            val maxLag = (60.0 / minBpm / secondsPerHop).toInt().coerceAtMost(count / 2)
-            var bestLag = 0
-            var best = Double.NEGATIVE_INFINITY
-            var second = Double.NEGATIVE_INFINITY
-            for (lag in minLag..maxLag) {
-                var score = 0.0
-                var normA = 0.0
-                var normB = 0.0
-                for (i in lag until count) {
-                    val a = onset[i]
-                    val b = onset[i - lag]
-                    score += a * b
-                    normA += a * a
-                    normB += b * b
-                }
-                val normalized = score / sqrt((normA * normB).coerceAtLeast(1e-18))
-                if (normalized > best) {
-                    second = best
-                    best = normalized
-                    bestLag = lag
-                } else if (normalized > second) {
-                    second = normalized
-                }
-            }
-            if (bestLag <= 0 || best < 0.08) return null
-            var bpm = 60.0 / (bestLag * secondsPerHop)
-            // StageGrid's practical live range favors musical quarter-note tempo over extreme halves.
-            while (bpm < 70.0) bpm *= 2.0
-            while (bpm > 190.0) bpm /= 2.0
-            val separation = ((best - second.coerceAtLeast(0.0)) / best.coerceAtLeast(1e-6)).coerceIn(0.0, 1.0)
-            val confidence = (best * 0.72 + separation * 0.28).toFloat().coerceIn(0f, 1f)
-            if (confidence < 0.20f) null else TempoResult((bpm * 10.0).toInt() / 10.0, confidence)
-        }
-    }.getOrNull()
-
-    fun analyzeKey(file: File): KeyResult? = runCatching {
-        RandomAccessFile(file, "r").use { raf ->
-            val wav = parseWav(raf) ?: return null
-            val window = 4_096
-            if (wav.frameCount < window * 4L) return null
-            val availableSeconds = (wav.frameCount.toDouble() / wav.sampleRate).coerceAtMost(90.0)
-            val windows = minOf(28, max(8, (availableSeconds / 3.0).toInt()))
-            val chroma = DoubleArray(12)
-            val frequencies = Array(12) { pitchClass ->
-                doubleArrayOf(
-                    midiToHz(48 + pitchClass),
-                    midiToHz(60 + pitchClass),
-                    midiToHz(72 + pitchClass),
-                )
-            }
-            val samples = DoubleArray(window)
-            for (w in 0 until windows) {
-                val center = ((w + 0.5) / windows * minOf(wav.frameCount.toDouble(), wav.sampleRate * 90.0)).toLong()
-                val start = (center - window / 2).coerceIn(0, (wav.frameCount - window).coerceAtLeast(0))
-                raf.seek(wav.dataOffset + start * wav.blockAlign)
-                var rms = 0.0
-                for (i in 0 until window) {
-                    val hann = 0.5 - 0.5 * cos(2.0 * PI * i / (window - 1))
-                    val sample = readMonoFrame(raf, wav) * hann
-                    samples[i] = sample
-                    rms += sample * sample
-                }
-                if (rms / window < 1e-7) continue
-                for (pc in 0 until 12) {
-                    var power = 0.0
-                    for (frequency in frequencies[pc]) power += goertzelPower(samples, wav.sampleRate.toDouble(), frequency)
-                    chroma[pc] += ln(1.0 + power)
-                }
-            }
-            val total = chroma.sum()
-            if (total <= 1e-9) return null
-            for (i in chroma.indices) chroma[i] /= total
-
-            var bestLabel = ""
-            var best = Double.NEGATIVE_INFINITY
-            var second = Double.NEGATIVE_INFINITY
-            for (root in 0 until 12) {
-                val major = correlation(chroma, MAJOR_PROFILE, root)
-                val minor = correlation(chroma, MINOR_PROFILE, root)
-                for ((score, suffix) in arrayOf(major to "", minor to "m")) {
-                    if (score > best) {
+                val minBpm = 60.0
+                val maxBpm = 200.0
+                val secondsPerHop = hopFrames.toDouble() / wav.sampleRate
+                val minLag = (60.0 / maxBpm / secondsPerHop).toInt().coerceAtLeast(1)
+                val maxLag = (60.0 / minBpm / secondsPerHop).toInt().coerceAtMost(count / 2)
+                var bestLag = 0
+                var best = Double.NEGATIVE_INFINITY
+                var second = Double.NEGATIVE_INFINITY
+                for (lag in minLag..maxLag) {
+                    var score = 0.0
+                    var normA = 0.0
+                    var normB = 0.0
+                    for (i in lag until count) {
+                        val a = onset[i]
+                        val b = onset[i - lag]
+                        score += a * b
+                        normA += a * a
+                        normB += b * b
+                    }
+                    val normalized = score / sqrt((normA * normB).coerceAtLeast(1e-18))
+                    if (normalized > best) {
                         second = best
-                        best = score
-                        bestLabel = NOTE_NAMES[root] + suffix
-                    } else if (score > second) {
-                        second = score
+                        best = normalized
+                        bestLag = lag
+                    } else if (normalized > second) {
+                        second = normalized
                     }
                 }
+                if (bestLag <= 0 || best < 0.08) return@use null
+                var bpm = 60.0 / (bestLag * secondsPerHop)
+                while (bpm < 70.0) bpm *= 2.0
+                while (bpm > 190.0) bpm /= 2.0
+                val separation = ((best - second.coerceAtLeast(0.0)) / best.coerceAtLeast(1e-6)).coerceIn(0.0, 1.0)
+                val confidence = (best * 0.72 + separation * 0.28).toFloat().coerceIn(0f, 1f)
+                if (confidence < 0.20f) null else TempoResult((bpm * 10.0).toInt() / 10.0, confidence)
             }
-            val margin = (best - second.coerceAtLeast(-1.0)).coerceAtLeast(0.0)
-            val confidence = ((best.coerceAtLeast(0.0) * 0.72) + (margin * 1.8).coerceAtMost(0.28)).toFloat().coerceIn(0f, 1f)
-            if (bestLabel.isBlank() || confidence < 0.34f) null else KeyResult(bestLabel, confidence)
-        }
-    }.getOrNull()
+        }.getOrNull()
+    }
+
+    fun analyzeKey(file: File): KeyResult? {
+        return runCatching {
+            RandomAccessFile(file, "r").use { raf ->
+                val wav = parseWav(raf) ?: return@use null
+                val window = 4_096
+                if (wav.frameCount < window * 4L) return@use null
+                val availableSeconds = (wav.frameCount.toDouble() / wav.sampleRate).coerceAtMost(90.0)
+                val windows = minOf(28, max(8, (availableSeconds / 3.0).toInt()))
+                val chroma = DoubleArray(12)
+                val frequencies = Array(12) { pitchClass ->
+                    doubleArrayOf(
+                        midiToHz(48 + pitchClass),
+                        midiToHz(60 + pitchClass),
+                        midiToHz(72 + pitchClass),
+                    )
+                }
+                val samples = DoubleArray(window)
+                for (w in 0 until windows) {
+                    val center = ((w + 0.5) / windows * minOf(wav.frameCount.toDouble(), wav.sampleRate * 90.0)).toLong()
+                    val maximumStart = (wav.frameCount - window.toLong()).coerceAtLeast(0L)
+                    val start = (center - window / 2L).coerceIn(0L, maximumStart)
+                    raf.seek(wav.dataOffset + start * wav.blockAlign)
+                    var rms = 0.0
+                    for (i in 0 until window) {
+                        val hann = 0.5 - 0.5 * cos(2.0 * PI * i / (window - 1))
+                        val sample = readMonoFrame(raf, wav) * hann
+                        samples[i] = sample
+                        rms += sample * sample
+                    }
+                    if (rms / window < 1e-7) continue
+                    for (pc in 0 until 12) {
+                        var power = 0.0
+                        for (frequency in frequencies[pc]) power += goertzelPower(samples, wav.sampleRate.toDouble(), frequency)
+                        chroma[pc] += ln(1.0 + power)
+                    }
+                }
+                val total = chroma.sum()
+                if (total <= 1e-9) return@use null
+                for (i in chroma.indices) chroma[i] /= total
+
+                var bestLabel = ""
+                var best = Double.NEGATIVE_INFINITY
+                var second = Double.NEGATIVE_INFINITY
+                for (root in 0 until 12) {
+                    val major = correlation(chroma, MAJOR_PROFILE, root)
+                    val minor = correlation(chroma, MINOR_PROFILE, root)
+                    for ((score, suffix) in arrayOf(major to "", minor to "m")) {
+                        if (score > best) {
+                            second = best
+                            best = score
+                            bestLabel = NOTE_NAMES[root] + suffix
+                        } else if (score > second) {
+                            second = score
+                        }
+                    }
+                }
+                val margin = (best - second.coerceAtLeast(-1.0)).coerceAtLeast(0.0)
+                val confidence = ((best.coerceAtLeast(0.0) * 0.72) + (margin * 1.8).coerceAtMost(0.28)).toFloat().coerceIn(0f, 1f)
+                if (bestLabel.isBlank() || confidence < 0.34f) null else KeyResult(bestLabel, confidence)
+            }
+        }.getOrNull()
+    }
 
     private fun goertzelPower(samples: DoubleArray, sampleRate: Double, frequency: Double): Double {
         val omega = 2.0 * PI * frequency / sampleRate
@@ -255,16 +258,20 @@ object LocalMusicAnalyzer {
         raf.readFully(bytes)
         return bytes.toString(Charsets.US_ASCII)
     }
+
     private fun readU16(raf: RandomAccessFile): Int = raf.readUnsignedByte() or (raf.readUnsignedByte() shl 8)
+
     private fun readS16(raf: RandomAccessFile): Int {
         val value = readU16(raf)
         return if (value and 0x8000 != 0) value - 0x10000 else value
     }
+
     private fun readS24(raf: RandomAccessFile): Int {
         var value = raf.readUnsignedByte() or (raf.readUnsignedByte() shl 8) or (raf.readUnsignedByte() shl 16)
         if (value and 0x800000 != 0) value = value or -0x1000000
         return value
     }
+
     private fun readU32(raf: RandomAccessFile): Long {
         val b0 = raf.readUnsignedByte().toLong()
         val b1 = raf.readUnsignedByte().toLong()
