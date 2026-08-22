@@ -39,6 +39,7 @@ file(COPY "${signalsmith_linear_SOURCE_DIR}/" DESTINATION "${STAGEGRID_SIGNALSMI
 add_library(stagegrid_audio SHARED
     jni_bridge.cpp
     NativeAudioEngine.cpp
+    OfflineMixRenderer.cpp
     WavReader.cpp
 )
 
