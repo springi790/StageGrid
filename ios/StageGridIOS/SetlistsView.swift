@@ -63,7 +63,7 @@ private struct SetlistDetailView: View {
             if songs.isEmpty {
                 Text("Este setlist todavía no tiene canciones.").foregroundStyle(.secondary)
             }
-            ForEach(Array(songs.enumerated()), id: \.element.id) { index, song in
+            ForEach(Array(songs.enumerated()), id: \.offset) { index, song in
                 Button {
                     model.load(song)
                 } label: {
