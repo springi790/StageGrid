@@ -11,6 +11,7 @@ import dev.stagegrid.guide.GuideCueAnalyzer
 import dev.stagegrid.guide.GuidePackManager
 import dev.stagegrid.guide.NativeGuideReanalyzer
 import dev.stagegrid.importer.SongImporter
+import dev.stagegrid.metadata.MetadataAwareSongImporter
 import dev.stagegrid.metadata.SongMetadataEnricher
 import dev.stagegrid.midi.MidiDeviceManager
 import dev.stagegrid.session.PerformanceSessionStore
@@ -22,7 +23,7 @@ class StageGridApplication : Application() {
         private set
     lateinit var repository: LibraryRepository
         private set
-    lateinit var importer: SongImporter
+    lateinit var importer: MetadataAwareSongImporter
         private set
     lateinit var metadataEnricher: SongMetadataEnricher
         private set
@@ -53,7 +54,8 @@ class StageGridApplication : Application() {
         guidePacks = GuidePackManager(this)
         metadataEnricher = SongMetadataEnricher()
         GuideCueAnalyzer.configurePersistentCache(File(filesDir, "guide-cache/fingerprints-v1.bin"))
-        importer = SongImporter(this, repository, guidePacks, settings, metadataEnricher)
+        val stableImporter = SongImporter(this, repository, guidePacks, settings)
+        importer = MetadataAwareSongImporter(this, repository, settings, stableImporter, metadataEnricher)
         nativeGuideReanalyzer = NativeGuideReanalyzer(filesDir, repository, guidePacks)
         backupManager = LibraryBackupManager(this, repository)
         audioDevices = AudioDeviceManager(this)
