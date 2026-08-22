@@ -43,13 +43,20 @@ class ArtworkBackfillManager(
         scope.launch {
             // Keep startup/UI/audio initialization ahead of optional catalog network traffic.
             delay(START_DELAY_MS)
-            runCatching { runPass() }
-                .onFailure {
-                    StageGridDebugLog.state(
-                        "METADATA",
-                        "ARTWORK_BACKFILL_FAILED error=${it.javaClass.simpleName}",
-                    )
+            repeat(NETWORK_RETRY_COUNT) { attempt ->
+                if (hasActiveInternetRoute()) {
+                    runCatching { runPass() }
+                        .onFailure {
+                            StageGridDebugLog.state(
+                                "METADATA",
+                                "ARTWORK_BACKFILL_FAILED error=${it.javaClass.simpleName}",
+                            )
+                        }
+                    return@launch
                 }
+                if (attempt < NETWORK_RETRY_COUNT - 1) delay(NETWORK_RETRY_DELAY_MS)
+            }
+            StageGridDebugLog.state("METADATA", "ARTWORK_BACKFILL_SKIP reason=offline")
         }
     }
 
@@ -57,10 +64,6 @@ class ArtworkBackfillManager(
         val preferences = settings.settings.first()
         if (!preferences.metadataOnlineLookupEnabled || !preferences.metadataArtworkEnabled) {
             StageGridDebugLog.state("METADATA", "ARTWORK_BACKFILL_SKIP reason=disabled")
-            return
-        }
-        if (!hasActiveInternetRoute()) {
-            StageGridDebugLog.state("METADATA", "ARTWORK_BACKFILL_SKIP reason=offline")
             return
         }
 
@@ -82,20 +85,22 @@ class ArtworkBackfillManager(
             val lastAttempt = attempts[song.id] ?: 0L
             if (now - lastAttempt < RETRY_COOLDOWN_MS) continue
 
-            attempts[song.id] = System.currentTimeMillis()
-            writeAttempts(attempts)
+            val result = runCatching { findAndInstallArtwork(song) }
+            result.onFailure {
+                // Transport/provider failures are not persisted as an attempt, so a later app
+                // launch can retry instead of waiting through the cooldown.
+                StageGridDebugLog.state(
+                    "METADATA",
+                    "ARTWORK_BACKFILL_ITEM_FAILED song=${song.id} error=${it.javaClass.simpleName}",
+                )
+            }
+            if (result.isSuccess) {
+                attempts[song.id] = System.currentTimeMillis()
+                writeAttempts(attempts)
+                if (result.getOrDefault(false)) installed++
+            }
 
-            val installedForSong = runCatching { findAndInstallArtwork(song) }
-                .onFailure {
-                    StageGridDebugLog.state(
-                        "METADATA",
-                        "ARTWORK_BACKFILL_ITEM_FAILED song=${song.id} error=${it.javaClass.simpleName}",
-                    )
-                }
-                .getOrDefault(false)
-            if (installedForSong) installed++
-
-            // Keep this job deliberately low-pressure on network/catalog and live playback I/O.
+            // Serial throttling keeps catalog traffic and storage work unobtrusive during playback.
             delay(BETWEEN_SONGS_MS)
         }
 
@@ -277,8 +282,10 @@ class ArtworkBackfillManager(
 
     private companion object {
         const val START_DELAY_MS = 2_500L
-        const val BETWEEN_SONGS_MS = 750L
-        const val RETRY_COOLDOWN_MS = 7L * 24L * 60L * 60L * 1_000L
+        const val NETWORK_RETRY_DELAY_MS = 60_000L
+        const val NETWORK_RETRY_COUNT = 10
+        const val BETWEEN_SONGS_MS = 3_250L
+        const val RETRY_COOLDOWN_MS = 24L * 60L * 60L * 1_000L
         const val MATCH_THRESHOLD = 0.84f
         const val CONNECT_TIMEOUT_MS = 3_500
         const val READ_TIMEOUT_MS = 6_000
