@@ -111,6 +111,13 @@ fun MixerScreen(
         }
 
         item {
+            RehearsalMixExportPanel(
+                state = state,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        item {
             StageGridPanel(accent = MaterialTheme.colorScheme.primary) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
