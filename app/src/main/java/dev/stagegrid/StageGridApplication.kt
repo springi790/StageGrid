@@ -4,6 +4,7 @@ import android.app.Application
 import dev.stagegrid.audio.AudioDeviceManager
 import dev.stagegrid.audio.AudioEngineController
 import dev.stagegrid.audio.NativeAudioEngine
+import dev.stagegrid.audio.RehearsalMixExporter
 import dev.stagegrid.backup.LibraryBackupManager
 import dev.stagegrid.data.LibraryRepository
 import dev.stagegrid.data.StageGridDatabase
@@ -40,6 +41,8 @@ class StageGridApplication : Application() {
         private set
     lateinit var audio: AudioEngineController
         private set
+    lateinit var rehearsalMixExporter: RehearsalMixExporter
+        private set
     lateinit var settings: AppSettingsRepository
         private set
     lateinit var guidePacks: GuidePackManager
@@ -65,6 +68,7 @@ class StageGridApplication : Application() {
         midiDevices = MidiDeviceManager(this).also { it.start() }
         nativeAudio = NativeAudioEngine()
         audio = AudioEngineController(this, repository, nativeAudio, guidePacks)
+        rehearsalMixExporter = RehearsalMixExporter(this, nativeAudio)
         sessionStore = PerformanceSessionStore(filesDir)
 
         // Best-effort, non-blocking migration for songs imported before automatic artwork support.
