@@ -11,6 +11,7 @@ import dev.stagegrid.guide.GuideCueAnalyzer
 import dev.stagegrid.guide.GuidePackManager
 import dev.stagegrid.guide.NativeGuideReanalyzer
 import dev.stagegrid.importer.SongImporter
+import dev.stagegrid.metadata.ArtworkBackfillManager
 import dev.stagegrid.metadata.MetadataAwareSongImporter
 import dev.stagegrid.metadata.SongMetadataEnricher
 import dev.stagegrid.midi.MidiDeviceManager
@@ -26,6 +27,8 @@ class StageGridApplication : Application() {
     lateinit var importer: MetadataAwareSongImporter
         private set
     lateinit var metadataEnricher: SongMetadataEnricher
+        private set
+    lateinit var artworkBackfill: ArtworkBackfillManager
         private set
     lateinit var backupManager: LibraryBackupManager
         private set
@@ -63,5 +66,9 @@ class StageGridApplication : Application() {
         nativeAudio = NativeAudioEngine()
         audio = AudioEngineController(this, repository, nativeAudio, guidePacks)
         sessionStore = PerformanceSessionStore(filesDir)
+
+        // Best-effort, non-blocking migration for songs imported before automatic artwork support.
+        // It can only write SongEntity.artworkPath; musical metadata is never modified.
+        artworkBackfill = ArtworkBackfillManager(this, repository, settings).also { it.start() }
     }
 }
