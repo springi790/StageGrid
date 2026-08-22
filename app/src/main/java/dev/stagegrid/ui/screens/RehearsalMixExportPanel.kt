@@ -21,15 +21,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.stagegrid.R
 import dev.stagegrid.StageGridApplication
 import dev.stagegrid.audio.EngineState
+import dev.stagegrid.audio.GuideSource
 import dev.stagegrid.audio.PlayerState
 import dev.stagegrid.audio.RehearsalMixExportState
 import dev.stagegrid.audio.RehearsalMixExporter
+import dev.stagegrid.ui.StageGridViewModel
 import dev.stagegrid.ui.components.StageGridMetric
 import dev.stagegrid.ui.components.StageGridPanel
 import dev.stagegrid.ui.components.StageGridPill
+import dev.stagegrid.ui.cueGuideState
 import dev.stagegrid.ui.theme.StageGridColors
 import java.io.File
 import java.util.Locale
@@ -42,10 +47,12 @@ import kotlinx.coroutines.withContext
 fun RehearsalMixExportPanel(
     state: PlayerState,
     modifier: Modifier = Modifier,
+    stageGridViewModel: StageGridViewModel = viewModel(),
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as StageGridApplication
     val scope = rememberCoroutineScope()
+    val cueState by stageGridViewModel.cueGuideState.collectAsStateWithLifecycle()
     var exportState by remember(state.song?.id) { mutableStateOf(RehearsalMixExportState()) }
 
     val transportBusy = state.isPlaying ||
@@ -106,6 +113,14 @@ fun RehearsalMixExportPanel(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (cueState.source == GuideSource.CUE) {
+                Text(
+                    stringResource(R.string.rehearsal_mix_cue_auto_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = StageGridColors.Amber,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
 
             if (transportBusy) {
                 Text(
@@ -127,9 +142,13 @@ fun RehearsalMixExportPanel(
                     enabled = canExport,
                     onClick = {
                         // Freeze every mix/DSP value now. Later UI edits cannot alter this render.
+                        // Cue Auto mutes imported Guide tracks in the live engine without changing
+                        // Room's TrackEntity, so explicitly keep the original Guide out here too.
                         val snapshot = state.copy(
                             tracks = state.tracks.toList(),
                             sections = state.sections.toList(),
+                            guideEnabled = state.guideEnabled && cueState.source == GuideSource.ORIGINAL,
+                            guideSource = cueState.source,
                         )
                         exportState = RehearsalMixExportState(running = true)
                         scope.launch {
@@ -194,20 +213,20 @@ fun RehearsalMixExportPanel(
                                 sizeBytes = 0L,
                                 error = context.getString(R.string.rehearsal_mix_missing_file),
                             )
-                            return@OutlinedButton
-                        }
-                        runCatching {
-                            val share = RehearsalMixExporter.shareIntent(context, exportedFile)
-                            context.startActivity(
-                                Intent.createChooser(
-                                    share,
-                                    context.getString(R.string.rehearsal_mix_share_chooser),
-                                ),
-                            )
-                        }.onFailure { throwable ->
-                            exportState = exportState.copy(
-                                error = throwable.message ?: context.getString(R.string.rehearsal_mix_error_title),
-                            )
+                        } else {
+                            runCatching {
+                                val share = RehearsalMixExporter.shareIntent(context, exportedFile)
+                                context.startActivity(
+                                    Intent.createChooser(
+                                        share,
+                                        context.getString(R.string.rehearsal_mix_share_chooser),
+                                    ),
+                                )
+                            }.onFailure { throwable ->
+                                exportState = exportState.copy(
+                                    error = throwable.message ?: context.getString(R.string.rehearsal_mix_error_title),
+                                )
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
