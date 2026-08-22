@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rehearsal_mix_title">Mezcla de ensayo</string>
+    <string name="rehearsal_mix_desc">Exporta la canción completa con la mezcla que tienes ahora para enviarla al grupo.</string>
+    <string name="rehearsal_mix_format">WAV · 48 kHz · 16-bit · Estéreo</string>
+    <string name="rehearsal_mix_snapshot_help">Respeta volúmenes, mute/solo, paneo, master, tempo, tono y los estados actuales de Click y Guide. Las salidas multicanal se pliegan a estéreo.</string>
+    <string name="rehearsal_mix_stop_first">Detén la reproducción antes de exportar. StageGrid reserva la CPU para el audio en vivo.</string>
+    <string name="rehearsal_mix_export">Exportar mezcla actual</string>
+    <string name="rehearsal_mix_rendering">Renderizando mezcla…</string>
+    <string name="rehearsal_mix_ready">Mezcla lista</string>
+    <string name="rehearsal_mix_share">Compartir archivo</string>
+    <string name="rehearsal_mix_share_chooser">Compartir mezcla de ensayo</string>
+    <string name="rehearsal_mix_file_info">%1$s · %2$s</string>
+    <string name="rehearsal_mix_error_title">No se pudo exportar la mezcla</string>
+    <string name="rehearsal_mix_missing_file">El archivo exportado ya no está disponible. Vuelve a generarlo.</string>
+    <string name="rehearsal_mix_linear_note">La exportación usa la canción completa y no incluye saltos manuales o cambios de Arrangement realizados durante una reproducción.</string>
+</resources>
