@@ -34,8 +34,16 @@ class SongMetadataEnricher(
 
     suspend fun enrich(request: Request): MetadataEnrichment {
         val notes = mutableListOf<String>()
-        val parsed = if (request.seedArtist.isBlank()) MetadataText.splitTitleArtist(request.seedTitle) else request.seedTitle to request.seedArtist
+        val parsed = if (request.seedArtist.isBlank()) {
+            MetadataText.splitTitleArtist(request.seedTitle)
+        } else {
+            MetadataText.cleanTitleHint(request.seedTitle) to MetadataText.cleanArtistHint(request.seedArtist)
+        }
         val query = MetadataQuery(parsed.first, parsed.second, request.durationMs)
+        StageGridDebugLog.state(
+            "METADATA",
+            "QUERY song=${request.songId} rawTitle=${request.seedTitle} rawArtist=${request.seedArtist} title=${query.title} artist=${query.artist}",
+        )
 
         var online: MetadataCandidate? = null
         var onlineConfidence = 0f
@@ -54,7 +62,16 @@ class SongMetadataEnricher(
 
             candidates
                 ?.map { candidate -> candidate to score(query, candidate) }
-                ?.maxByOrNull { it.second }
+                ?.sortedByDescending { it.second }
+                ?.also { ranked ->
+                    ranked.take(3).forEachIndexed { index, pair ->
+                        StageGridDebugLog.state(
+                            "METADATA",
+                            "CANDIDATE rank=${index + 1} provider=${pair.first.provider} confidence=${(pair.second * 100).toInt()} title=${pair.first.title} artist=${pair.first.artist}",
+                        )
+                    }
+                }
+                ?.firstOrNull()
                 ?.let { (candidate, confidence) ->
                     online = candidate
                     onlineConfidence = confidence
@@ -77,7 +94,7 @@ class SongMetadataEnricher(
         val applyOnline = online != null && onlineConfidence >= AUTO_APPLY_CONFIDENCE
         val finalTitle = when {
             request.titleLocked -> request.seedTitle
-            applyOnline -> online!!.title
+            applyOnline -> MetadataText.cleanTitleHint(online!!.title)
             else -> parsed.first.ifBlank { request.seedTitle }
         }
         val finalArtist = when {
@@ -161,9 +178,13 @@ class SongMetadataEnricher(
 
     private fun score(query: MetadataQuery, candidate: MetadataCandidate): Float {
         val directTitle = MetadataText.tokenSimilarity(query.title, candidate.title)
-        val directArtist = if (query.artist.isBlank()) 0.72f else MetadataText.tokenSimilarity(query.artist, candidate.artist)
+        val directArtist = if (query.artist.isBlank()) {
+            0.72f
+        } else {
+            MetadataText.tokenContainmentSimilarity(query.artist, candidate.artist)
+        }
         val reverseTitle = if (query.artist.isBlank()) 0f else MetadataText.tokenSimilarity(query.artist, candidate.title)
-        val reverseArtist = if (query.artist.isBlank()) 0f else MetadataText.tokenSimilarity(query.title, candidate.artist)
+        val reverseArtist = if (query.artist.isBlank()) 0f else MetadataText.tokenContainmentSimilarity(query.title, candidate.artist)
         val direct = directTitle * 0.54f + directArtist * 0.26f
         val reverse = reverseTitle * 0.54f + reverseArtist * 0.26f
         val text = maxOf(direct, reverse)
@@ -229,7 +250,7 @@ class SongMetadataEnricher(
     private fun writeSidecar(songRoot: File, result: MetadataEnrichment) {
         runCatching {
             val json = JSONObject()
-                .put("version", 3)
+                .put("version", 4)
                 .put("provider", result.onlineCandidate?.provider)
                 .put("providerId", result.onlineCandidate?.providerId)
                 .put("confidence", result.onlineConfidence.toDouble())
