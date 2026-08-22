@@ -3,7 +3,7 @@
     <string name="rehearsal_mix_title">Rehearsal mix</string>
     <string name="rehearsal_mix_desc">Export the full song with the mix you have right now and share it with the group.</string>
     <string name="rehearsal_mix_format">WAV · 48 kHz · 16-bit · Stereo</string>
-    <string name="rehearsal_mix_snapshot_help">Preserves volumes, mute/solo, pan, master, tempo, pitch, and the current Click and Guide states. Multichannel outputs are folded down to stereo.</string>
+    <string name="rehearsal_mix_snapshot_help">Preserves volumes, mute/solo, pan, master, tempo, pitch, Click, and the original Guide when active. Multichannel outputs are folded down to stereo.</string>
     <string name="rehearsal_mix_stop_first">Stop playback before exporting. StageGrid reserves CPU for live audio.</string>
     <string name="rehearsal_mix_export">Export current mix</string>
     <string name="rehearsal_mix_rendering">Rendering mix…</string>
@@ -14,4 +14,5 @@
     <string name="rehearsal_mix_error_title">Could not export the mix</string>
     <string name="rehearsal_mix_missing_file">The exported file is no longer available. Generate it again.</string>
     <string name="rehearsal_mix_linear_note">Export uses the full linear song and does not include manual section jumps or Arrangement changes performed during playback.</string>
+    <string name="rehearsal_mix_cue_auto_note">Cue Auto is selected: the original Guide stays out of the file. Dynamic Cue Auto announcements are not baked into this linear export yet.</string>
 </resources>
