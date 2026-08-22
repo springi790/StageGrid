@@ -14,19 +14,44 @@ import org.json.JSONObject
  */
 class ITunesMetadataProvider : MetadataProvider {
     override suspend fun search(query: MetadataQuery): List<MetadataCandidate> {
-        val title = query.title.trim()
+        val title = MetadataText.cleanTitleHint(query.title)
         if (title.isBlank()) return emptyList()
-        val artist = query.artist.trim()
-        val term = listOf(title, artist).filter { it.isNotBlank() }.joinToString(" ")
+        val artist = MetadataText.cleanArtistHint(query.artist)
+        val combinedTerm = listOf(title, artist).filter { it.isNotBlank() }.joinToString(" ")
+        val accumulated = mutableListOf<MetadataCandidate>()
 
-        val mexico = request(term, "MX")
-        if (mexico.isNotEmpty()) return mexico
+        // First try the useful title+artist hint. Do not stop merely because a storefront returned
+        // unrelated rows: only a title-relevant result is enough to stop broadening the search.
+        for (country in COUNTRIES) {
+            val results = request(combinedTerm, country, "TITLE_ARTIST")
+            accumulated += results
+            if (containsRelevantTitle(title, results)) return dedupe(accumulated)
+        }
 
-        // Some Spanish-language worship releases are catalogued under another storefront.
-        return request(term, "US")
+        // Packages from multitrack vendors often contain incomplete artist text (e.g. "Passion ft").
+        // A title-only fallback lets StageGrid's own artist/duration confidence ranking recover the
+        // correct catalog entry instead of declaring the catalog empty.
+        if (artist.isNotBlank()) {
+            for (country in COUNTRIES) {
+                val results = request(title, country, "TITLE_ONLY")
+                accumulated += results
+                if (containsRelevantTitle(title, results)) return dedupe(accumulated)
+            }
+        }
+
+        return dedupe(accumulated)
     }
 
-    private fun request(term: String, country: String): List<MetadataCandidate> {
+    private fun containsRelevantTitle(title: String, candidates: List<MetadataCandidate>): Boolean =
+        candidates.any { MetadataText.tokenContainmentSimilarity(title, it.title) >= TITLE_RELEVANCE_FLOOR }
+
+    private fun dedupe(candidates: List<MetadataCandidate>): List<MetadataCandidate> = candidates
+        .distinctBy { candidate ->
+            candidate.providerId ?: "${MetadataText.normalize(candidate.title)}|${MetadataText.normalize(candidate.artist)}"
+        }
+        .take(MAX_RETURNED_CANDIDATES)
+
+    private fun request(term: String, country: String, mode: String): List<MetadataCandidate> {
         val encoded = URLEncoder.encode(term, Charsets.UTF_8.name())
         val url = URL(
             "https://itunes.apple.com/search?term=$encoded&country=$country&media=music&entity=song&limit=$LIMIT",
@@ -41,11 +66,11 @@ class ITunesMetadataProvider : MetadataProvider {
         }
         return try {
             val code = connection.responseCode
-            StageGridDebugLog.state("METADATA", "ITUNES_HTTP country=$country code=$code")
+            StageGridDebugLog.state("METADATA", "ITUNES_HTTP country=$country mode=$mode code=$code")
             if (code !in 200..299) return emptyList()
             val text = connection.inputStream.bufferedReader().use { it.readText() }
             val parsed = parse(JSONObject(text))
-            StageGridDebugLog.state("METADATA", "ITUNES_RESULTS country=$country count=${parsed.size}")
+            StageGridDebugLog.state("METADATA", "ITUNES_RESULTS country=$country mode=$mode count=${parsed.size}")
             parsed
         } finally {
             connection.disconnect()
@@ -68,7 +93,8 @@ class ITunesMetadataProvider : MetadataProvider {
                         album = item.optString("collectionName").takeIf { it.isNotBlank() },
                         durationMs = item.optLong("trackTimeMillis", -1L).takeIf { it > 0L },
                         artworkUrl = item.optString("artworkUrl100")
-                            .takeIf { it.startsWith("http://") || it.startsWith("https://") },
+                            .takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                            ?.replace("100x100bb", "600x600bb"),
                         provider = "iTunes",
                         providerId = item.optLong("trackId", -1L).takeIf { it > 0L }?.toString(),
                         // Search results are ranked by the storefront; StageGrid still applies its
@@ -81,7 +107,10 @@ class ITunesMetadataProvider : MetadataProvider {
     }
 
     private companion object {
-        const val LIMIT = 18
+        val COUNTRIES = listOf("MX", "US")
+        const val LIMIT = 24
+        const val MAX_RETURNED_CANDIDATES = 48
+        const val TITLE_RELEVANCE_FLOOR = 0.72f
         const val CONNECT_TIMEOUT_MS = 3_500
         const val READ_TIMEOUT_MS = 5_000
         const val USER_AGENT = "StageGrid/0.7 (https://github.com/springi790/StageGrid)"
