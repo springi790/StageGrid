@@ -1,6 +1,8 @@
 package dev.stagegrid.ui.screens
 
 import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.IconButton
@@ -24,12 +27,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -37,6 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.stagegrid.R
+import dev.stagegrid.StageGridApplication
+import dev.stagegrid.metadata.SongArtworkManager
 import dev.stagegrid.model.SongEntity
 import dev.stagegrid.ui.components.StageGridEmptyState
 import dev.stagegrid.ui.components.StageGridMetric
@@ -45,6 +52,9 @@ import dev.stagegrid.ui.components.StageGridPill
 import dev.stagegrid.ui.components.StageGridScreenHeader
 import dev.stagegrid.ui.theme.StageGridColors
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun LibraryScreen(
@@ -59,6 +69,23 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
 ) {
     var query by remember { mutableStateOf("") }
+    var artworkTarget by remember { mutableStateOf<SongEntity?>(null) }
+    var artworkError by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val app = context.applicationContext as StageGridApplication
+    val artworkManager = remember(app) { SongArtworkManager(app, app.repository) }
+    val scope = rememberCoroutineScope()
+    val artworkLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val target = artworkTarget
+        artworkTarget = null
+        if (uri != null && target != null) {
+            scope.launch {
+                val result = withContext(Dispatchers.IO) { artworkManager.replace(target.id, uri) }
+                result.exceptionOrNull()?.let { artworkError = it.message ?: "Artwork update failed" }
+            }
+        }
+    }
+
     val normalized = query.trim().lowercase(Locale.getDefault())
     val visible = remember(songs, normalized) {
         if (normalized.isBlank()) songs else songs.filter {
@@ -156,10 +183,23 @@ fun LibraryScreen(
                     song = song,
                     onLoadSong = onLoadSong,
                     onEditSong = onEditSong,
+                    onEditArtwork = {
+                        artworkTarget = song
+                        artworkLauncher.launch(arrayOf("image/*"))
+                    },
                     onDeleteSong = onDeleteSong,
                 )
             }
         }
+    }
+
+    artworkError?.let { message ->
+        AlertDialog(
+            onDismissRequest = { artworkError = null },
+            title = { Text(stringResource(R.string.metadata_cover_error)) },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = { artworkError = null }) { Text(stringResource(R.string.close)) } },
+        )
     }
 }
 
@@ -168,6 +208,7 @@ private fun SongCard(
     song: SongEntity,
     onLoadSong: (String) -> Unit,
     onEditSong: (SongEntity) -> Unit,
+    onEditArtwork: () -> Unit,
     onDeleteSong: (SongEntity) -> Unit,
 ) {
     val artwork = remember(song.artworkPath) {
@@ -242,6 +283,9 @@ private fun SongCard(
                 ) {
                     Text(stringResource(R.string.delete_song))
                 }
+            }
+            TextButton(onClick = onEditArtwork, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(if (song.artworkPath == null) R.string.metadata_add_cover else R.string.metadata_change_cover))
             }
         }
     }
