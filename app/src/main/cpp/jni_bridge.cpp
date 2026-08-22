@@ -1,4 +1,5 @@
 #include "NativeAudioEngine.h"
+#include "OfflineMixRenderer.h"
 #include <jni.h>
 #include <memory>
 #include <string>
@@ -100,3 +101,88 @@ extern "C" JNIEXPORT jboolean JNICALL Java_dev_stagegrid_audio_NativeAudioEngine
 extern "C" JNIEXPORT jfloat JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeDspCpuLoad(JNIEnv *, jobject, jlong h) { return engine(h)->dspCpuLoad(); }
 extern "C" JNIEXPORT jint JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeDspLatencyMs(JNIEnv *, jobject, jlong h) { return engine(h)->dspLatencyMs(); }
 extern "C" JNIEXPORT jstring JNICALL Java_dev_stagegrid_audio_NativeAudioEngine_nativeLastError(JNIEnv *env, jobject, jlong h) { const auto error = engine(h)->lastError(); return env->NewStringUTF(error.c_str()); }
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_stagegrid_audio_NativeAudioEngine_nativeRenderRehearsalMix(
+    JNIEnv *env,
+    jobject,
+    jstring outputPath,
+    jobjectArray paths,
+    jintArray types,
+    jfloatArray volumes,
+    jintArray mutes,
+    jintArray solos,
+    jfloatArray pans,
+    jintArray routes,
+    jdouble bpm,
+    jint beatsPerBar,
+    jlong gridOffsetMs,
+    jfloat masterVolume,
+    jfloat tempoRatio,
+    jfloat pitchSemitones,
+    jboolean clickEnabled,
+    jboolean guideEnabled,
+    jint clickSubdivision,
+    jint clickRoute
+) {
+    if (!outputPath || !paths || !types || !volumes || !mutes || !solos || !pans || !routes) {
+        return env->NewStringUTF("Invalid export arguments.");
+    }
+    const jsize count = env->GetArrayLength(paths);
+    if (count <= 0 ||
+        count != env->GetArrayLength(types) ||
+        count != env->GetArrayLength(volumes) ||
+        count != env->GetArrayLength(mutes) ||
+        count != env->GetArrayLength(solos) ||
+        count != env->GetArrayLength(pans) ||
+        count != env->GetArrayLength(routes)) {
+        return env->NewStringUTF("Export track arrays do not match.");
+    }
+
+    std::vector<int> nativeTypes(static_cast<size_t>(count));
+    std::vector<float> nativeVolumes(static_cast<size_t>(count));
+    std::vector<int> nativeMutes(static_cast<size_t>(count));
+    std::vector<int> nativeSolos(static_cast<size_t>(count));
+    std::vector<float> nativePans(static_cast<size_t>(count));
+    std::vector<int> nativeRoutes(static_cast<size_t>(count));
+    env->GetIntArrayRegion(types, 0, count, nativeTypes.data());
+    env->GetFloatArrayRegion(volumes, 0, count, nativeVolumes.data());
+    env->GetIntArrayRegion(mutes, 0, count, nativeMutes.data());
+    env->GetIntArrayRegion(solos, 0, count, nativeSolos.data());
+    env->GetFloatArrayRegion(pans, 0, count, nativePans.data());
+    env->GetIntArrayRegion(routes, 0, count, nativeRoutes.data());
+    if (env->ExceptionCheck()) return env->NewStringUTF("Could not read export track settings.");
+
+    OfflineMixRequest request;
+    request.outputPath = jstringToUtf8(env, outputPath);
+    request.bpm = bpm;
+    request.beatsPerBar = beatsPerBar;
+    request.gridOffsetMs = gridOffsetMs;
+    request.masterVolume = masterVolume;
+    request.tempoRatio = tempoRatio;
+    request.pitchSemitones = pitchSemitones;
+    request.clickEnabled = clickEnabled == JNI_TRUE;
+    request.guideEnabled = guideEnabled == JNI_TRUE;
+    request.clickSubdivision = clickSubdivision;
+    request.clickRoute = clickRoute;
+    request.tracks.reserve(static_cast<size_t>(count));
+
+    for (jsize i = 0; i < count; ++i) {
+        auto path = static_cast<jstring>(env->GetObjectArrayElement(paths, i));
+        OfflineMixTrackConfig track;
+        track.path = jstringToUtf8(env, path);
+        track.type = nativeTypes[static_cast<size_t>(i)];
+        track.volume = nativeVolumes[static_cast<size_t>(i)];
+        track.muted = nativeMutes[static_cast<size_t>(i)] != 0;
+        track.solo = nativeSolos[static_cast<size_t>(i)] != 0;
+        track.pan = nativePans[static_cast<size_t>(i)];
+        track.route = nativeRoutes[static_cast<size_t>(i)];
+        request.tracks.push_back(std::move(track));
+        env->DeleteLocalRef(path);
+    }
+
+    std::string error;
+    const bool ok = renderOfflineMix(request, error);
+    if (!ok && error.empty()) error = "Rehearsal mix export failed.";
+    return env->NewStringUTF(error.c_str());
+}
