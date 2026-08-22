@@ -337,6 +337,58 @@ class NativeAudioEngine : Closeable {
         return nativeStartOutputTest(handle, channelIndex.coerceAtLeast(0), durationMs.coerceIn(120, 1200))
     }
 
+    /**
+     * Offline stereo fold-down for rehearsal sharing. This never touches either live deck.
+     * Multi-output buses are folded to stereo while each track's route/pan/mute/solo is preserved.
+     */
+    fun renderRehearsalMix(
+        outputPath: String,
+        tracks: List<TrackEntity>,
+        bpm: Double?,
+        beatsPerBar: Int,
+        gridOffsetMs: Long,
+        masterVolume: Float,
+        tempoRatio: Float,
+        pitchSemitones: Float,
+        clickEnabled: Boolean,
+        guideEnabled: Boolean,
+        clickSubdivision: Int,
+        clickRoute: StereoRoute,
+    ): String? {
+        if (tracks.isEmpty()) return "No tracks are available to export."
+        StageGridDebugLog.action(
+            "EXPORT",
+            "REHEARSAL_MIX_START tracks=${tracks.size} tempo=$tempoRatio pitch=$pitchSemitones click=$clickEnabled guide=$guideEnabled",
+        )
+        val error = nativeRenderRehearsalMix(
+            outputPath,
+            tracks.map { it.filePath }.toTypedArray(),
+            tracks.map { TrackType.fromStorage(it.type).nativeCode }.toIntArray(),
+            tracks.map { it.volume }.toFloatArray(),
+            tracks.map { if (it.muted) 1 else 0 }.toIntArray(),
+            tracks.map { if (it.solo) 1 else 0 }.toIntArray(),
+            tracks.map { it.pan }.toFloatArray(),
+            tracks.map { StereoRoute.fromStorage(it.outputRoute).nativeCode }.toIntArray(),
+            bpm ?: 0.0,
+            beatsPerBar.coerceIn(1, 32),
+            gridOffsetMs.coerceAtLeast(0L),
+            masterVolume.coerceIn(0f, 1.25f),
+            tempoRatio.coerceIn(MIN_TEMPO_RATIO, MAX_TEMPO_RATIO),
+            pitchSemitones.coerceIn(MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES),
+            clickEnabled,
+            guideEnabled,
+            clickSubdivision.coerceIn(1, 4),
+            clickRoute.nativeCode,
+        ).trim()
+        return if (error.isBlank()) {
+            StageGridDebugLog.state("EXPORT", "REHEARSAL_MIX_COMPLETE path=$outputPath")
+            null
+        } else {
+            StageGridDebugLog.error("EXPORT", "REHEARSAL_MIX_FAILED error=$error")
+            error
+        }
+    }
+
     fun diagnostics(): Diagnostics = Diagnostics(
         sampleRate = nativeSampleRate(handle),
         framesPerBurst = nativeFramesPerBurst(handle),
@@ -426,6 +478,26 @@ class NativeAudioEngine : Closeable {
     private external fun nativeDspCpuLoad(handle: Long): Float
     private external fun nativeDspLatencyMs(handle: Long): Int
     private external fun nativeLastError(handle: Long): String
+    private external fun nativeRenderRehearsalMix(
+        outputPath: String,
+        paths: Array<String>,
+        types: IntArray,
+        volumes: FloatArray,
+        mutes: IntArray,
+        solos: IntArray,
+        pans: FloatArray,
+        routes: IntArray,
+        bpm: Double,
+        beatsPerBar: Int,
+        gridOffsetMs: Long,
+        masterVolume: Float,
+        tempoRatio: Float,
+        pitchSemitones: Float,
+        clickEnabled: Boolean,
+        guideEnabled: Boolean,
+        clickSubdivision: Int,
+        clickRoute: Int,
+    ): String
 
     private fun normalizeOutputChannels(value: Int): Int = when {
         value >= 8 -> 8
