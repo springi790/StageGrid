@@ -1,6 +1,8 @@
 package dev.stagegrid.metadata
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import dev.stagegrid.data.LibraryRepository
 import dev.stagegrid.importer.ImportProgress
@@ -53,11 +55,12 @@ class MetadataAwareSongImporter(
             onProgress?.invoke(ImportProgress(100, ImportStage.COMPLETE))
         }
         val appSettings = settings.settings.first()
+        val onlineAvailable = appSettings.metadataOnlineLookupEnabled && hasValidatedInternet()
         onProgress?.invoke(
             ImportProgress(
                 percent = 96,
                 stage = ImportStage.SAVING_LIBRARY,
-                detail = "Buscando metadatos y analizando audio…",
+                detail = if (onlineAvailable) "Buscando metadatos y analizando audio…" else "Analizando metadatos locales…",
             ),
         )
 
@@ -78,7 +81,7 @@ class MetadataAwareSongImporter(
                     artistLocked = false,
                     bpmLocked = bundle.song.bpm != null,
                     keyLocked = !bundle.song.musicalKey.isNullOrBlank(),
-                    onlineEnabled = appSettings.metadataOnlineLookupEnabled,
+                    onlineEnabled = onlineAvailable,
                     localAnalysisEnabled = appSettings.metadataLocalAnalysisEnabled,
                     downloadArtwork = appSettings.metadataArtworkEnabled,
                 ),
@@ -106,6 +109,14 @@ class MetadataAwareSongImporter(
             key = updated.musicalKey,
             warnings = imported.warnings + enrichment.notes,
         )
+    }
+
+    private fun hasValidatedInternet(): Boolean {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val network = manager.activeNetwork ?: return false
+        val capabilities = manager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private fun bridgeProgress(
