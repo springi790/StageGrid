@@ -49,7 +49,7 @@ final class StageGridAudioEngine: ObservableObject {
         var pitchSemitones: Float = 0
         var basePosition: TimeInterval = 0
         var wallClockStarted: CFTimeInterval?
-        var library: LibraryStore
+        let library: LibraryStore
 
         init(song: StageSong, library: LibraryStore) {
             self.song = song
@@ -85,18 +85,18 @@ final class StageGridAudioEngine: ObservableObject {
         if let routeObserver { NotificationCenter.default.removeObserver(routeObserver) }
     }
 
-    // MARK: - Song/deck lifecycle
+    // MARK: - Deck lifecycle
 
     func load(song: StageSong, library: LibraryStore, startAt: TimeInterval = 0) {
         cancelPendingOperations()
-        destroyDeck(activeDeck)
-        activeDeck = nil
+        isPlaying = false
+        timer?.invalidate(); timer = nil
+        destroyDeck(activeDeck); activeDeck = nil
+        destroyDeck(transitionDeck); transitionDeck = nil
         clearPreloadedSong()
         do {
             let deck = try buildDeck(song: song, library: library)
             deck.basePosition = min(max(0, startAt), song.duration)
-            deck.tempoRatio = 1
-            deck.pitchSemitones = 0
             deck.mixer.outputVolume = 1
             activeDeck = deck
             publish(deck: deck, playing: false)
@@ -106,21 +106,20 @@ final class StageGridAudioEngine: ObservableObject {
             schedule(deck: deck, at: deck.basePosition, autoPlay: false)
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
             destroyDeck(activeDeck)
             activeDeck = nil
-            song = nil
+            self.song = nil
+            duration = 0
+            position = 0
+            errorMessage = error.localizedDescription
         }
     }
 
     func preload(song: StageSong, library: LibraryStore) {
-        destroyDeck(standbyDeck)
-        standbyDeck = nil
+        destroyDeck(standbyDeck); standbyDeck = nil
         do {
             let deck = try buildDeck(song: song, library: library)
             deck.mixer.outputVolume = 0
-            deck.tempoRatio = 1
-            deck.pitchSemitones = 0
             applyDSP(deck)
             applyMixState(deck)
             schedule(deck: deck, at: 0, autoPlay: false)
@@ -130,11 +129,10 @@ final class StageGridAudioEngine: ObservableObject {
             try startEngineIfNeeded()
             errorMessage = nil
         } catch {
-            errorMessage = "Preload: \(error.localizedDescription)"
-            destroyDeck(standbyDeck)
-            standbyDeck = nil
+            destroyDeck(standbyDeck); standbyDeck = nil
             preloadedSongID = nil
             preloadedSongTitle = nil
+            errorMessage = "Preload: \(error.localizedDescription)"
         }
     }
 
@@ -149,13 +147,12 @@ final class StageGridAudioEngine: ObservableObject {
         guard let next = standbyDeck else { return }
         crossfadeTask?.cancel()
         sectionTask?.cancel()
-        let previous = activeDeck
         standbyDeck = nil
         preloadedSongID = nil
         preloadedSongTitle = nil
 
-        guard isPlaying, let previous else {
-            destroyDeck(previous)
+        guard isPlaying, let previous = activeDeck else {
+            destroyDeck(activeDeck)
             next.mixer.outputVolume = 1
             next.basePosition = 0
             next.wallClockStarted = nil
@@ -166,19 +163,22 @@ final class StageGridAudioEngine: ObservableObject {
             return
         }
 
-        let start = commonStartTime(leadSeconds: 0.075)
-        schedule(deck: next, at: 0, autoPlay: true, startTime: start)
-        next.basePosition = 0
-        next.wallClockStarted = CACurrentMediaTime() + 0.075
+        let lead: TimeInterval = 0.075
+        let start = commonStartTime(leadSeconds: lead)
         next.mixer.outputVolume = 0
+        next.basePosition = 0
+        next.wallClockStarted = CACurrentMediaTime() + lead
+        schedule(deck: next, at: 0, autoPlay: true, startTime: start)
         crossfadeInProgress = true
 
-        crossfadeTask = Task { [weak self, weak previous, weak next] in
-            guard let self, let previous, let next else { return }
+        crossfadeTask = Task { [weak self] in
+            guard let self else { return }
+            if lead > 0 { try? await Task.sleep(nanoseconds: UInt64(lead * 1_000_000_000)) }
+            guard !Task.isCancelled else { return }
             let duration = max(0.08, seconds)
             let steps = max(8, Int(duration / 0.012))
             for index in 0...steps {
-                if Task.isCancelled { return }
+                guard !Task.isCancelled else { return }
                 let x = Float(index) / Float(steps)
                 let smooth = x * x * (3 - 2 * x)
                 previous.mixer.outputVolume = 1 - smooth
@@ -187,8 +187,7 @@ final class StageGridAudioEngine: ObservableObject {
                     try? await Task.sleep(nanoseconds: UInt64(duration / Double(steps) * 1_000_000_000))
                 }
             }
-            previous.channels.values.forEach { $0.player.stop() }
-            previous.clickPlayer.stop()
+            self.stopPlayers(previous)
             self.destroyDeck(previous)
             self.activeDeck = next
             next.mixer.outputVolume = 1
@@ -205,21 +204,14 @@ final class StageGridAudioEngine: ObservableObject {
         engine.connect(deck.mixer, to: engine.mainMixerNode, format: nil)
 
         for track in song.tracks {
-            let url = library.trackURL(song: song, track: track)
-            let file = try AVAudioFile(forReading: url)
+            let file = try AVAudioFile(forReading: library.trackURL(song: song, track: track))
             let player = AVAudioPlayerNode()
             let processor = AVAudioUnitTimePitch()
             engine.attach(player)
             engine.attach(processor)
             engine.connect(player, to: processor, format: file.processingFormat)
             engine.connect(processor, to: deck.mixer, format: nil)
-            deck.channels[track.id] = Channel(
-                trackID: track.id,
-                kind: track.kind,
-                file: file,
-                player: player,
-                timePitch: processor
-            )
+            deck.channels[track.id] = Channel(trackID: track.id, kind: track.kind, file: file, player: player, timePitch: processor)
         }
 
         engine.attach(deck.clickPlayer)
@@ -228,7 +220,7 @@ final class StageGridAudioEngine: ObservableObject {
         engine.connect(deck.clickPlayer, to: deck.clickPitch, format: clickFormat)
         engine.connect(deck.clickPitch, to: deck.mixer, format: clickFormat)
 
-        for _ in 0..<8 {
+        for _ in 0..<10 {
             let voice = CueVoice()
             engine.attach(voice.player)
             engine.connect(voice.player, to: deck.mixer, format: nil)
@@ -239,12 +231,12 @@ final class StageGridAudioEngine: ObservableObject {
 
     private func destroyDeck(_ deck: Deck?) {
         guard let deck else { return }
-        deck.channels.values.forEach {
-            $0.player.stop()
-            engine.disconnectNodeOutput($0.player)
-            engine.disconnectNodeOutput($0.timePitch)
-            engine.detach($0.player)
-            engine.detach($0.timePitch)
+        for channel in deck.channels.values {
+            channel.player.stop()
+            engine.disconnectNodeOutput(channel.player)
+            engine.disconnectNodeOutput(channel.timePitch)
+            engine.detach(channel.player)
+            engine.detach(channel.timePitch)
         }
         deck.clickPlayer.stop()
         engine.disconnectNodeOutput(deck.clickPlayer)
@@ -266,14 +258,13 @@ final class StageGridAudioEngine: ObservableObject {
         guard let deck = activeDeck, !isPlaying else { return }
         do {
             try startEngineIfNeeded()
-            schedule(deck: deck, at: position, autoPlay: true)
-            isPlaying = true
+            let lead: TimeInterval = 0.075
+            schedule(deck: deck, at: position, autoPlay: true, startTime: commonStartTime(leadSeconds: lead))
             deck.basePosition = position
-            deck.wallClockStarted = CACurrentMediaTime() + 0.075
+            deck.wallClockStarted = CACurrentMediaTime() + lead
+            isPlaying = true
             startTimer()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        } catch { errorMessage = error.localizedDescription }
     }
 
     func play(startAt sourceSeconds: TimeInterval, countInBars: Int) {
@@ -284,20 +275,22 @@ final class StageGridAudioEngine: ObservableObject {
             seek(to: sourceSeconds, autoPlay: true)
             return
         }
-        let barSeconds = 60.0 / max(20, deck.song.bpm) * Double(max(1, deck.song.beatsPerBar)) / Double(max(0.01, deck.tempoRatio))
-        let delay = barSeconds * Double(bars)
+
+        let barWall = (60.0 / max(20, deck.song.bpm) * Double(max(1, deck.song.beatsPerBar))) / Double(max(0.01, deck.tempoRatio))
+        let delay = barWall * Double(bars)
         stopPlayers(deck)
-        position = sourceSeconds
-        deck.basePosition = sourceSeconds
+        position = min(max(0, sourceSeconds), deck.song.duration)
+        deck.basePosition = position
         deck.wallClockStarted = nil
-        scheduleClickOnly(deck: deck, sourceSeconds: max(0, sourceSeconds - barSeconds), autoPlay: true, startTime: commonStartTime(leadSeconds: 0.02))
-        countInRemaining = delay
+        scheduleClick(deck: deck, sourceSeconds: sourceSeconds, at: commonStartTime(leadSeconds: 0.02), autoPlay: true)
         isPlaying = false
-        countInTask = Task { [weak self, weak deck] in
-            guard let self, let deck else { return }
-            let start = CACurrentMediaTime()
+        countInRemaining = delay
+
+        countInTask = Task { [weak self] in
+            guard let self else { return }
+            let began = CACurrentMediaTime()
             while !Task.isCancelled {
-                let remaining = delay - (CACurrentMediaTime() - start)
+                let remaining = delay - (CACurrentMediaTime() - began)
                 if remaining <= 0 { break }
                 self.countInRemaining = remaining
                 try? await Task.sleep(nanoseconds: 50_000_000)
@@ -305,11 +298,12 @@ final class StageGridAudioEngine: ObservableObject {
             guard !Task.isCancelled else { return }
             deck.clickPlayer.stop()
             self.countInRemaining = 0
-            self.position = sourceSeconds
-            self.schedule(deck: deck, at: sourceSeconds, autoPlay: true)
-            self.isPlaying = true
+            let lead: TimeInterval = 0.075
+            self.schedule(deck: deck, at: sourceSeconds, autoPlay: true, startTime: self.commonStartTime(leadSeconds: lead))
             deck.basePosition = sourceSeconds
-            deck.wallClockStarted = CACurrentMediaTime() + 0.075
+            deck.wallClockStarted = CACurrentMediaTime() + lead
+            self.position = sourceSeconds
+            self.isPlaying = true
             self.startTimer()
         }
     }
@@ -320,8 +314,8 @@ final class StageGridAudioEngine: ObservableObject {
         deck.channels.values.forEach { $0.player.pause() }
         deck.clickPlayer.pause()
         deck.cueVoices.forEach { $0.player.pause() }
-        isPlaying = false
         deck.wallClockStarted = nil
+        isPlaying = false
     }
 
     func stop(unload: Bool = false) {
@@ -331,11 +325,10 @@ final class StageGridAudioEngine: ObservableObject {
             deck.basePosition = 0
             deck.wallClockStarted = nil
         }
+        timer?.invalidate(); timer = nil
+        position = 0
         isPlaying = false
         countInRemaining = 0
-        timer?.invalidate()
-        timer = nil
-        position = 0
         if unload {
             destroyDeck(activeDeck)
             activeDeck = nil
@@ -347,39 +340,39 @@ final class StageGridAudioEngine: ObservableObject {
     func stopAll() {
         stop(unload: false)
         clearPreloadedSong()
-        destroyDeck(transitionDeck)
-        transitionDeck = nil
+        destroyDeck(transitionDeck); transitionDeck = nil
     }
 
     func seek(to seconds: TimeInterval, autoPlay: Bool? = nil) {
         guard let deck = activeDeck else { return }
-        sectionTask?.cancel()
-        destroyDeck(transitionDeck)
-        transitionDeck = nil
+        sectionTask?.cancel(); sectionTask = nil
+        destroyDeck(transitionDeck); transitionDeck = nil
         let shouldPlay = autoPlay ?? isPlaying
         stopPlayers(deck)
         position = min(max(0, seconds), duration)
         deck.basePosition = position
         deck.wallClockStarted = nil
-        schedule(deck: deck, at: position, autoPlay: shouldPlay)
-        isPlaying = shouldPlay
         if shouldPlay {
-            deck.wallClockStarted = CACurrentMediaTime() + 0.075
+            let lead: TimeInterval = 0.075
+            schedule(deck: deck, at: position, autoPlay: true, startTime: commonStartTime(leadSeconds: lead))
+            deck.wallClockStarted = CACurrentMediaTime() + lead
+            isPlaying = true
             startTimer()
+        } else {
+            schedule(deck: deck, at: position, autoPlay: false)
+            isPlaying = false
         }
     }
 
-    /// Prepares a second copy of the current song and swaps it at the authored source boundary.
-    /// A 6 ms smooth crossfade hides phase/decoder discontinuities on large PA systems.
     func queueSectionTransition(to target: TimeInterval, atSourceBoundary boundary: TimeInterval, completion: (() -> Void)? = nil) {
         guard let deck = activeDeck, isPlaying else {
             seek(to: target, autoPlay: false)
             completion?()
             return
         }
-        sectionTask?.cancel()
-        destroyDeck(transitionDeck)
-        transitionDeck = nil
+        sectionTask?.cancel(); sectionTask = nil
+        destroyDeck(transitionDeck); transitionDeck = nil
+
         do {
             let next = try buildDeck(song: deck.song, library: deck.library)
             next.tempoRatio = deck.tempoRatio
@@ -391,45 +384,37 @@ final class StageGridAudioEngine: ObservableObject {
 
             let remainingSource = max(0, boundary - position)
             let wallDelay = remainingSource / Double(max(0.01, deck.tempoRatio))
-            let startTime = commonStartTime(leadSeconds: wallDelay)
-            schedule(deck: next, at: target, autoPlay: true, startTime: startTime)
+            schedule(deck: next, at: target, autoPlay: true, startTime: commonStartTime(leadSeconds: wallDelay))
             next.basePosition = target
             next.wallClockStarted = CACurrentMediaTime() + wallDelay
 
-            sectionTask = Task { [weak self, weak deck, weak next] in
-                guard let self, let deck, let next else { return }
-                if wallDelay > 0.003 {
-                    try? await Task.sleep(nanoseconds: UInt64((wallDelay - 0.003) * 1_000_000_000))
-                }
-                if Task.isCancelled { return }
-                let steps = 6
+            sectionTask = Task { [weak self] in
+                guard let self else { return }
+                if wallDelay > 0.004 { try? await Task.sleep(nanoseconds: UInt64((wallDelay - 0.004) * 1_000_000_000)) }
+                guard !Task.isCancelled else { return }
+                let steps = 8
                 for i in 0...steps {
+                    guard !Task.isCancelled else { return }
                     let x = Float(i) / Float(steps)
                     let smooth = x * x * (3 - 2 * x)
                     deck.mixer.outputVolume = 1 - smooth
                     next.mixer.outputVolume = smooth
-                    if i < steps { try? await Task.sleep(nanoseconds: 1_000_000) }
+                    if i < steps { try? await Task.sleep(nanoseconds: 750_000) }
                 }
-                guard !Task.isCancelled else { return }
+                self.stopPlayers(deck)
                 self.destroyDeck(deck)
                 self.activeDeck = next
                 self.transitionDeck = nil
                 next.mixer.outputVolume = 1
-                self.song = next.song
-                self.duration = next.song.duration
+                self.publish(deck: next, playing: true)
                 self.position = target
-                self.isPlaying = true
-                self.tempoRatio = next.tempoRatio
-                self.pitchSemitones = next.pitchSemitones
                 self.startTimer()
                 completion?()
             }
-        } catch {
-            errorMessage = "Section transition: \(error.localizedDescription)"
-        }
+        } catch { errorMessage = "Section transition: \(error.localizedDescription)" }
     }
 
-    // MARK: - DSP / mixer
+    // MARK: - DSP and mixer
 
     func setTempoRatio(_ ratio: Float) {
         captureCurrentPosition()
@@ -438,8 +423,8 @@ final class StageGridAudioEngine: ObservableObject {
         tempoRatio = deck.tempoRatio
         applyDSP(deck)
         if isPlaying {
-            deck.wallClockStarted = CACurrentMediaTime()
             deck.basePosition = position
+            deck.wallClockStarted = CACurrentMediaTime()
             rescheduleClickIfPlaying()
         }
     }
@@ -451,35 +436,33 @@ final class StageGridAudioEngine: ObservableObject {
         applyDSP(deck)
     }
 
-    func setTrackVolume(_ trackID: UUID, volume: Float) {
-        mutateTrack(trackID) { $0.volume = min(max(volume, 0), 1.5) }
-    }
-
-    func setTrackMute(_ trackID: UUID, muted: Bool) {
-        mutateTrack(trackID) { $0.muted = muted }
-    }
-
-    func setTrackSolo(_ trackID: UUID, solo: Bool) {
-        mutateTrack(trackID) { $0.solo = solo }
-    }
-
-    func setTrackPan(_ trackID: UUID, pan: Float) {
-        mutateTrack(trackID) { $0.pan = min(max(pan, -1), 1) }
-    }
-
-    func setTrackOutput(_ trackID: UUID, bus: Int, route: StageStereoRoute) {
-        mutateTrack(trackID) {
+    func setTrackVolume(_ id: UUID, volume: Float) { mutateTrack(id) { $0.volume = min(max(volume, 0), 1.5) } }
+    func setTrackMute(_ id: UUID, muted: Bool) { mutateTrack(id) { $0.muted = muted } }
+    func setTrackSolo(_ id: UUID, solo: Bool) { mutateTrack(id) { $0.solo = solo } }
+    func setTrackPan(_ id: UUID, pan: Float) { mutateTrack(id) { $0.pan = min(max(pan, -1), 1) } }
+    func setTrackOutput(_ id: UUID, bus: Int, route: StageStereoRoute) {
+        mutateTrack(id) {
             $0.outputBus = min(max(bus, 0), 3)
             $0.stereoRoute = route
         }
-        // AVAudioEngine stereo output remains the guaranteed fallback. Multi-channel hardware
-        // capability is exposed in outputChannelCount; discrete matrix routing is applied by
-        // MultiOutputRouter when a qualifying Core Audio route is present.
     }
 
-    private func mutateTrack(_ trackID: UUID, edit: (inout StageTrack) -> Void) {
-        guard let deck = activeDeck,
-              let index = deck.song.tracks.firstIndex(where: { $0.id == trackID }) else { return }
+    func requestOutputChannels(_ requested: Int) {
+        let session = AVAudioSession.sharedInstance()
+        let normalized = [2, 4, 6, 8].min(by: { abs($0 - requested) < abs($1 - requested) }) ?? 2
+        do {
+            let target = min(normalized, max(2, session.maximumOutputNumberOfChannels))
+            try session.setPreferredOutputNumberOfChannels(target)
+            refreshOutputInfo()
+            errorMessage = nil
+        } catch {
+            refreshOutputInfo()
+            errorMessage = "Output channels: \(error.localizedDescription)"
+        }
+    }
+
+    private func mutateTrack(_ id: UUID, edit: (inout StageTrack) -> Void) {
+        guard let deck = activeDeck, let index = deck.song.tracks.firstIndex(where: { $0.id == id }) else { return }
         edit(&deck.song.tracks[index])
         song = deck.song
         applyMixState(deck)
@@ -496,7 +479,9 @@ final class StageGridAudioEngine: ObservableObject {
     }
 
     private func applyMixState() {
-        if let deck = activeDeck { applyMixState(deck) }
+        if let activeDeck { applyMixState(activeDeck) }
+        if let standbyDeck { applyMixState(standbyDeck) }
+        if let transitionDeck { applyMixState(transitionDeck) }
     }
 
     private func applyMixState(_ deck: Deck) {
@@ -504,15 +489,15 @@ final class StageGridAudioEngine: ObservableObject {
         for track in deck.song.tracks {
             guard let channel = deck.channels[track.id] else { continue }
             let hiddenBySolo = anySolo && !track.solo
-            let hideImportedGuide = track.kind == .guide && (!guideEnabled || guideSource == .cue)
-            let hiddenClickTrack = track.kind == .click && !clickEnabled
-            channel.player.volume = (track.muted || hiddenBySolo || hideImportedGuide || hiddenClickTrack) ? 0 : track.volume
+            let hideGuide = track.kind == .guide && (!guideEnabled || guideSource == .cue)
+            let hideClickTrack = track.kind == .click && !clickEnabled
+            channel.player.volume = (track.muted || hiddenBySolo || hideGuide || hideClickTrack) ? 0 : track.volume
             channel.player.pan = track.pan
         }
         deck.clickPlayer.volume = clickEnabled ? 0.72 : 0
     }
 
-    // MARK: - Guide/Cue scheduling
+    // MARK: - Cue playback
 
     func scheduleCue(sampleURL: URL, afterWallSeconds delay: TimeInterval, volume: Float = 1) {
         guard guideEnabled, let deck = activeDeck, !deck.cueVoices.isEmpty else { return }
@@ -524,24 +509,22 @@ final class StageGridAudioEngine: ObservableObject {
             voice.player.volume = min(max(volume, 0), 1.5)
             voice.player.scheduleFile(file, at: nil)
             voice.player.play(at: commonStartTime(leadSeconds: max(0.015, delay)))
-        } catch {
-            errorMessage = "Cue: \(error.localizedDescription)"
-        }
+        } catch { errorMessage = "Cue: \(error.localizedDescription)" }
     }
 
     func scheduleCueSequence(_ events: [(url: URL, delay: TimeInterval)]) {
         guard guideEnabled else { return }
-        for event in events { scheduleCue(sampleURL: event.url, afterWallSeconds: event.delay) }
+        events.forEach { scheduleCue(sampleURL: $0.url, afterWallSeconds: $0.delay) }
     }
 
-    // MARK: - Scheduling internals
+    // MARK: - Internal scheduling
 
     private func schedule(deck: Deck, at sourceSeconds: TimeInterval, autoPlay: Bool, startTime: AVAudioTime? = nil) {
         let time = startTime ?? commonStartTime(leadSeconds: 0.075)
         for channel in deck.channels.values {
             channel.player.stop()
-            let sourceRate = channel.file.processingFormat.sampleRate
-            let startFrame = AVAudioFramePosition(max(0, sourceSeconds) * sourceRate)
+            let rate = channel.file.processingFormat.sampleRate
+            let startFrame = AVAudioFramePosition(max(0, sourceSeconds) * rate)
             let remaining = max(0, channel.file.length - startFrame)
             guard remaining > 0 else { continue }
             channel.player.scheduleSegment(
@@ -564,22 +547,18 @@ final class StageGridAudioEngine: ObservableObject {
         if autoPlay { deck.clickPlayer.play(at: startTime) }
     }
 
-    private func scheduleClickOnly(deck: Deck, sourceSeconds: TimeInterval, autoPlay: Bool, startTime: AVAudioTime) {
-        scheduleClick(deck: deck, sourceSeconds: sourceSeconds, at: startTime, autoPlay: autoPlay)
-    }
-
     private func makeClickBar(song: StageSong, sourceSeconds: TimeInterval) -> AVAudioPCMBuffer? {
         let sampleRate = 48_000.0
         let beats = max(1, song.beatsPerBar)
-        let beatDuration = 60.0 / max(20, song.bpm)
         let subdivisions = max(1, clickSubdivision.rawValue)
+        let beatDuration = 60.0 / max(20, song.bpm)
         let barDuration = beatDuration * Double(beats)
-        let frames = AVAudioFrameCount(max(1, Int(barDuration * sampleRate)))
+        let frameCount = AVAudioFrameCount(max(1, Int(barDuration * sampleRate)))
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
-        buffer.frameLength = frames
-        guard let left = buffer.floatChannelData?[0], let right = buffer.floatChannelData?[1] else { return nil }
-        for i in 0..<Int(frames) { left[i] = 0; right[i] = 0 }
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
+              let left = buffer.floatChannelData?[0], let right = buffer.floatChannelData?[1] else { return nil }
+        buffer.frameLength = frameCount
+        for i in 0..<Int(frameCount) { left[i] = 0; right[i] = 0 }
 
         let phase = sourceSeconds.truncatingRemainder(dividingBy: barDuration)
         for beat in 0..<beats {
@@ -588,15 +567,15 @@ final class StageGridAudioEngine: ObservableObject {
                 while offset < 0 { offset += barDuration }
                 while offset >= barDuration { offset -= barDuration }
                 let start = Int(offset * sampleRate)
-                let burst = min(Int(sampleRate * 0.018), Int(frames) - start)
-                if burst <= 0 { continue }
+                let burst = min(Int(sampleRate * 0.018), Int(frameCount) - start)
+                guard burst > 0 else { continue }
                 let downbeat = beat == 0 && subdivision == 0
                 let mainBeat = subdivision == 0
                 let frequency = downbeat ? 1900.0 : (mainBeat ? 1350.0 : 1050.0)
                 let gain = downbeat ? 0.52 : (mainBeat ? 0.40 : 0.24)
                 for n in 0..<burst {
                     let t = Double(n) / sampleRate
-                    let sample = Float(sin(2 * Double.pi * frequency * t) * exp(-t * 115) * gain)
+                    let sample = Float(sin(2 * .pi * frequency * t) * exp(-t * 115) * gain)
                     left[start + n] += sample
                     right[start + n] += sample
                 }
@@ -607,8 +586,7 @@ final class StageGridAudioEngine: ObservableObject {
 
     private func rescheduleClickIfPlaying() {
         guard isPlaying, let deck = activeDeck else { return }
-        let start = commonStartTime(leadSeconds: 0.02)
-        scheduleClick(deck: deck, sourceSeconds: position, at: start, autoPlay: true)
+        scheduleClick(deck: deck, sourceSeconds: position, at: commonStartTime(leadSeconds: 0.02), autoPlay: true)
     }
 
     private func stopPlayers(_ deck: Deck) {
@@ -632,16 +610,13 @@ final class StageGridAudioEngine: ObservableObject {
             try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetoothA2DP])
             try session.setPreferredIOBufferDuration(0.005)
             try session.setActive(true)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        } catch { errorMessage = error.localizedDescription }
     }
 
     private func refreshOutputInfo() {
         let session = AVAudioSession.sharedInstance()
-        let output = session.currentRoute.outputs.first
-        outputName = output?.portName ?? "System Output"
-        outputChannelCount = max(2, output?.channels?.count ?? session.outputNumberOfChannels)
+        outputName = session.currentRoute.outputs.first?.portName ?? "System Output"
+        outputChannelCount = max(2, session.outputNumberOfChannels)
     }
 
     private func startEngineIfNeeded() throws {
@@ -652,8 +627,7 @@ final class StageGridAudioEngine: ObservableObject {
     }
 
     private func commonStartTime(leadSeconds: TimeInterval) -> AVAudioTime {
-        let lead = AVAudioTime.hostTime(forSeconds: max(0, leadSeconds))
-        return AVAudioTime(hostTime: mach_absolute_time() + lead)
+        AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: max(0, leadSeconds)))
     }
 
     private func captureCurrentPosition() {
@@ -669,9 +643,7 @@ final class StageGridAudioEngine: ObservableObject {
             Task { @MainActor in
                 guard let self, self.isPlaying, let deck = self.activeDeck, let started = deck.wallClockStarted else { return }
                 self.position = min(self.duration, deck.basePosition + max(0, CACurrentMediaTime() - started) * Double(deck.tempoRatio))
-                if self.position >= self.duration {
-                    self.stop(unload: false)
-                }
+                if self.position >= self.duration { self.stop(unload: false) }
             }
         }
     }
