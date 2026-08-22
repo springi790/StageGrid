@@ -21,8 +21,6 @@ targets:
       - path: StageGridIOS
         excludes:
           - Info.plist
-    info:
-      path: StageGridIOS/Info.plist
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.stagegrid.ios
