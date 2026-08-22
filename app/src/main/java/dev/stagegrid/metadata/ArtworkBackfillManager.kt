@@ -37,6 +37,7 @@ class ArtworkBackfillManager(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stateFile = File(context.filesDir, "metadata/artwork-backfill-v1.json")
+    private val processStartEpochMs = System.currentTimeMillis()
 
     fun start() {
         scope.launch {
@@ -63,10 +64,12 @@ class ArtworkBackfillManager(
             return
         }
 
-        // Snapshot only songs that existed when this app process started. New imports already run
+        // Snapshot only songs that existed before this process started. New imports already run
         // through MetadataAwareSongImporter and therefore do not need this migration.
         val candidates = repository.songs.first().filter { song ->
-            song.artworkPath.isNullOrBlank() || !File(song.artworkPath).isFile
+            val artworkPath = song.artworkPath
+            song.importedAtEpochMs < processStartEpochMs &&
+                (artworkPath.isNullOrBlank() || !File(artworkPath).isFile)
         }
         if (candidates.isEmpty()) return
 
@@ -141,7 +144,7 @@ class ArtworkBackfillManager(
             destination.delete()
             return false
         }
-        val currentArtwork = current.artworkPath?.let(::File)
+        val currentArtwork = current.artworkPath?.let { File(it) }
         if (currentArtwork != null && currentArtwork.isFile) {
             destination.delete()
             return false
@@ -200,31 +203,37 @@ class ArtworkBackfillManager(
             }
             val root = File(context.filesDir, "library/$songId").apply { mkdirs() }
             val temporary = File(root, ".artwork-backfill-$extension.tmp")
-            var total = 0L
-            BufferedInputStream(connection.inputStream).use { input ->
-                BufferedOutputStream(FileOutputStream(temporary)).use { output ->
-                    val buffer = ByteArray(32 * 1024)
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read <= 0) break
-                        total += read
-                        require(total <= MAX_ARTWORK_BYTES) { "Artwork exceeds size limit" }
-                        output.write(buffer, 0, read)
+            temporary.delete()
+            try {
+                var total = 0L
+                BufferedInputStream(connection.inputStream).use { input ->
+                    BufferedOutputStream(FileOutputStream(temporary)).use { output ->
+                        val buffer = ByteArray(32 * 1024)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read <= 0) break
+                            total += read
+                            require(total <= MAX_ARTWORK_BYTES) { "Artwork exceeds size limit" }
+                            output.write(buffer, 0, read)
+                        }
                     }
                 }
-            }
-            if (temporary.length() <= 0L || BitmapFactory.decodeFile(temporary.absolutePath) == null) {
-                temporary.delete()
-                return@runCatching null
-            }
+                if (temporary.length() <= 0L || BitmapFactory.decodeFile(temporary.absolutePath) == null) {
+                    temporary.delete()
+                    return@runCatching null
+                }
 
-            val destination = File(root, "artwork.$extension")
-            if (destination.exists()) destination.delete()
-            if (!temporary.renameTo(destination)) {
-                temporary.copyTo(destination, overwrite = true)
+                val destination = File(root, "artwork.$extension")
+                if (destination.exists()) destination.delete()
+                if (!temporary.renameTo(destination)) {
+                    temporary.copyTo(destination, overwrite = true)
+                    temporary.delete()
+                }
+                destination
+            } catch (t: Throwable) {
                 temporary.delete()
+                throw t
             }
-            destination
         } finally {
             connection.disconnect()
         }
