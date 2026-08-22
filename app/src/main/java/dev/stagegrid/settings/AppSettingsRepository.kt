@@ -39,6 +39,12 @@ class AppSettingsRepository(private val context: Context) {
         val nativeGuideExperimentalEnabled: Boolean = false,
         /** auto follows the detected Guide language; es/en/fr/pt force an installed language. */
         val nativeGuideLanguage: String = "auto",
+        /** Try documented online catalog providers after import. Network failure never blocks import. */
+        val metadataOnlineLookupEnabled: Boolean = true,
+        /** Cache cover art inside the song folder so Library stays visual offline. */
+        val metadataArtworkEnabled: Boolean = true,
+        /** Analyze imported audio locally when BPM/key are absent. */
+        val metadataLocalAnalysisEnabled: Boolean = true,
     )
 
     val settings: Flow<Settings> = context.stageGridDataStore.data.map { values ->
@@ -56,6 +62,9 @@ class AppSettingsRepository(private val context: Context) {
             nativeGuideExperimentalEnabled = nativeGuideEnabled,
             nativeGuideLanguage = (values[NATIVE_GUIDE_LANGUAGE] ?: "auto")
                 .takeIf { it in setOf("auto", "es", "en", "fr", "pt") } ?: "auto",
+            metadataOnlineLookupEnabled = values[METADATA_ONLINE_LOOKUP] ?: true,
+            metadataArtworkEnabled = values[METADATA_ARTWORK] ?: true,
+            metadataLocalAnalysisEnabled = values[METADATA_LOCAL_ANALYSIS] ?: true,
         )
     }
 
@@ -102,6 +111,21 @@ class AppSettingsRepository(private val context: Context) {
         context.stageGridDataStore.edit { it[NATIVE_GUIDE_LANGUAGE] = normalized }
     }
 
+    suspend fun setMetadataOnlineLookupEnabled(enabled: Boolean) {
+        StageGridDebugLog.action("METADATA", "ONLINE_LOOKUP enabled=$enabled")
+        context.stageGridDataStore.edit { it[METADATA_ONLINE_LOOKUP] = enabled }
+    }
+
+    suspend fun setMetadataArtworkEnabled(enabled: Boolean) {
+        StageGridDebugLog.action("METADATA", "ARTWORK enabled=$enabled")
+        context.stageGridDataStore.edit { it[METADATA_ARTWORK] = enabled }
+    }
+
+    suspend fun setMetadataLocalAnalysisEnabled(enabled: Boolean) {
+        StageGridDebugLog.action("METADATA", "LOCAL_ANALYSIS enabled=$enabled")
+        context.stageGridDataStore.edit { it[METADATA_LOCAL_ANALYSIS] = enabled }
+    }
+
     private companion object {
         val LIVE_MODE = booleanPreferencesKey("live_mode")
         val PERFORMANCE_LOCK = booleanPreferencesKey("performance_lock")
@@ -111,5 +135,8 @@ class AppSettingsRepository(private val context: Context) {
         val COUNT_IN_BARS = intPreferencesKey("count_in_bars")
         val NATIVE_GUIDE_EXPERIMENTAL = booleanPreferencesKey("native_guide_experimental")
         val NATIVE_GUIDE_LANGUAGE = stringPreferencesKey("native_guide_language")
+        val METADATA_ONLINE_LOOKUP = booleanPreferencesKey("metadata_online_lookup")
+        val METADATA_ARTWORK = booleanPreferencesKey("metadata_artwork")
+        val METADATA_LOCAL_ANALYSIS = booleanPreferencesKey("metadata_local_analysis")
     }
 }
