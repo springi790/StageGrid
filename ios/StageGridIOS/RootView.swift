@@ -41,6 +41,19 @@ struct RootView: View {
                 MiniTransport(song: song)
             }
         }
+        .onAppear {
+            if model.preferences.performanceLock,
+               ![AppModel.Tab.live, .mixer, .settings].contains(model.selectedTab) {
+                model.selectedTab = .live
+            }
+            model.restoreSessionIfNeeded()
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                model.persistSession()
+            }
+        }
         .onChange(of: model.preferences.performanceLock) { _, locked in
             if locked, ![AppModel.Tab.live, .mixer, .settings].contains(model.selectedTab) { model.selectedTab = .live }
         }
@@ -65,11 +78,11 @@ private struct MiniTransport: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
-            Button { audio.isPlaying ? audio.pause() : audio.play() } label: {
+            Button { model.playPause() } label: {
                 Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill").frame(width: 32, height: 32)
             }
             .buttonStyle(.borderedProminent).tint(.sgBlue)
-            Button { audio.stop(unload: false) } label: { Image(systemName: "stop.fill") }
+            Button { model.stopTransport() } label: { Image(systemName: "stop.fill") }
                 .buttonStyle(.bordered)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
